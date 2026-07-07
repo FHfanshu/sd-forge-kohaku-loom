@@ -59,13 +59,40 @@
         return true;
     }
 
+    function flashButton(root, text) {
+        const button = root ? root.querySelector("button") || root : null;
+        if (!button) return;
+        const original = button.textContent;
+        button.textContent = text;
+        window.setTimeout(function () {
+            button.textContent = original;
+        }, 1100);
+    }
+
+    function switchMainTab(kind) {
+        if (kind === "txt2img" && typeof switch_to_txt2img === "function") {
+            switch_to_txt2img();
+            return;
+        }
+        if (kind === "img2img" && typeof switch_to_img2img === "function") {
+            switch_to_img2img();
+            return;
+        }
+        const tabs = q3vlApp().querySelector("#tabs");
+        const buttons = tabs ? tabs.querySelectorAll("button") : [];
+        const index = kind === "txt2img" ? 0 : 1;
+        if (buttons[index]) buttons[index].click();
+    }
+
     function sendReversePrompt(kind) {
         const app = q3vlApp();
         const source = app.querySelector("#q3vl_reverse_output");
         const target = app.querySelector(kind === "txt2img" ? "#txt2img_prompt" : "#img2img_prompt");
         const value = textboxValue(source).trim();
         if (!value) return;
-        setTextboxValue(target, value);
+        if (setTextboxValue(target, value)) {
+            switchMainTab(kind);
+        }
     }
 
     function setupSendButtons() {
@@ -75,13 +102,19 @@
         if (txt && !txt.dataset.q3vlSendBound) {
             txt.dataset.q3vlSendBound = "1";
             txt.addEventListener("click", function () {
-                window.setTimeout(function () { sendReversePrompt("txt2img"); }, 0);
+                window.setTimeout(function () {
+                    sendReversePrompt("txt2img");
+                    flashButton(txt, "已发送");
+                }, 0);
             }, true);
         }
         if (img && !img.dataset.q3vlSendBound) {
             img.dataset.q3vlSendBound = "1";
             img.addEventListener("click", function () {
-                window.setTimeout(function () { sendReversePrompt("img2img"); }, 0);
+                window.setTimeout(function () {
+                    sendReversePrompt("img2img");
+                    flashButton(img, "已发送");
+                }, 0);
             }, true);
         }
     }
