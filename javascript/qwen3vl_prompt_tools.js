@@ -241,6 +241,110 @@
         };
     }
 
+    function normalizePatchSeparator(value) {
+        if (value === "space") return " ";
+        if (value === "newline") return "\n";
+        if (value === "double_newline") return "\n\n";
+        return String(value ?? "");
+    }
+
+    function applyPromptPatchText(text, patch) {
+        const operation = String(patch.operation || patch.op || "replace").trim();
+        const find = String(patch.find ?? patch.old ?? "");
+        const replacement = String(patch.replace ?? patch.replacement ?? patch.text ?? "");
+        const separator = normalizePatchSeparator(patch.separator ?? "");
+        const count = Number.isFinite(Number(patch.count)) ? Math.max(0, Number(patch.count)) : 1;
+
+        if (operation === "append") {
+            return { ok: true, text: text ? text + separator + replacement : replacement, changed: text ? 1 : Number(Boolean(replacement)) };
+        }
+        if (operation === "prepend") {
+            return { ok: true, text: text ? replacement + separator + text : replacement, changed: text ? 1 : Number(Boolean(replacement)) };
+        }
+        if (operation === "delete") {
+            if (!find) return { ok: false, error: "delete requires find text", text: text };
+            if (!text.includes(find)) return { ok: false, error: "find text not found", text: text };
+            const next = text.replace(find, "");
+            return { ok: true, text: next, changed: 1 };
+        }
+        if (operation === "insert_after" || operation === "insert_before") {
+            if (!find) return { ok: false, error: `${operation} requires find text`, text: text };
+            const first = text.indexOf(find);
+            if (first < 0) return { ok: false, error: "find text not found", text: text };
+            const second = text.indexOf(find, first + find.length);
+            if (second >= 0 && !patch.allow_multiple) return { ok: false, error: "find text is not unique; use a longer find string", text: text };
+            const insertAt = operation === "insert_after" ? first + find.length : first;
+            const insertText = operation === "insert_after" ? separator + replacement : replacement + separator;
+            return { ok: true, text: text.slice(0, insertAt) + insertText + text.slice(insertAt), changed: 1 };
+        }
+        if (operation === "replace_all") {
+            if (!find) return { ok: false, error: "replace_all requires find text", text: text };
+            if (!text.includes(find)) return { ok: false, error: "find text not found", text: text };
+            const parts = text.split(find);
+            return { ok: true, text: parts.join(replacement), changed: parts.length - 1 };
+        }
+        if (operation === "replace_n") {
+            if (!find) return { ok: false, error: "replace_n requires find text", text: text };
+            if (!text.includes(find)) return { ok: false, error: "find text not found", text: text };
+            let changed = 0;
+            let next = text;
+            while (changed < count && next.includes(find)) {
+                next = next.replace(find, replacement);
+                changed += 1;
+            }
+            return { ok: true, text: next, changed: changed };
+        }
+        if (operation === "replace") {
+            if (!find) return { ok: false, error: "replace requires find text", text: text };
+            const first = text.indexOf(find);
+            if (first < 0) return { ok: false, error: "find text not found", text: text };
+            const second = text.indexOf(find, first + find.length);
+            if (second >= 0 && !patch.allow_multiple) return { ok: false, error: "find text is not unique; use replace_all, replace_n, or a longer find string", text: text };
+            return { ok: true, text: text.slice(0, first) + replacement + text.slice(first + find.length), changed: 1 };
+        }
+        return { ok: false, error: `unknown patch operation: ${operation}`, text: text };
+    }
+
+    function patchPromptRoot(root, patches) {
+        if (!root) return { ok: false, error: "prompt field not found", prompt: "" };
+        const target = root.querySelector("textarea") || root.querySelector("input");
+        if (!target) return { ok: false, error: "prompt input not found", prompt: "" };
+        const list = Array.isArray(patches) ? patches : [patches];
+        if (!list.length) return { ok: false, error: "no patches provided", prompt: target.value || "" };
+        let next = target.value || "";
+        const results = [];
+        for (let i = 0; i < list.length; i += 1) {
+            const result = applyPromptPatchText(next, list[i] || {});
+            results.push({ index: i, ok: result.ok, error: result.error || "", changed: result.changed || 0 });
+            if (!result.ok) {
+                return { ok: false, error: result.error, failed_index: i, results: results, prompt: next };
+            }
+            next = result.text;
+        }
+        setNativeValueIfAvailable(target, next);
+        return { ok: true, results: results, prompt: next };
+    }
+
+    function setNativeValueIfAvailable(target, value) {
+        const proto = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+        if (descriptor && descriptor.set) descriptor.set.call(target, value);
+        else target.value = value;
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+    }
+
+    function compactPromptPatchResult(result, returnPrompt) {
+        const next = Object.assign({}, result);
+        if (typeof next.prompt === "string") {
+            next.prompt_length = next.prompt.length;
+            next.prompt_preview = truncateAssistantText(next.prompt, 500);
+            if (!returnPrompt) delete next.prompt;
+        }
+        return next;
+    }
+
     function executeAssistantTool(tool) {
         const name = tool.tool || tool.name;
         const args = tool.arguments || {};
@@ -262,6 +366,18 @@
             const ok = setTextboxValue(item.root, prompt);
             if (ok) switchMainTab(item.target);
             return { ok: ok, target: item.target, prompt: prompt };
+        }
+        if (name === "patch_current_prompt") {
+            const item = promptRootForTarget(args.target || "active");
+            const result = compactPromptPatchResult(patchPromptRoot(item.root, args.patch || args), Boolean(args.return_prompt));
+            if (result.ok) switchMainTab(item.target);
+            return Object.assign({ target: item.target }, result);
+        }
+        if (name === "multi_patch_current_prompt") {
+            const item = promptRootForTarget(args.target || "active");
+            const result = compactPromptPatchResult(patchPromptRoot(item.root, args.patches || []), Boolean(args.return_prompt));
+            if (result.ok) switchMainTab(item.target);
+            return Object.assign({ target: item.target }, result);
         }
         if (name === "get_style_template") {
             const template = styleTemplateInfo();

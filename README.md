@@ -80,6 +80,18 @@ The model can request UI tools by returning exact JSON:
 {"tool":"set_current_prompt","arguments":{"target":"txt2img","prompt":"..."}}
 ```
 
+For existing prompts, prefer precise patch tools instead of whole-prompt replacement:
+
+```json
+{"tool":"patch_current_prompt","arguments":{"target":"active","patch":{"operation":"replace","find":"old phrase","replace":"new phrase"}}}
+```
+
+```json
+{"tool":"multi_patch_current_prompt","arguments":{"target":"txt2img","patches":[{"operation":"replace","find":"left character","replace":"left character holding a phone"},{"operation":"append","separator":"space","text":"clear left / center / right spacing"}]}}
+```
+
+Patch operations: `replace`, `replace_all`, `replace_n`, `insert_after`, `insert_before`, `append`, `prepend`, and `delete`. `replace` and insert operations require a unique `find` string unless `allow_multiple` is set. Patch tools return a preview by default; pass `return_prompt: true` only when the full updated prompt is needed.
+
 ```json
 {"tool":"get_style_template","arguments":{}}
 ```
