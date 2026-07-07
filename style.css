@@ -3,6 +3,21 @@
     flex-wrap: wrap !important;
 }
 
+html.q3vl-no-pull-refresh,
+html.q3vl-no-pull-refresh body {
+    overscroll-behavior-y: none;
+}
+
+html.q3vl-no-pull-refresh #txt2img_interface,
+html.q3vl-no-pull-refresh #img2img_interface,
+html.q3vl-no-pull-refresh #txt2img_prompt,
+html.q3vl-no-pull-refresh #img2img_prompt,
+html.q3vl-no-pull-refresh #txt2img_settings,
+html.q3vl-no-pull-refresh #img2img_settings,
+html.q3vl-no-pull-refresh .gradio-container {
+    overscroll-behavior-y: contain;
+}
+
 .q3vl-inline-actions {
     align-items: center;
     flex: 1 0 100% !important;

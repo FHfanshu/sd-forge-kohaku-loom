@@ -1008,8 +1008,25 @@
         return parsed ? [parsed] : [];
     }
 
+    function assistantUserRequestedPromptEdit(text) {
+        const value = String(text || "").replace(/\s+/g, " ").trim().toLowerCase();
+        if (!value) return false;
+        const editVerb = /(改成|修改|改写|重写|优化|精炼|扩写|替换|追加|加上|加入|删除|移除|写入|更新|套用|应用|编辑|修一下|insert|append|replace|rewrite|edit|update|apply|change|remove|delete|optimi[sz]e|refine|expand)/i;
+        const currentPromptRef = /(当前|现在|现有|原来|原有|这个|这段|它|其|提示词|prompt|txt2img|img2img|webui|ui|输入框|文本框)/i;
+        const directEdit = /(帮我|请|直接|把|将|给我).{0,30}(改成|修改|改写|重写|优化|精炼|扩写|替换|追加|加上|加入|删除|移除|写入|更新|套用|应用|编辑|修一下)/i;
+        const adviceOnly = /(怎么改|如何改|哪里.*改|修改建议|改进建议|优化建议|建议.*(修改|优化|改写|调整)|should.*(change|edit|rewrite)|how.*(change|edit|rewrite))/i;
+        return editVerb.test(value) && !adviceOnly.test(value) && (currentPromptRef.test(value) || directEdit.test(value));
+    }
+
+    function assistantToolMutatesPrompt(name) {
+        return ["edit_prompt", "patch_current_prompt", "multi_patch_current_prompt"].includes(String(name || ""));
+    }
+
     async function runAssistantLoop(userText, attachment) {
         const effectiveText = userText || (attachment ? "请根据附件例图分析构图和风格，帮助我整理提示词。" : "");
+        const mustEditPrompt = assistantUserRequestedPromptEdit(effectiveText);
+        let promptEdited = false;
+        let missingEditCorrectionSent = false;
         if (effectiveText || attachment) {
             addAssistantUserMessage(effectiveText, attachment);
         }
@@ -1029,21 +1046,37 @@
             if (effectiveText) {
                 assistantState.messages.push({ role: "user", content: effectiveText });
             }
-            for (let i = 0; i < 4; i += 1) {
+            for (let i = 0; i < 6; i += 1) {
                 addAssistantMessage("status", "思考中...");
                 const result = await callPromptAssistant();
                 const text = result.text || "";
                 const toolCalls = normalizeAssistantToolCalls(result, text);
                 if (!toolCalls.length) {
+                    if (mustEditPrompt && !promptEdited) {
+                        assistantState.messages.push({ role: "assistant", content: text || "No tool call returned." });
+                        if (!missingEditCorrectionSent) {
+                            missingEditCorrectionSent = true;
+                            addAssistantMessage("tool", "未检测到 edit_prompt，继续要求助手实际修改当前提示词...");
+                            assistantState.messages.push({
+                                role: "user",
+                                content: "The user asked to modify the current WebUI prompt. You must not claim it was changed unless edit_prompt succeeds. Call read_prompt if needed, then call edit_prompt with the latest base_hash. Do not give a final answer until edit_prompt returns ok:true."
+                            });
+                            continue;
+                        }
+                        addAssistantMessage("error", "助手没有调用 edit_prompt，当前提示词未被修改。请重试或明确要求“读取当前提示词并编辑”。");
+                        return;
+                    }
                     assistantState.messages.push({ role: "assistant", content: text });
                     addAssistantMessage("assistant", text);
                     return;
                 }
                 assistantState.messages.push({ role: "assistant", content: text || `Tool request: ${toolCalls.map(function (call) { return call.tool; }).join(", ")}` });
                 for (const tool of toolCalls) {
+                    const toolName = tool.tool || tool.name;
                     const toolResult = await executeAssistantTool(tool);
-                    addAssistantMessage("tool", `工具 ${tool.tool || tool.name}: ${toolResult.ok ? "完成" : "失败"}`);
-                    assistantState.messages.push({ role: "user", content: `Tool result for ${tool.tool || tool.name}: ${JSON.stringify(toolResult)}` });
+                    if (assistantToolMutatesPrompt(toolName) && toolResult.ok) promptEdited = true;
+                    addAssistantMessage("tool", `工具 ${toolName}: ${toolResult.ok ? "完成" : "失败"}`);
+                    assistantState.messages.push({ role: "user", content: `Tool result for ${toolName}: ${JSON.stringify(toolResult)}` });
                 }
             }
             addAssistantMessage("assistant", "工具调用次数过多，已停止。请换一种更直接的指令。比如：读取当前提示词并改成三人自拍构图。 ");
@@ -1323,14 +1356,70 @@
         window.addEventListener("pointerup", pointerUp);
     }
 
+    function isMobileViewport() {
+        return window.matchMedia("(max-width: 720px), (pointer: coarse)").matches;
+    }
+
+    function isVisibleElement(element) {
+        return !!(element && (element.offsetWidth || element.offsetHeight || element.getClientRects().length));
+    }
+
+    function generationPageVisible() {
+        const app = q3vlApp();
+        return ["#txt2img_prompt", "#txt2img_settings", "#img2img_prompt", "#img2img_settings"].some(function (selector) {
+            return isVisibleElement(app.querySelector(selector));
+        });
+    }
+
+    function pullRefreshGuardActive() {
+        return !!q3vlMainApp() && isMobileViewport() && generationPageVisible();
+    }
+
+    function nearestScrollableElement(node) {
+        let current = node instanceof Element ? node : node?.parentElement;
+        while (current && current !== document.body && current !== document.documentElement) {
+            const style = window.getComputedStyle(current);
+            if (/(auto|scroll)/.test(style.overflowY) && current.scrollHeight > current.clientHeight + 1) return current;
+            current = current.parentElement;
+        }
+        return document.scrollingElement || document.documentElement;
+    }
+
+    function setupPullRefreshGuard() {
+        document.documentElement.classList.toggle("q3vl-no-pull-refresh", pullRefreshGuardActive());
+        if (document.documentElement.dataset.q3vlPullRefreshBound === "1") return;
+        document.documentElement.dataset.q3vlPullRefreshBound = "1";
+
+        let startX = 0;
+        let startY = 0;
+        document.addEventListener("touchstart", function (event) {
+            if (!event.touches || !event.touches.length) return;
+            startX = event.touches[0].clientX;
+            startY = event.touches[0].clientY;
+        }, { passive: true, capture: true });
+        document.addEventListener("touchmove", function (event) {
+            if (!pullRefreshGuardActive() || !event.touches || !event.touches.length) return;
+            const dx = event.touches[0].clientX - startX;
+            const dy = event.touches[0].clientY - startY;
+            if (dy <= 0 || Math.abs(dx) > dy) return;
+            const scrollable = nearestScrollableElement(event.target);
+            const page = document.scrollingElement || document.documentElement;
+            if (scrollable.scrollTop > 0 || (scrollable === page && page.scrollTop > 0)) return;
+            event.preventDefault();
+        }, { passive: false, capture: true });
+        window.addEventListener("resize", setupPullRefreshGuard);
+    }
+
     function setupQwenTools() {
         if (!q3vlMainApp()) {
             removeAssistantWindow();
+            setupPullRefreshGuard();
             return;
         }
         setupQwenPresetGate();
         setupSendButtons();
         setupAssistantWindow();
+        setupPullRefreshGuard();
     }
 
     if (typeof onUiLoaded === "function") {
