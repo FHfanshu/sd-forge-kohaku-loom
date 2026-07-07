@@ -523,7 +523,7 @@ def _ui_tab():
             with gr.Group(visible=True) as wd_settings:
                 with gr.Accordion("WD tagger + lmcpp 设置", open=True):
                     with gr.Row():
-                        general_threshold = gr.Slider(0, 1, value=0.35, step=0.01, label="General threshold")
+                        general_threshold = gr.Slider(0, 1, value=0.5, step=0.01, label="General threshold")
                         general_mcut = gr.Checkbox(False, label="General MCut")
                     with gr.Row():
                         character_threshold = gr.Slider(0, 1, value=0.85, step=0.01, label="Character threshold")
