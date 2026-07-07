@@ -139,7 +139,8 @@
     }
 
     const assistantState = {
-        messages: []
+        messages: [],
+        attachment: null
     };
 
     function assistantConfig() {
@@ -304,6 +305,114 @@
         log.scrollTop = log.scrollHeight;
     }
 
+    function addAssistantUserMessage(text, attachment) {
+        const log = assistantPanel()?.querySelector("#q3vl_assistant_messages");
+        if (!log) return;
+        const item = document.createElement("div");
+        item.className = "q3vl-assistant-msg q3vl-assistant-user";
+        if (text) {
+            const body = document.createElement("div");
+            body.textContent = text;
+            item.appendChild(body);
+        }
+        if (attachment) {
+            const media = document.createElement("div");
+            media.className = "q3vl-assistant-user-attachment";
+            const image = document.createElement("img");
+            image.src = attachment.dataUrl;
+            image.alt = attachment.name || "reference image";
+            const name = document.createElement("span");
+            name.textContent = attachment.name || "reference image";
+            media.appendChild(image);
+            media.appendChild(name);
+            item.appendChild(media);
+        }
+        log.appendChild(item);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    function truncateAssistantText(text, limit) {
+        const value = String(text || "").trim();
+        return value.length > limit ? `${value.slice(0, limit)}...` : value;
+    }
+
+    async function analyzeAssistantAttachment(attachment, userText) {
+        const response = await fetch("/qwen3vl-prompt-tools/analyze-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                image: attachment.dataUrl,
+                filename: attachment.name,
+                prompt: userText || "",
+                timeout: 120
+            })
+        });
+        if (!response.ok) {
+            const detail = await response.text();
+            if (response.status === 404) {
+                throw new Error("本地视觉分析接口未注册。请重启 Forge/WebUI 后再试。原始错误: " + detail);
+            }
+            throw new Error(detail);
+        }
+        return await response.json();
+    }
+
+    function setAssistantAttachment(attachment) {
+        assistantState.attachment = attachment;
+        renderAssistantAttachment();
+    }
+
+    function renderAssistantAttachment() {
+        const panel = assistantPanel();
+        const holder = panel?.querySelector("#q3vl_assistant_attachment");
+        if (!holder) return;
+        holder.textContent = "";
+        holder.classList.toggle("q3vl-assistant-attachment-empty", !assistantState.attachment);
+        if (!assistantState.attachment) return;
+        const image = document.createElement("img");
+        image.src = assistantState.attachment.dataUrl;
+        image.alt = assistantState.attachment.name || "reference image";
+        const meta = document.createElement("div");
+        meta.className = "q3vl-assistant-attachment-meta";
+        const title = document.createElement("strong");
+        title.textContent = assistantState.attachment.name || "reference image";
+        const hint = document.createElement("span");
+        hint.textContent = "发送时由本地 Qwen3.5 VLM 先分析";
+        meta.appendChild(title);
+        meta.appendChild(hint);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "q3vl-assistant-chip-button";
+        remove.textContent = "移除";
+        remove.addEventListener("click", function () { setAssistantAttachment(null); });
+        holder.appendChild(image);
+        holder.appendChild(meta);
+        holder.appendChild(remove);
+    }
+
+    function readAssistantImageFile(file) {
+        return new Promise(function (resolve, reject) {
+            if (!file) {
+                reject(new Error("no file selected"));
+                return;
+            }
+            if (!String(file.type || "").startsWith("image/")) {
+                reject(new Error("请选择图片文件。"));
+                return;
+            }
+            if (file.size > 24 * 1024 * 1024) {
+                reject(new Error("图片太大，请选择 24 MB 以下的文件。"));
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = function () {
+                resolve({ name: file.name, dataUrl: String(reader.result || "") });
+            };
+            reader.onerror = function () { reject(new Error("读取图片失败。")); };
+            reader.readAsDataURL(file);
+        });
+    }
+
     async function callPromptAssistant() {
         const payload = Object.assign(assistantConfig(), { messages: assistantState.messages });
         const response = await fetch("/qwen3vl-prompt-tools/assistant", {
@@ -321,14 +430,27 @@
         return await response.json();
     }
 
-    async function runAssistantLoop(userText) {
-        if (userText) {
-            assistantState.messages.push({ role: "user", content: userText });
-            addAssistantMessage("user", userText);
+    async function runAssistantLoop(userText, attachment) {
+        const effectiveText = userText || (attachment ? "请根据附件例图分析构图和风格，帮助我整理提示词。" : "");
+        if (effectiveText || attachment) {
+            addAssistantUserMessage(effectiveText, attachment);
         }
         const sendButton = assistantPanel()?.querySelector("#q3vl_assistant_send");
         if (sendButton) sendButton.disabled = true;
         try {
+            if (attachment) {
+                addAssistantMessage("status", "本地 Qwen3.5 正在分析附件...");
+                const vision = await analyzeAssistantAttachment(attachment, effectiveText);
+                const visionText = String(vision.text || "").trim();
+                addAssistantMessage("tool", `视觉摘要 (${vision.model || "local Qwen3.5"}):\n${truncateAssistantText(visionText, 1200)}`);
+                assistantState.messages.push({
+                    role: "user",
+                    content: `Reference image observation from local Qwen3.5 VLM (${attachment.name || "image"}):\n${visionText}`
+                });
+            }
+            if (effectiveText) {
+                assistantState.messages.push({ role: "user", content: effectiveText });
+            }
             for (let i = 0; i < 4; i += 1) {
                 addAssistantMessage("status", "思考中...");
                 const result = await callPromptAssistant();
@@ -371,7 +493,7 @@
         const panel = document.createElement("div");
         panel.id = "q3vl_assistant_panel";
         panel.innerHTML = `
-            <div class="q3vl-assistant-head"><strong>LLM 提示词助手</strong><button type="button" id="q3vl_assistant_close">×</button></div>
+            <div class="q3vl-assistant-head"><div><strong>LLM 提示词助手</strong><span>文本改写 + 本地视觉</span></div><button type="button" id="q3vl_assistant_close" class="q3vl-assistant-close" title="关闭">×</button></div>
             <details class="q3vl-assistant-config">
                 <summary><span>设置</span><span class="q3vl-assistant-config-hint">后端 / 模型 / API key</span></summary>
                 <div class="q3vl-assistant-settings">
@@ -387,8 +509,15 @@
                 </div>
             </details>
             <div id="q3vl_assistant_messages"></div>
-            <textarea id="q3vl_assistant_input" placeholder="例如：读取当前提示词，改成三名角色的自拍构图，明确左中右位置。Enter 换行，Ctrl+Enter 发送。"></textarea>
-            <div class="q3vl-assistant-actions"><button type="button" id="q3vl_assistant_read">读取 prompt/模板</button><button type="button" id="q3vl_assistant_clear">清空</button><button type="button" id="q3vl_assistant_send">发送</button></div>
+            <div id="q3vl_assistant_attachment" class="q3vl-assistant-attachment q3vl-assistant-attachment-empty"></div>
+            <div class="q3vl-assistant-composer">
+                <textarea id="q3vl_assistant_input" placeholder="例如：读取当前提示词，改成三名角色的自拍构图，明确左中右位置。Enter 换行，Ctrl+Enter 发送。"></textarea>
+                <div class="q3vl-assistant-actions">
+                    <div class="q3vl-assistant-action-group"><button type="button" id="q3vl_assistant_attach" class="q3vl-assistant-secondary">附图</button><button type="button" id="q3vl_assistant_read" class="q3vl-assistant-secondary">读取</button></div>
+                    <div class="q3vl-assistant-action-group"><button type="button" id="q3vl_assistant_clear" class="q3vl-assistant-ghost">清空</button><button type="button" id="q3vl_assistant_send" class="q3vl-assistant-primary">发送</button></div>
+                </div>
+                <input id="q3vl_assistant_file" type="file" accept="image/*" hidden>
+            </div>
         `;
         document.body.appendChild(panel);
         restoreAssistantPosition(panel);
@@ -426,9 +555,22 @@
         panel.querySelector("#q3vl_assistant_send").addEventListener("click", function () {
             const input = panel.querySelector("#q3vl_assistant_input");
             const text = input.value.trim();
-            if (!text) return;
+            const attachment = assistantState.attachment;
+            if (!text && !attachment) return;
             input.value = "";
-            runAssistantLoop(text);
+            setAssistantAttachment(null);
+            runAssistantLoop(text, attachment);
+        });
+        const fileInput = panel.querySelector("#q3vl_assistant_file");
+        panel.querySelector("#q3vl_assistant_attach").addEventListener("click", function () {
+            fileInput.click();
+        });
+        fileInput.addEventListener("change", function () {
+            const file = fileInput.files && fileInput.files[0];
+            fileInput.value = "";
+            readAssistantImageFile(file)
+                .then(setAssistantAttachment)
+                .catch(function (error) { addAssistantMessage("error", String(error.message || error)); });
         });
         panel.querySelector("#q3vl_assistant_input").addEventListener("keydown", function (event) {
             if (event.key !== "Enter") return;
@@ -444,8 +586,10 @@
         });
         panel.querySelector("#q3vl_assistant_clear").addEventListener("click", function () {
             assistantState.messages = [];
+            setAssistantAttachment(null);
             panel.querySelector("#q3vl_assistant_messages").textContent = "";
         });
+        renderAssistantAttachment();
     }
 
     function restoreAssistantLauncherPosition(launcher) {

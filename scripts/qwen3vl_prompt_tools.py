@@ -8,6 +8,7 @@ from lib_qwen3vl_prompt_tools.generation import caption, enhance
 from lib_qwen3vl_prompt_tools.generic import (
     TAGGER,
     TAGGER_MODELS,
+    analyze_reference_image,
     build_nl_from_endpoint,
     build_nl_from_local_gguf,
     combine_prompt,
@@ -82,6 +83,14 @@ def _assistant_api(_: gr.Blocks, app):
     async def qwen3vl_prompt_assistant(payload: dict = Body(...)):
         try:
             return prompt_assistant_chat(payload)
+        except Exception as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+
+    @app.post("/qwen3vl-prompt-tools/analyze-image")
+    async def qwen3vl_reference_image(payload: dict = Body(...)):
+        try:
+            with call_queue.queue_lock:
+                return analyze_reference_image(payload)
         except Exception as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
 

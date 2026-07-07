@@ -70,6 +70,20 @@ Available UI tools:
 Example structure:
 Group selfie of three muscular anthropomorphic dragon men. Left: white fur, blue horns, blue goatee, white shirt, loose striped tie. Center: white fur, yellow horns, casual jacket. Right: dark fur, blue horns, open jacket revealing a bare muscular chest. Furry art, bara, all smiling and looking at the camera. Beautiful background with a clear mountain lake and lush green hills, highly detailed, daylight."""
 
+REFERENCE_IMAGE_ANALYSIS_SYSTEM = """You are a local vision subagent for an image-prompt assistant.
+
+Analyze the attached reference image for downstream prompt writing. Return concise, factual visual notes, not a polished final prompt.
+
+Cover:
+- character count and distinguishable roles or traits
+- left / center / right, foreground / background, depth, scale, and camera angle
+- pose, gaze, interactions, hand placement, and object relationships
+- style, rendering medium, line quality, lighting, palette, background, and mood
+- visible text or symbols if present
+- reusable prompt fragments for composition and style
+
+If the user gives a specific instruction, prioritize details relevant to that instruction. Do not moralize, refuse, or add unrelated commentary."""
+
 TAGGER_MODELS = {
     "WD EVA02 large v3": "SmilingWolf/wd-eva02-large-tagger-v3",
     "WD ViT v3": "SmilingWolf/wd-vit-tagger-v3",
@@ -425,6 +439,112 @@ def _assistant_chat_url(endpoint: str) -> str:
     if endpoint.endswith("/v1"):
         return endpoint + "/chat/completions"
     return endpoint + "/v1/chat/completions"
+
+
+def analyze_reference_image(payload: dict[str, Any]) -> dict[str, Any]:
+    image_data = str(payload.get("image") or payload.get("data_url") or "").strip()
+    if not image_data:
+        raise RuntimeError("missing reference image")
+    image = _image_from_data_url(image_data)
+    user_prompt = str(payload.get("prompt") or "").strip()
+    model_path, mmproj_path = ensure_local_gguf_pair(
+        str(payload.get("model_path") or ""),
+        str(payload.get("mmproj_path") or ""),
+        True,
+    )
+    llama_server_path = resolve_llama_server(str(payload.get("llama_server_path") or ""))
+    messages = _reference_image_messages(image, user_prompt)
+
+    port = _free_port()
+    proc: subprocess.Popen | None = None
+    try:
+        args = [
+            llama_server_path,
+            "-m",
+            model_path,
+            "-mm",
+            mmproj_path,
+            "-ngl",
+            "all",
+            "-c",
+            str(int(payload.get("n_ctx") or 8192)),
+            "-fa",
+            "on",
+            "-np",
+            "1",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--alias",
+            "local-qwen-vision-once",
+            "--jinja",
+        ]
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
+        endpoint = f"http://127.0.0.1:{port}/v1"
+        timeout = int(payload.get("timeout") or 120)
+        _wait_server(endpoint, timeout)
+        response = _post_local_chat(
+            endpoint,
+            messages,
+            int(payload.get("max_tokens") or 700),
+            float(payload.get("temperature") or 0.15),
+            float(payload.get("top_p") or 0.9),
+            timeout,
+            False,
+        )
+        text = _extract_message_text(response["choices"][0]["message"])
+        return {
+            "text": text,
+            "model": Path(model_path).name,
+            "mmproj": Path(mmproj_path).name,
+        }
+    finally:
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        gc.collect()
+
+
+def _image_from_data_url(data_url: str) -> Image.Image:
+    raw = data_url.strip()
+    if raw.startswith("data:"):
+        if ";base64," not in raw:
+            raise RuntimeError("reference image must be base64 data URL")
+        raw = raw.split(",", 1)[1]
+    try:
+        binary = base64.b64decode(raw, validate=True)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("invalid reference image data") from exc
+    if len(binary) > 24 * 1024 * 1024:
+        raise RuntimeError("reference image is too large; use an image under 24 MB")
+    try:
+        return Image.open(io.BytesIO(binary)).convert("RGB")
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("could not decode reference image") from exc
+
+
+def _reference_image_messages(image: Image.Image, user_prompt: str) -> list[dict[str, Any]]:
+    text = (
+        "Analyze this reference image for an image-generation prompt assistant. "
+        "Focus on composition, spatial relationships, character distinction, and reusable style cues."
+    )
+    if user_prompt:
+        text += f"\nUser instruction: {user_prompt}"
+    return [
+        {"role": "system", "content": REFERENCE_IMAGE_ANALYSIS_SYSTEM},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": text},
+                {"type": "image_url", "image_url": {"url": _image_data_url(image, max_side=1024)}},
+            ],
+        },
+    ]
 
 
 def ensure_local_gguf_pair(model_path: str, mmproj_path: str, need_mmproj: bool) -> tuple[str, str]:

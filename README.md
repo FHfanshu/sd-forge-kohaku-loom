@@ -17,6 +17,7 @@ The main workflow is `WD tagger + llama.cpp`: generate WD tags from an image, th
 - Prompt assistant can use DeepSeek/OpenAI-compatible APIs or a local llama.cpp endpoint.
 - Prompt assistant can read and replace the current txt2img/img2img prompt through UI tools.
 - Prompt assistant can read/write the WebUI style template / trigger-word template when the field is present.
+- Prompt assistant image attachments are analyzed by local Qwen3.5 GGUF VLM first; the text LLM receives only the visual notes.
 
 ## Default Model
 
@@ -66,6 +67,8 @@ hauhau-qwen3.5-9b-uncensored
 ```
 
 The assistant is instructed to generate and revise image-generation prompts, especially multi-character spatial layouts such as left / center / right, foreground / background, interactions, and distinct per-character traits.
+
+Use `附图` to attach a reference image. The extension starts the default local Qwen3.5 9B GGUF VLM once, extracts composition/style notes, releases the local process, then sends those notes into the assistant conversation. This lets text-only remote models such as DeepSeek V4 Pro work from image references without receiving image data directly.
 
 The model can request UI tools by returning exact JSON:
 
