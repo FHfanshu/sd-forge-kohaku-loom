@@ -267,6 +267,7 @@
         launcher.type = "button";
         launcher.textContent = "LLM 助手";
         document.body.appendChild(launcher);
+        restoreAssistantLauncherPosition(launcher);
 
         const panel = document.createElement("div");
         panel.id = "q3vl_assistant_panel";
@@ -300,8 +301,15 @@
             input.addEventListener("change", saveAssistantConfig);
             input.addEventListener("input", saveAssistantConfig);
         });
-        launcher.addEventListener("click", function () { panel.classList.toggle("q3vl-assistant-open"); });
+        launcher.addEventListener("click", function () {
+            if (launcher.dataset.q3vlSuppressClick === "1") return;
+            panel.classList.toggle("q3vl-assistant-open");
+            if (panel.classList.contains("q3vl-assistant-open") && !localStorage.getItem("q3vl_assistant_position")) {
+                requestAnimationFrame(function () { positionAssistantPanelNearLauncher(panel, launcher); });
+            }
+        });
         panel.querySelector("#q3vl_assistant_close").addEventListener("click", function () { panel.classList.remove("q3vl-assistant-open"); });
+        makeAssistantLauncherDraggable(launcher, panel);
         makeAssistantDraggable(panel, panel.querySelector(".q3vl-assistant-head"));
         panel.querySelector("#q3vl_assistant_send").addEventListener("click", function () {
             const input = panel.querySelector("#q3vl_assistant_input");
@@ -321,6 +329,90 @@
         panel.querySelector("#q3vl_assistant_clear").addEventListener("click", function () {
             assistantState.messages = [];
             panel.querySelector("#q3vl_assistant_messages").textContent = "";
+        });
+    }
+
+    function restoreAssistantLauncherPosition(launcher) {
+        const raw = localStorage.getItem("q3vl_assistant_launcher_position");
+        if (!raw) return;
+        try {
+            const pos = JSON.parse(raw);
+            if (Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
+                launcher.style.left = `${Math.max(8, Math.min(pos.left, window.innerWidth - 96))}px`;
+                launcher.style.top = `${Math.max(8, Math.min(pos.top, window.innerHeight - 48))}px`;
+                launcher.style.right = "auto";
+                launcher.style.bottom = "auto";
+            }
+        } catch (_error) { }
+    }
+
+    function positionAssistantPanelNearLauncher(panel, launcher) {
+        if (!panel || !launcher || window.matchMedia("(max-width: 720px)").matches) return;
+        const launcherRect = launcher.getBoundingClientRect();
+        const panelWidth = panel.offsetWidth || 460;
+        const panelHeight = panel.offsetHeight || 560;
+        const left = Math.max(8, Math.min(launcherRect.left, window.innerWidth - panelWidth - 8));
+        const preferredTop = launcherRect.top - panelHeight - 12;
+        const fallbackTop = launcherRect.bottom + 12;
+        const top = preferredTop >= 8
+            ? preferredTop
+            : Math.max(8, Math.min(fallbackTop, window.innerHeight - panelHeight - 8));
+        panel.style.left = `${left}px`;
+        panel.style.top = `${top}px`;
+        panel.style.right = "auto";
+        panel.style.bottom = "auto";
+    }
+
+    function makeAssistantLauncherDraggable(launcher, panel) {
+        if (!launcher || launcher.dataset.q3vlDragBound) return;
+        launcher.dataset.q3vlDragBound = "1";
+        let pointerDown = false;
+        let moved = false;
+        let startX = 0;
+        let startY = 0;
+        let startLeft = 0;
+        let startTop = 0;
+
+        launcher.addEventListener("pointerdown", function (event) {
+            const rect = launcher.getBoundingClientRect();
+            pointerDown = true;
+            moved = false;
+            startX = event.clientX;
+            startY = event.clientY;
+            startLeft = rect.left;
+            startTop = rect.top;
+            launcher.style.left = `${rect.left}px`;
+            launcher.style.top = `${rect.top}px`;
+            launcher.style.right = "auto";
+            launcher.style.bottom = "auto";
+            launcher.setPointerCapture?.(event.pointerId);
+        });
+
+        launcher.addEventListener("pointermove", function (event) {
+            if (!pointerDown) return;
+            const deltaX = event.clientX - startX;
+            const deltaY = event.clientY - startY;
+            if (!moved && Math.hypot(deltaX, deltaY) < 4) return;
+            moved = true;
+            const left = Math.max(8, Math.min(startLeft + deltaX, window.innerWidth - launcher.offsetWidth - 8));
+            const top = Math.max(8, Math.min(startTop + deltaY, window.innerHeight - launcher.offsetHeight - 8));
+            launcher.style.left = `${left}px`;
+            launcher.style.top = `${top}px`;
+            localStorage.removeItem("q3vl_assistant_position");
+            if (panel && panel.classList.contains("q3vl-assistant-open")) {
+                positionAssistantPanelNearLauncher(panel, launcher);
+            }
+            event.preventDefault();
+        });
+
+        launcher.addEventListener("pointerup", function () {
+            if (!pointerDown) return;
+            pointerDown = false;
+            if (!moved) return;
+            const rect = launcher.getBoundingClientRect();
+            localStorage.setItem("q3vl_assistant_launcher_position", JSON.stringify({ left: rect.left, top: rect.top }));
+            launcher.dataset.q3vlSuppressClick = "1";
+            setTimeout(function () { delete launcher.dataset.q3vlSuppressClick; }, 0);
         });
     }
 

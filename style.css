@@ -158,12 +158,18 @@
     bottom: 1.25rem;
     box-shadow: 0 8px 24px rgb(0 0 0 / 24%);
     color: var(--button-primary-text-color);
-    cursor: pointer;
+    cursor: grab;
     font-weight: 700;
     padding: 0.55rem 0.9rem;
     position: fixed;
     left: 1.25rem;
+    touch-action: none;
+    user-select: none;
     z-index: 9998;
+}
+
+#q3vl_assistant_launcher:active {
+    cursor: grabbing;
 }
 
 #q3vl_assistant_panel {
