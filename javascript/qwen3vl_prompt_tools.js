@@ -337,6 +337,7 @@
     }
 
     async function analyzeAssistantAttachment(attachment, userText) {
+        const config = assistantConfig();
         const response = await fetch("/qwen3vl-prompt-tools/analyze-image", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -344,6 +345,8 @@
                 image: attachment.dataUrl,
                 filename: attachment.name,
                 prompt: userText || "",
+                local_endpoint: config.local_endpoint,
+                local_model: config.local_model,
                 timeout: 120
             })
         });

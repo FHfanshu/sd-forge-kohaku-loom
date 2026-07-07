@@ -447,13 +447,41 @@ def analyze_reference_image(payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("missing reference image")
     image = _image_from_data_url(image_data)
     user_prompt = str(payload.get("prompt") or "").strip()
+    messages = _reference_image_messages(image, user_prompt)
+    timeout = int(payload.get("timeout") or 120)
+    max_tokens = int(payload.get("max_tokens") or 700)
+    temperature = float(payload.get("temperature") or 0.15)
+    top_p = float(payload.get("top_p") or 0.9)
+
+    local_endpoint = str(payload.get("local_endpoint") or "").strip().rstrip("/")
+    if local_endpoint and _local_endpoint_ready(local_endpoint):
+        try:
+            response = _post_local_chat(
+                local_endpoint,
+                messages,
+                max_tokens,
+                temperature,
+                top_p,
+                timeout,
+                False,
+                str(payload.get("local_model") or DEFAULT_LOCAL_ASSISTANT_MODEL).strip() or DEFAULT_LOCAL_ASSISTANT_MODEL,
+            )
+            text = _extract_message_text(response["choices"][0]["message"])
+            return {
+                "text": text,
+                "model": str(payload.get("local_model") or DEFAULT_LOCAL_ASSISTANT_MODEL).strip() or DEFAULT_LOCAL_ASSISTANT_MODEL,
+                "endpoint": local_endpoint,
+                "source": "existing-local-endpoint",
+            }
+        except Exception:
+            pass
+
+    llama_server_path = resolve_llama_server(str(payload.get("llama_server_path") or ""))
     model_path, mmproj_path = ensure_local_gguf_pair(
         str(payload.get("model_path") or ""),
         str(payload.get("mmproj_path") or ""),
         True,
     )
-    llama_server_path = resolve_llama_server(str(payload.get("llama_server_path") or ""))
-    messages = _reference_image_messages(image, user_prompt)
 
     port = _free_port()
     proc: subprocess.Popen | None = None
@@ -483,14 +511,13 @@ def analyze_reference_image(payload: dict[str, Any]) -> dict[str, Any]:
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
         endpoint = f"http://127.0.0.1:{port}/v1"
-        timeout = int(payload.get("timeout") or 120)
         _wait_server(endpoint, timeout)
         response = _post_local_chat(
             endpoint,
             messages,
-            int(payload.get("max_tokens") or 700),
-            float(payload.get("temperature") or 0.15),
-            float(payload.get("top_p") or 0.9),
+            max_tokens,
+            temperature,
+            top_p,
             timeout,
             False,
         )
@@ -499,6 +526,7 @@ def analyze_reference_image(payload: dict[str, Any]) -> dict[str, Any]:
             "text": text,
             "model": Path(model_path).name,
             "mmproj": Path(mmproj_path).name,
+            "source": "one-shot-local-gguf",
         }
     finally:
         if proc and proc.poll() is None:
@@ -526,6 +554,14 @@ def _image_from_data_url(data_url: str) -> Image.Image:
         return Image.open(io.BytesIO(binary)).convert("RGB")
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError("could not decode reference image") from exc
+
+
+def _local_endpoint_ready(endpoint: str) -> bool:
+    try:
+        with urllib.request.urlopen(endpoint.rstrip("/") + "/models", timeout=2) as resp:
+            return resp.status < 500
+    except Exception:
+        return False
 
 
 def _reference_image_messages(image: Image.Image, user_prompt: str) -> list[dict[str, Any]]:
@@ -795,9 +831,10 @@ def _post_local_chat(
     top_p: float,
     timeout: int,
     enable_thinking: bool,
+    model: str = "local-gguf-once",
 ) -> dict[str, Any]:
     payload = {
-        "model": "local-gguf-once",
+        "model": model,
         "messages": messages,
         "temperature": float(temperature),
         "top_p": float(top_p),
