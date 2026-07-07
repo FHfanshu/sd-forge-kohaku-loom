@@ -243,10 +243,25 @@
 
     function styleTemplateInfo() {
         const root = styleTemplateRoot();
+        const template = root ? textboxValue(root) : optionValue("neta_template_positive");
         return {
-            found: !!root,
-            template: textboxValue(root)
+            found: !!String(template || ""),
+            template: template || ""
         };
+    }
+
+    function optionValue(key) {
+        if (typeof opts !== "undefined" && opts && Object.prototype.hasOwnProperty.call(opts, key)) {
+            return opts[key];
+        }
+        const settings = q3vlApp().querySelector("#settings_json textarea, #settings_json input");
+        if (settings && settings.value) {
+            try {
+                const parsed = JSON.parse(settings.value);
+                if (Object.prototype.hasOwnProperty.call(parsed, key)) return parsed[key];
+            } catch (_error) { }
+        }
+        return "";
     }
 
     function promptHash(text) {
