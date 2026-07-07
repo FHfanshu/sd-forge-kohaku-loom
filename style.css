@@ -82,6 +82,32 @@
     padding: 0;
 }
 
+.q3vl-panel.block,
+.q3vl-panel.generating,
+.q3vl-panel.pending,
+.q3vl-panel.svelte-vt1mxs,
+.q3vl-output-panel.block,
+.q3vl-output-panel.generating,
+.q3vl-output-panel.pending {
+    animation: none !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    outline: 0 !important;
+    padding: 0 !important;
+}
+
+.q3vl-panel.block::before,
+.q3vl-panel.block::after,
+.q3vl-output-panel.block::before,
+.q3vl-output-panel.block::after {
+    animation: none !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    content: none !important;
+    outline: 0 !important;
+}
+
 .q3vl-panel > .form,
 .q3vl-panel > .block,
 .q3vl-panel .q3vl-live-log,
@@ -91,6 +117,15 @@
     border: 1px solid var(--block-border-color);
     border-radius: var(--block-radius);
     padding: clamp(0.55rem, 1.2vw, 0.85rem);
+}
+
+.q3vl-panel > .form.generating,
+.q3vl-panel > .block.generating,
+.q3vl-panel .q3vl-live-log.generating,
+.q3vl-output-panel > .form.generating,
+.q3vl-output-panel > .block.generating {
+    outline: 1px solid var(--primary-500) !important;
+    outline-offset: 2px;
 }
 
 .q3vl-output-panel textarea {
