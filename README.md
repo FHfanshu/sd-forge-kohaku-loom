@@ -57,7 +57,7 @@ The `LLM 助手` button opens a floating chat window. Defaults:
 - Endpoint: `https://api.deepseek.com`
 - Model: `deepseek-v4-pro`
 
-DeepSeek requests use `thinking: {"type":"enabled"}` with `reasoning_effort: "high"` by default.
+DeepSeek requests use `thinking: {"type":"enabled"}` with `reasoning_effort: "high"` and `max_tokens: 8192` by default. Both max tokens and reasoning effort are configurable in the assistant settings.
 
 Older `https://api.deepseek.com/v1` DeepSeek-style endpoints remain accepted; the assistant will append `/chat/completions` to whichever base you configure. Local llama.cpp/OpenAI-compatible endpoints still normally use `/v1`.
 

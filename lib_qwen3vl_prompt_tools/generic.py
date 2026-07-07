@@ -483,7 +483,7 @@ def prompt_assistant_chat(payload: dict[str, Any]) -> dict[str, Any]:
         "messages": request_messages,
         "temperature": float(payload.get("temperature") or 0.35),
         "top_p": float(payload.get("top_p") or 0.9),
-        "max_tokens": int(payload.get("max_tokens") or 2048),
+        "max_tokens": int(payload.get("max_tokens") or 8192),
         "stream": False,
     }
     if backend != "local-lmcpp":

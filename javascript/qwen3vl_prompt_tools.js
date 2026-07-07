@@ -160,8 +160,8 @@
             local_model: get("local_model", "hauhau-qwen3.5-9b-uncensored"),
             temperature: 0.35,
             top_p: 0.9,
-            max_tokens: 2048,
-            reasoning_effort: "high",
+            max_tokens: normalizeAssistantMaxTokens(get("max_tokens", "8192")),
+            reasoning_effort: get("reasoning_effort", "high"),
             timeout: 120
         };
     }
@@ -175,6 +175,12 @@
             if (url.hostname === "api.deepseek.com" && cleaned === "deepseek-reasoner") return "deepseek-v4-pro";
         } catch (_error) { }
         return cleaned;
+    }
+
+    function normalizeAssistantMaxTokens(value) {
+        const parsed = Number.parseInt(String(value || ""), 10);
+        if (!Number.isFinite(parsed) || parsed < 512) return 8192;
+        return Math.min(parsed, 65536);
     }
 
     function saveAssistantConfig() {
@@ -957,6 +963,11 @@
                     </select>
                     <input data-q3vl-setting="endpoint" placeholder="DeepSeek endpoint">
                     <input data-q3vl-setting="model" placeholder="DeepSeek model">
+                    <input data-q3vl-setting="max_tokens" placeholder="Max tokens">
+                    <select data-q3vl-setting="reasoning_effort">
+                        <option value="high">Thinking high</option>
+                        <option value="max">Thinking max</option>
+                    </select>
                     <input data-q3vl-setting="api_key" placeholder="API key" type="password">
                     <input data-q3vl-setting="local_endpoint" placeholder="local lmcpp endpoint">
                     <input data-q3vl-setting="local_model" placeholder="local model">
@@ -990,6 +1001,8 @@
             localStorage.setItem("q3vl_assistant_model", modelInput.value);
         }
         panel.querySelector('[data-q3vl-setting="api_key"]').value = localStorage.getItem("q3vl_assistant_api_key") || "";
+        panel.querySelector('[data-q3vl-setting="max_tokens"]').value = String(normalizeAssistantMaxTokens(localStorage.getItem("q3vl_assistant_max_tokens") || "8192"));
+        panel.querySelector('[data-q3vl-setting="reasoning_effort"]').value = localStorage.getItem("q3vl_assistant_reasoning_effort") || "high";
         panel.querySelector('[data-q3vl-setting="local_endpoint"]').value = localStorage.getItem("q3vl_assistant_local_endpoint") || "http://127.0.0.1:8080/v1";
         panel.querySelector('[data-q3vl-setting="local_model"]').value = localStorage.getItem("q3vl_assistant_local_model") || "hauhau-qwen3.5-9b-uncensored";
         panel.querySelectorAll("[data-q3vl-setting]").forEach(function (input) {
