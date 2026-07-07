@@ -298,23 +298,31 @@
         panel.id = "q3vl_assistant_panel";
         panel.innerHTML = `
             <div class="q3vl-assistant-head"><strong>LLM 提示词助手</strong><button type="button" id="q3vl_assistant_close">×</button></div>
-            <div class="q3vl-assistant-settings">
-                <select data-q3vl-setting="backend">
-                    <option value="deepseek">DeepSeek / OpenAI-compatible</option>
-                    <option value="local-lmcpp">本地 llama.cpp endpoint</option>
-                </select>
-                <input data-q3vl-setting="endpoint" placeholder="DeepSeek endpoint">
-                <input data-q3vl-setting="model" placeholder="DeepSeek model">
-                <input data-q3vl-setting="api_key" placeholder="API key" type="password">
-                <input data-q3vl-setting="local_endpoint" placeholder="local lmcpp endpoint">
-                <input data-q3vl-setting="local_model" placeholder="local model">
-            </div>
+            <details class="q3vl-assistant-config">
+                <summary><span>设置</span><span class="q3vl-assistant-config-hint">后端 / 模型 / API key</span></summary>
+                <div class="q3vl-assistant-settings">
+                    <select data-q3vl-setting="backend">
+                        <option value="deepseek">DeepSeek / OpenAI-compatible</option>
+                        <option value="local-lmcpp">本地 llama.cpp endpoint</option>
+                    </select>
+                    <input data-q3vl-setting="endpoint" placeholder="DeepSeek endpoint">
+                    <input data-q3vl-setting="model" placeholder="DeepSeek model">
+                    <input data-q3vl-setting="api_key" placeholder="API key" type="password">
+                    <input data-q3vl-setting="local_endpoint" placeholder="local lmcpp endpoint">
+                    <input data-q3vl-setting="local_model" placeholder="local model">
+                </div>
+            </details>
             <div id="q3vl_assistant_messages"></div>
             <textarea id="q3vl_assistant_input" placeholder="例如：读取当前提示词，改成三名角色的自拍构图，明确左中右位置。"></textarea>
             <div class="q3vl-assistant-actions"><button type="button" id="q3vl_assistant_read">读取当前 prompt</button><button type="button" id="q3vl_assistant_clear">清空</button><button type="button" id="q3vl_assistant_send">发送</button></div>
         `;
         document.body.appendChild(panel);
         restoreAssistantPosition(panel);
+        const config = panel.querySelector(".q3vl-assistant-config");
+        config.open = localStorage.getItem("q3vl_assistant_config_open") === "1";
+        config.addEventListener("toggle", function () {
+            localStorage.setItem("q3vl_assistant_config_open", config.open ? "1" : "0");
+        });
         const backend = panel.querySelector('[data-q3vl-setting="backend"]');
         backend.value = localStorage.getItem("q3vl_assistant_backend") || "deepseek";
         panel.querySelector('[data-q3vl-setting="endpoint"]').value = localStorage.getItem("q3vl_assistant_endpoint") || "https://api.deepseek.com/v1";
