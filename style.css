@@ -319,6 +319,86 @@
     word-break: break-word;
 }
 
+.q3vl-assistant-msg.q3vl-markdown {
+    white-space: normal;
+}
+
+.q3vl-markdown p,
+.q3vl-markdown ul,
+.q3vl-markdown ol,
+.q3vl-markdown blockquote,
+.q3vl-markdown pre,
+.q3vl-markdown h4,
+.q3vl-markdown h5,
+.q3vl-markdown h6 {
+    margin: 0 0 0.55rem;
+}
+
+.q3vl-markdown > :last-child {
+    margin-bottom: 0;
+}
+
+.q3vl-markdown ul,
+.q3vl-markdown ol {
+    padding-left: 1.2rem;
+}
+
+.q3vl-markdown li + li {
+    margin-top: 0.18rem;
+}
+
+.q3vl-markdown h4,
+.q3vl-markdown h5,
+.q3vl-markdown h6 {
+    color: var(--body-text-color);
+    font-size: 0.95rem;
+    line-height: 1.25;
+}
+
+.q3vl-markdown blockquote {
+    border-left: 3px solid var(--primary-500);
+    color: var(--body-text-color-subdued);
+    padding-left: 0.65rem;
+}
+
+.q3vl-markdown code {
+    background: color-mix(in srgb, var(--body-background-fill) 80%, black 20%);
+    border: 1px solid var(--block-border-color);
+    border-radius: 5px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 0.88em;
+    padding: 0.08rem 0.24rem;
+}
+
+.q3vl-markdown pre {
+    background: color-mix(in srgb, var(--body-background-fill) 76%, black 24%);
+    border: 1px solid var(--block-border-color);
+    border-radius: 8px;
+    max-width: 100%;
+    overflow: auto;
+    padding: 0.62rem;
+}
+
+.q3vl-markdown pre code {
+    background: transparent;
+    border: 0;
+    display: block;
+    padding: 0;
+    white-space: pre;
+}
+
+.q3vl-markdown a {
+    color: var(--link-text-color, var(--primary-500));
+    text-decoration: underline;
+    text-underline-offset: 0.14rem;
+}
+
+.q3vl-markdown hr {
+    border: 0;
+    border-top: 1px solid var(--block-border-color);
+    margin: 0.55rem 0;
+}
+
 .q3vl-assistant-user {
     align-self: flex-end;
     background: var(--primary-500);

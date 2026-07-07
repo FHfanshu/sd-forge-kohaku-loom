@@ -295,12 +295,224 @@
         return null;
     }
 
+    function safeMarkdownHref(href) {
+        const raw = String(href || "").trim();
+        if (!raw) return "";
+        if (raw.startsWith("#")) return raw;
+        try {
+            const url = new URL(raw, window.location.href);
+            if (["http:", "https:", "mailto:"].includes(url.protocol)) return url.href;
+        } catch (_error) { }
+        return "";
+    }
+
+    function appendInlineMarkdown(parent, text) {
+        const value = String(text || "");
+        let index = 0;
+
+        function appendText(until) {
+            if (until > index) parent.appendChild(document.createTextNode(value.slice(index, until)));
+            index = until;
+        }
+
+        while (index < value.length) {
+            if (value.startsWith("`", index)) {
+                const end = value.indexOf("`", index + 1);
+                if (end > index + 1) {
+                    const code = document.createElement("code");
+                    code.textContent = value.slice(index + 1, end);
+                    parent.appendChild(code);
+                    index = end + 1;
+                    continue;
+                }
+            }
+
+            const strongMarker = value.startsWith("**", index) ? "**" : value.startsWith("__", index) ? "__" : "";
+            if (strongMarker) {
+                const end = value.indexOf(strongMarker, index + 2);
+                if (end > index + 2) {
+                    const strong = document.createElement("strong");
+                    appendInlineMarkdown(strong, value.slice(index + 2, end));
+                    parent.appendChild(strong);
+                    index = end + 2;
+                    continue;
+                }
+            }
+
+            const emMarker = value[index] === "*" || value[index] === "_" ? value[index] : "";
+            if (emMarker && value[index + 1] !== emMarker) {
+                const end = value.indexOf(emMarker, index + 1);
+                if (end > index + 1) {
+                    const em = document.createElement("em");
+                    appendInlineMarkdown(em, value.slice(index + 1, end));
+                    parent.appendChild(em);
+                    index = end + 1;
+                    continue;
+                }
+            }
+
+            if (value[index] === "[") {
+                const labelEnd = value.indexOf("]", index + 1);
+                const hrefStart = labelEnd >= 0 && value[labelEnd + 1] === "(" ? labelEnd + 2 : -1;
+                const hrefEnd = hrefStart >= 0 ? value.indexOf(")", hrefStart) : -1;
+                if (labelEnd > index + 1 && hrefEnd > hrefStart) {
+                    const href = safeMarkdownHref(value.slice(hrefStart, hrefEnd));
+                    if (href) {
+                        const link = document.createElement("a");
+                        link.href = href;
+                        link.target = "_blank";
+                        link.rel = "noopener noreferrer";
+                        appendInlineMarkdown(link, value.slice(index + 1, labelEnd));
+                        parent.appendChild(link);
+                        index = hrefEnd + 1;
+                        continue;
+                    }
+                }
+            }
+
+            const nextSpecials = ["`", "*", "_", "["].map(function (char) {
+                const found = value.indexOf(char, index + 1);
+                return found < 0 ? value.length : found;
+            });
+            appendText(Math.min.apply(Math, nextSpecials));
+        }
+    }
+
+    function appendInlineMarkdownWithBreaks(parent, text) {
+        String(text || "").split("\n").forEach(function (line, index) {
+            if (index > 0) parent.appendChild(document.createElement("br"));
+            appendInlineMarkdown(parent, line);
+        });
+    }
+
+    function renderAssistantMarkdown(root, text) {
+        root.textContent = "";
+        root.classList.add("q3vl-markdown");
+        const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
+        let paragraph = [];
+        let list = null;
+        let listType = "";
+        let fence = null;
+
+        function closeList() {
+            list = null;
+            listType = "";
+        }
+
+        function flushParagraph() {
+            if (!paragraph.length) return;
+            const p = document.createElement("p");
+            appendInlineMarkdownWithBreaks(p, paragraph.join("\n"));
+            root.appendChild(p);
+            paragraph = [];
+        }
+
+        function appendListItem(type, text) {
+            flushParagraph();
+            if (!list || listType !== type) {
+                closeList();
+                list = document.createElement(type);
+                listType = type;
+                root.appendChild(list);
+            }
+            const li = document.createElement("li");
+            appendInlineMarkdown(li, text);
+            list.appendChild(li);
+        }
+
+        for (const line of lines) {
+            const fenceMatch = line.match(/^```\s*([\w-]+)?\s*$/);
+            if (fence) {
+                if (fenceMatch) {
+                    const pre = document.createElement("pre");
+                    const code = document.createElement("code");
+                    if (fence.language) code.className = `language-${fence.language}`;
+                    code.textContent = fence.lines.join("\n");
+                    pre.appendChild(code);
+                    root.appendChild(pre);
+                    fence = null;
+                } else {
+                    fence.lines.push(line);
+                }
+                continue;
+            }
+
+            if (fenceMatch) {
+                flushParagraph();
+                closeList();
+                fence = { language: fenceMatch[1] || "", lines: [] };
+                continue;
+            }
+
+            if (!line.trim()) {
+                flushParagraph();
+                closeList();
+                continue;
+            }
+
+            const heading = line.match(/^(#{1,4})\s+(.+)$/);
+            if (heading) {
+                flushParagraph();
+                closeList();
+                const h = document.createElement(`h${Math.min(6, heading[1].length + 3)}`);
+                appendInlineMarkdown(h, heading[2]);
+                root.appendChild(h);
+                continue;
+            }
+
+            if (/^\s*[-*_]{3,}\s*$/.test(line)) {
+                flushParagraph();
+                closeList();
+                root.appendChild(document.createElement("hr"));
+                continue;
+            }
+
+            const quote = line.match(/^>\s?(.+)$/);
+            if (quote) {
+                flushParagraph();
+                closeList();
+                const blockquote = document.createElement("blockquote");
+                appendInlineMarkdown(blockquote, quote[1]);
+                root.appendChild(blockquote);
+                continue;
+            }
+
+            const unordered = line.match(/^\s*[-*+]\s+(.+)$/);
+            if (unordered) {
+                appendListItem("ul", unordered[1]);
+                continue;
+            }
+
+            const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+            if (ordered) {
+                appendListItem("ol", ordered[1]);
+                continue;
+            }
+
+            closeList();
+            paragraph.push(line);
+        }
+
+        if (fence) {
+            const pre = document.createElement("pre");
+            const code = document.createElement("code");
+            code.textContent = fence.lines.join("\n");
+            pre.appendChild(code);
+            root.appendChild(pre);
+        }
+        flushParagraph();
+    }
+
     function addAssistantMessage(role, text) {
         const log = assistantPanel()?.querySelector("#q3vl_assistant_messages");
         if (!log) return;
         const item = document.createElement("div");
         item.className = `q3vl-assistant-msg q3vl-assistant-${role}`;
-        item.textContent = text;
+        if (role === "assistant" || role === "tool") {
+            renderAssistantMarkdown(item, text);
+        } else {
+            item.textContent = text;
+        }
         log.appendChild(item);
         log.scrollTop = log.scrollHeight;
     }
