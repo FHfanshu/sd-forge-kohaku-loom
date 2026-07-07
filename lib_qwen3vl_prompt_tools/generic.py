@@ -58,11 +58,12 @@ Rules:
 - Avoid moralizing or unrelated commentary. Do not include markdown unless asked.
 
 Available UI tools:
+- If native tool calling is available, use tool calls instead of writing tool JSON in normal text.
 - To read the current prompt, reply with exactly: {"tool":"read_prompt","arguments":{"target":"active"}}
-- To edit the prompt, reply with exactly: {"tool":"edit_prompt","arguments":{"target":"txt2img","base_hash":"prompt_hash from read_prompt","patches":[{"operation":"replace","find":"old text","replace":"new text"}]}}
+- To edit the prompt, use edit_prompt with base_hash and a diff. Preferred diff format is a SEARCH/REPLACE block with markers named SEARCH, separator line =======, and ending marker REPLACE.
 - target can be "active", "txt2img", or "img2img".
 - read_prompt returns prompt, prompt_hash, and style_template when the WebUI style template field is found.
-- patch operations are "replace", "replace_all", "replace_n", "insert_after", "insert_before", "append", "prepend", and "delete". Use exact text from read_prompt. For replace/insert, find text must be unique unless allow_multiple is true.
+- edit_prompt also accepts patches with operations "replace", "replace_all", "replace_n", "insert_after", "insert_before", "append", "prepend", and "delete". Use exact text from read_prompt. For replace/insert, find text must be unique unless allow_multiple is true.
 - You must call read_prompt before edit_prompt. edit_prompt must include the base_hash returned by the latest read_prompt for the same concrete target.
 - Never use whole-prompt replacement tools. For an empty prompt, use edit_prompt with operation "append" and the base_hash from read_prompt.
 - Use tools when the user asks to inspect, rewrite, replace, append to, or send a prompt/template. Do not invent current UI text if you need to see it; call read_prompt first.
@@ -102,6 +103,59 @@ REFERENCE_IMAGE_STYLE_PROMPT = """请作为一名顶级的 AI 绘画提示词专
 4. 【通用风格 Prompt】必须在开头或核心位置使用“[在此处替换为您想要生成的主体内容]”作为占位符。
 5. 【通用风格 Prompt】要高度通用，用户只需更换占位符内容，即可在保持原图质感的同时生成全新的画面。
 6. 不要输出推理过程、免责声明或与图片无关的内容。"""
+
+ASSISTANT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_prompt",
+            "description": "Read the current txt2img/img2img prompt and return prompt_hash. Must be called before edit_prompt.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "enum": ["active", "txt2img", "img2img"]},
+                },
+                "required": ["target"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_prompt",
+            "description": "Patch the prompt after read_prompt. Prefer diff using SEARCH/REPLACE blocks; include base_hash from read_prompt.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "enum": ["active", "txt2img", "img2img"]},
+                    "base_hash": {"type": "string", "description": "prompt_hash returned by the latest read_prompt for this target"},
+                    "diff": {
+                        "type": "string",
+                        "description": "One or more blocks: <<<<<<< SEARCH\nold exact text\n=======\nnew exact text\n>>>>>>> REPLACE",
+                    },
+                    "patches": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "operation": {"type": "string", "enum": ["replace", "replace_all", "replace_n", "insert_after", "insert_before", "append", "prepend", "delete"]},
+                                "find": {"type": "string"},
+                                "replace": {"type": "string"},
+                                "text": {"type": "string"},
+                                "separator": {"type": "string"},
+                                "count": {"type": "integer"},
+                                "allow_multiple": {"type": "boolean"},
+                            },
+                            "required": ["operation"],
+                        },
+                    },
+                    "return_prompt": {"type": "boolean"},
+                },
+                "required": ["target", "base_hash"],
+            },
+        },
+    },
+]
 
 TAGGER_MODELS = {
     "WD EVA02 large v3": "SmilingWolf/wd-eva02-large-tagger-v3",
@@ -429,11 +483,15 @@ def prompt_assistant_chat(payload: dict[str, Any]) -> dict[str, Any]:
         "messages": request_messages,
         "temperature": float(payload.get("temperature") or 0.35),
         "top_p": float(payload.get("top_p") or 0.9),
-        "max_tokens": int(payload.get("max_tokens") or 768),
+        "max_tokens": int(payload.get("max_tokens") or 2048),
         "stream": False,
     }
+    if backend != "local-lmcpp":
+        body["tools"] = ASSISTANT_TOOLS
+        body["tool_choice"] = "auto"
     if urllib.parse.urlparse(endpoint).netloc.lower() == "api.deepseek.com":
-        body["thinking"] = {"type": "disabled"}
+        body["thinking"] = {"type": "enabled"}
+        body["reasoning_effort"] = str(payload.get("reasoning_effort") or "high")
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -442,8 +500,36 @@ def prompt_assistant_chat(payload: dict[str, Any]) -> dict[str, Any]:
         detail = response.text.strip()
         raise RuntimeError(f"Assistant API {response.status_code} error from {url}: {detail or response.reason}")
     data = response.json()
-    text = _extract_message_text(data["choices"][0]["message"])
-    return {"text": text, "model": model, "endpoint": endpoint}
+    message = data["choices"][0]["message"]
+    tool_calls = _extract_tool_calls(message)
+    if tool_calls:
+        text = _clean_response_text(message.get("content", ""))
+    else:
+        text = _extract_message_text(message)
+    return {"text": text, "tool_calls": tool_calls, "model": model, "endpoint": endpoint}
+
+
+def _extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
+    calls = message.get("tool_calls") or []
+    result = []
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") or {}
+        name = str(function.get("name") or call.get("name") or "").strip()
+        raw_args = function.get("arguments") if isinstance(function, dict) else call.get("arguments")
+        if not name:
+            continue
+        arguments: Any = raw_args or {}
+        if isinstance(raw_args, str):
+            try:
+                arguments = json.loads(raw_args) if raw_args.strip() else {}
+            except json.JSONDecodeError:
+                arguments = {"diff": raw_args}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        result.append({"tool": name, "arguments": arguments})
+    return result
 
 
 def _assistant_chat_url(endpoint: str) -> str:

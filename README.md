@@ -57,6 +57,8 @@ The `LLM 助手` button opens a floating chat window. Defaults:
 - Endpoint: `https://api.deepseek.com`
 - Model: `deepseek-v4-pro`
 
+DeepSeek requests use `thinking: {"type":"enabled"}` with `reasoning_effort: "high"` by default.
+
 Older `https://api.deepseek.com/v1` DeepSeek-style endpoints remain accepted; the assistant will append `/chat/completions` to whichever base you configure. Local llama.cpp/OpenAI-compatible endpoints still normally use `/v1`.
 
 You can switch the assistant to `本地 llama.cpp endpoint` and reuse a running Hauhau/Qwen3.5 server, for example:
@@ -77,21 +79,21 @@ The model can request UI tools by returning exact JSON. The prompt-edit harness 
 ```
 
 ```json
-{"tool":"edit_prompt","arguments":{"target":"txt2img","base_hash":"prompt_hash from read_prompt","patches":[{"operation":"replace","find":"old phrase","replace":"new phrase"}]}}
+{"tool":"edit_prompt","arguments":{"target":"txt2img","base_hash":"prompt_hash from read_prompt","diff":"<<<<<<< SEARCH\nold exact text\n=======\nnew exact text\n>>>>>>> REPLACE"}}
 ```
 
 `edit_prompt` is refused unless `read_prompt` has already read the same concrete target and `base_hash` matches the current prompt. If the user changes the prompt between read and edit, the edit is rejected and the assistant must read again.
 
 ```json
-{"tool":"edit_prompt","arguments":{"target":"txt2img","base_hash":"fnv1a:...","patches":[{"operation":"replace","find":"left character","replace":"left character holding a phone"},{"operation":"append","separator":"space","text":"clear left / center / right spacing"}]}}
+{"tool":"edit_prompt","arguments":{"target":"txt2img","base_hash":"fnv1a:...","diff":"<<<<<<< SEARCH\nleft character\n=======\nleft character holding a phone\n>>>>>>> REPLACE"}}
 ```
 
-Patch operations: `replace`, `replace_all`, `replace_n`, `insert_after`, `insert_before`, `append`, `prepend`, and `delete`. `replace` and insert operations require a unique `find` string unless `allow_multiple` is set. Edit tools return a preview by default; pass `return_prompt: true` only when the full updated prompt is needed.
+`edit_prompt` accepts SEARCH/REPLACE diff blocks first, plus simple unified diff hunks. It still accepts structured patch operations as a fallback: `replace`, `replace_all`, `replace_n`, `insert_after`, `insert_before`, `append`, `prepend`, and `delete`. `replace` and insert operations require a unique `find` string unless `allow_multiple` is set. Edit tools return a preview by default; pass `return_prompt: true` only when the full updated prompt is needed.
 
 The frontend executes these tools and sends the result back to the assistant. Targets are `active`, `txt2img`, or `img2img`. `read_prompt` also includes the WebUI style template when the field can be found by label, such as `风格模版` / `风格模板`.
 
 ## Notes
 
 - The Anima style template intentionally outputs English.
-- `thinking` is optional and disabled by default because Qwen3.5 VLM may spend the token budget in `reasoning_content` without producing final `content`.
+- DeepSeek assistant thinking is enabled with high reasoning effort. Local Qwen3.5 VLM image analysis keeps thinking disabled to avoid spending the token budget in `reasoning_content` without producing final `content`.
 - Downloaded GGUF models and llama.cpp binaries are ignored by git.

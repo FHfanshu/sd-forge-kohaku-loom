@@ -160,7 +160,8 @@
             local_model: get("local_model", "hauhau-qwen3.5-9b-uncensored"),
             temperature: 0.35,
             top_p: 0.9,
-            max_tokens: 768,
+            max_tokens: 2048,
+            reasoning_effort: "high",
             timeout: 120
         };
     }
@@ -341,6 +342,63 @@
         return { ok: false, error: `unknown patch operation: ${operation}`, text: text };
     }
 
+    function normalizeDiffText(diff) {
+        if (Array.isArray(diff)) return diff.join("\n").replace(/\r\n?/g, "\n");
+        return String(diff || "").replace(/\r\n?/g, "\n");
+    }
+
+    function patchesFromSearchReplaceBlocks(diff) {
+        const patches = [];
+        const pattern = /<<<<<<< SEARCH\s*\n([\s\S]*?)\n=======\s*\n([\s\S]*?)\n>>>>>>> REPLACE/g;
+        let match;
+        while ((match = pattern.exec(diff)) !== null) {
+            patches.push({ operation: "replace", find: match[1], replace: match[2] });
+        }
+        return patches;
+    }
+
+    function patchesFromUnifiedDiff(diff) {
+        const patches = [];
+        const lines = diff.split("\n");
+        let removed = [];
+        let added = [];
+
+        function flush() {
+            if (removed.length || added.length) {
+                patches.push({ operation: "replace", find: removed.join("\n"), replace: added.join("\n") });
+                removed = [];
+                added = [];
+            }
+        }
+
+        for (const line of lines) {
+            if (line.startsWith("---") || line.startsWith("+++")) continue;
+            if (line.startsWith("@@")) {
+                flush();
+                continue;
+            }
+            if (line.startsWith("-")) {
+                removed.push(line.slice(1));
+                continue;
+            }
+            if (line.startsWith("+")) {
+                added.push(line.slice(1));
+                continue;
+            }
+            flush();
+        }
+        flush();
+        return patches.filter(function (patch) { return patch.find || patch.replace; });
+    }
+
+    function patchesFromDiff(diff) {
+        const text = normalizeDiffText(diff).trim();
+        if (!text) return [];
+        const searchReplace = patchesFromSearchReplaceBlocks(text);
+        if (searchReplace.length) return searchReplace;
+        return patchesFromUnifiedDiff(text);
+    }
+
     function patchPromptRoot(root, patches, baseHash) {
         if (!root) return { ok: false, error: "prompt field not found", prompt: "" };
         const target = root.querySelector("textarea") || root.querySelector("input");
@@ -391,6 +449,7 @@
         const item = promptRootForTarget(args.target || "active");
         const readState = assistantState.promptReads[item.target];
         const baseHash = String(args.base_hash || args.prompt_hash || "").trim();
+        const patchList = args.diff !== undefined ? patchesFromDiff(args.diff) : patches;
         if (!readState) {
             return { ok: false, target: item.target, error: "must call read_prompt for this target before edit_prompt" };
         }
@@ -400,7 +459,10 @@
         if (baseHash !== readState.hash) {
             return { ok: false, target: item.target, error: "base_hash does not match the latest read_prompt result; read again", last_read_hash: readState.hash };
         }
-        const result = compactPromptPatchResult(patchPromptRoot(item.root, patches, baseHash), Boolean(args.return_prompt));
+        if (!Array.isArray(patchList) || !patchList.length) {
+            return { ok: false, target: item.target, error: "edit_prompt requires diff or patches" };
+        }
+        const result = compactPromptPatchResult(patchPromptRoot(item.root, patchList, baseHash), Boolean(args.return_prompt));
         if (result.ok) {
             switchMainTab(item.target);
             assistantState.promptReads[item.target] = {
@@ -806,6 +868,20 @@
         return await response.json();
     }
 
+    function normalizeAssistantToolCalls(result, text) {
+        const calls = Array.isArray(result.tool_calls) ? result.tool_calls : [];
+        if (calls.length) {
+            return calls.map(function (call) {
+                return {
+                    tool: call.tool || call.name,
+                    arguments: call.arguments || {}
+                };
+            }).filter(function (call) { return call.tool; });
+        }
+        const parsed = parseAssistantTool(text);
+        return parsed ? [parsed] : [];
+    }
+
     async function runAssistantLoop(userText, attachment) {
         const effectiveText = userText || (attachment ? "请根据附件例图分析构图和风格，帮助我整理提示词。" : "");
         if (effectiveText || attachment) {
@@ -831,16 +907,18 @@
                 addAssistantMessage("status", "思考中...");
                 const result = await callPromptAssistant();
                 const text = result.text || "";
-                const tool = parseAssistantTool(text);
-                if (!tool) {
+                const toolCalls = normalizeAssistantToolCalls(result, text);
+                if (!toolCalls.length) {
                     assistantState.messages.push({ role: "assistant", content: text });
                     addAssistantMessage("assistant", text);
                     return;
                 }
-                assistantState.messages.push({ role: "assistant", content: text });
-                const toolResult = executeAssistantTool(tool);
-                addAssistantMessage("tool", `工具 ${tool.tool || tool.name}: ${toolResult.ok ? "完成" : "失败"}`);
-                assistantState.messages.push({ role: "user", content: `Tool result for ${tool.tool || tool.name}: ${JSON.stringify(toolResult)}` });
+                assistantState.messages.push({ role: "assistant", content: text || `Tool request: ${toolCalls.map(function (call) { return call.tool; }).join(", ")}` });
+                for (const tool of toolCalls) {
+                    const toolResult = executeAssistantTool(tool);
+                    addAssistantMessage("tool", `工具 ${tool.tool || tool.name}: ${toolResult.ok ? "完成" : "失败"}`);
+                    assistantState.messages.push({ role: "user", content: `Tool result for ${tool.tool || tool.name}: ${JSON.stringify(toolResult)}` });
+                }
             }
             addAssistantMessage("assistant", "工具调用次数过多，已停止。请换一种更直接的指令。比如：读取当前提示词并改成三人自拍构图。 ");
         } catch (error) {
