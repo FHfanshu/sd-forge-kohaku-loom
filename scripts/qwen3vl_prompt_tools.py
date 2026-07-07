@@ -94,6 +94,25 @@ def _assistant_api(_: gr.Blocks, app):
         except Exception as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
 
+    @app.get("/qwen3vl-prompt-tools/prompt-styles")
+    async def qwen3vl_prompt_styles():
+        try:
+            from modules import shared
+
+            styles = []
+            prompt_styles = getattr(shared, "prompt_styles", None)
+            for style in getattr(prompt_styles, "styles", {}).values():
+                styles.append(
+                    {
+                        "name": getattr(style, "name", ""),
+                        "prompt": getattr(style, "prompt", ""),
+                        "negative_prompt": getattr(style, "negative_prompt", ""),
+                    }
+                )
+            return {"styles": styles}
+        except Exception as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+
 
 def _after_component(component, **kwargs):
     elem_id = kwargs.get("elem_id")

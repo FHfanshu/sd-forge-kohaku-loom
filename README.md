@@ -90,7 +90,7 @@ The model can request UI tools by returning exact JSON. The prompt-edit harness 
 
 `edit_prompt` accepts SEARCH/REPLACE diff blocks first, plus simple unified diff hunks. It still accepts structured patch operations as a fallback: `replace`, `replace_all`, `replace_n`, `insert_after`, `insert_before`, `append`, `prepend`, and `delete`. `replace` and insert operations require a unique `find` string unless `allow_multiple` is set. Edit tools return a preview by default; pass `return_prompt: true` only when the full updated prompt is needed.
 
-The frontend executes these tools and sends the result back to the assistant. Targets are `active`, `txt2img`, or `img2img`. `read_prompt` also includes the Forge `neta_template_positive` style template, using the settings component, global `opts`, or hidden `settings_json` as fallbacks.
+The frontend executes these tools and sends the result back to the assistant. Targets are `active`, `txt2img`, or `img2img`. `read_prompt` also includes the current `txt2img_styles` / `img2img_styles` selector text as `style_selector`, maps selected style names to full prompt text in `selected_styles`, and includes Forge `neta_template_positive` as `forge_positive_template` using the settings component, global `opts`, or hidden `settings_json` as fallbacks.
 
 ## Notes
 

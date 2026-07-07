@@ -62,7 +62,7 @@ Available UI tools:
 - To read the current prompt, reply with exactly: {"tool":"read_prompt","arguments":{"target":"active"}}
 - To edit the prompt, use edit_prompt with base_hash and a diff. Preferred diff format is a SEARCH/REPLACE block with markers named SEARCH, separator line =======, and ending marker REPLACE.
 - target can be "active", "txt2img", or "img2img".
-- read_prompt returns prompt, prompt_hash, and style_template when the WebUI style template field is found.
+- read_prompt returns prompt, prompt_hash, style_selector, selected_styles, forge_positive_template, and style_template when available.
 - edit_prompt also accepts patches with operations "replace", "replace_all", "replace_n", "insert_after", "insert_before", "append", "prepend", and "delete". Use exact text from read_prompt. For replace/insert, find text must be unique unless allow_multiple is true.
 - You must call read_prompt before edit_prompt. edit_prompt must include the base_hash returned by the latest read_prompt for the same concrete target.
 - Never use whole-prompt replacement tools. For an empty prompt, use edit_prompt with operation "append" and the base_hash from read_prompt.
@@ -109,7 +109,7 @@ ASSISTANT_TOOLS = [
         "type": "function",
         "function": {
             "name": "read_prompt",
-            "description": "Read the current txt2img/img2img prompt and return prompt_hash. Must be called before edit_prompt.",
+            "description": "Read the current txt2img/img2img prompt, prompt_hash, and selected WebUI Styles details. Must be called before edit_prompt.",
             "parameters": {
                 "type": "object",
                 "properties": {

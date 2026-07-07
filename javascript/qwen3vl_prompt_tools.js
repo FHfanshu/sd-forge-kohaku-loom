@@ -141,7 +141,8 @@
     const assistantState = {
         messages: [],
         attachment: null,
-        promptReads: {}
+        promptReads: {},
+        promptStyles: null
     };
 
     function assistantConfig() {
@@ -212,6 +213,89 @@
         return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
     }
 
+    function visibleText(node) {
+        return String(node && node.textContent ? node.textContent : "").replace(/\s+/g, " ").trim();
+    }
+
+    function styleSelectorValue(target) {
+        const app = q3vlApp();
+        const resolved = target === "img2img" ? "img2img" : "txt2img";
+        const root = app.querySelector(`#${resolved}_styles`);
+        if (!root) return "";
+
+        const input = root.querySelector("label > div input, input[autocomplete='off'], input[role='combobox'], input:not([type]), textarea");
+        const inputValue = input && String(input.value || "").trim();
+        if (inputValue) return inputValue;
+
+        const ignored = new Set(["styles", "style", "风格", "风格模板", "风格模版", ""]);
+        const candidates = [];
+        root.querySelectorAll("[data-testid='selected-option'], [data-testid='token'], .token, .selected, button, span").forEach(function (node) {
+            const text = normalizedLabelText(node.textContent);
+            if (!ignored.has(text)) candidates.push(visibleText(node));
+        });
+        if (candidates.length) return Array.from(new Set(candidates)).join(", ");
+
+        const text = visibleText(root)
+            .replace(/^styles?\s*/i, "")
+            .replace(/^风格(?:模板|模版)?\s*/, "")
+            .trim();
+        return ignored.has(normalizedLabelText(text)) ? "" : text;
+    }
+
+    async function promptStyles() {
+        if (Array.isArray(assistantState.promptStyles)) return assistantState.promptStyles;
+        const endpoints = ["/qwen3vl-prompt-tools/prompt-styles", "/sdapi/v1/prompt-styles"];
+        for (const endpoint of endpoints) {
+            try {
+                const response = await fetch(endpoint);
+                if (!response.ok) continue;
+                const data = await response.json();
+                const styles = Array.isArray(data) ? data : data.styles;
+                if (Array.isArray(styles)) {
+                    assistantState.promptStyles = styles.filter(function (style) { return style && style.name; });
+                    return assistantState.promptStyles;
+                }
+            } catch (_error) { }
+        }
+        assistantState.promptStyles = [];
+        return assistantState.promptStyles;
+    }
+
+    function selectedStyleDetails(selector, styles) {
+        const selected = String(selector || "").trim();
+        if (!selected || !Array.isArray(styles) || !styles.length) return [];
+        const ignored = new Set(["none", "styles", "style", "风格", "风格模板", "风格模版", ""]);
+        const byName = new Map();
+        styles.forEach(function (style) {
+            byName.set(normalizedLabelText(style.name), style);
+        });
+
+        const parts = selected.split(/[,\n]/).map(function (part) { return normalizedLabelText(part); }).filter(Boolean);
+        const matches = [];
+        parts.forEach(function (part) {
+            const style = byName.get(part);
+            if (style && !ignored.has(part)) matches.push(style);
+        });
+        if (!matches.length) {
+            const normalizedSelected = normalizedLabelText(selected);
+            styles.forEach(function (style) {
+                const name = normalizedLabelText(style.name);
+                if (!ignored.has(name) && normalizedSelected.includes(name)) matches.push(style);
+            });
+        }
+        return Array.from(new Map(matches.map(function (style) { return [style.name, style]; })).values());
+    }
+
+    function styleDetailsText(details) {
+        if (!details.length) return "";
+        return details.map(function (style) {
+            const lines = [`Style ${style.name}:`];
+            if (style.prompt) lines.push(`positive: ${style.prompt}`);
+            if (style.negative_prompt) lines.push(`negative: ${style.negative_prompt}`);
+            return lines.join("\n");
+        }).join("\n\n");
+    }
+
     function styleTemplateRoot() {
         const app = q3vlApp();
         const direct = app.querySelector(
@@ -233,6 +317,7 @@
             if (!text || !labelNeedles.some(function (needle) { return text.includes(needle); })) continue;
             let node = label.parentElement;
             for (let i = 0; i < 8 && node && node !== document.body; i += 1) {
+                if (node.id === "txt2img_styles" || node.id === "img2img_styles") break;
                 const control = node.querySelector("textarea, input");
                 if (control && !control.closest("#q3vl_assistant_panel")) return node;
                 node = node.parentElement;
@@ -241,12 +326,29 @@
         return null;
     }
 
-    function styleTemplateInfo() {
+    async function styleTemplateInfo(target) {
         const root = styleTemplateRoot();
-        const template = root ? textboxValue(root) : optionValue("neta_template_positive");
+        const selector = styleSelectorValue(target);
+        const selectedStyles = selectedStyleDetails(selector, await promptStyles());
+        const styleDetails = styleDetailsText(selectedStyles);
+        const forgeTemplate = root ? textboxValue(root) : optionValue("neta_template_positive");
+        const pieces = [];
+        if (selector) pieces.push(`Selected WebUI Styles: ${selector}`);
+        if (styleDetails) pieces.push(styleDetails);
+        if (forgeTemplate) pieces.push(`Forge neta_template_positive: ${forgeTemplate}`);
+        const template = pieces.join("\n\n");
         return {
             found: !!String(template || ""),
-            template: template || ""
+            template: template || "",
+            style_selector: selector || "",
+            selected_styles: selectedStyles.map(function (style) {
+                return {
+                    name: style.name || "",
+                    prompt: style.prompt || "",
+                    negative_prompt: style.negative_prompt || ""
+                };
+            }),
+            forge_positive_template: forgeTemplate || ""
         };
     }
 
@@ -274,11 +376,11 @@
         return `fnv1a:${(hash >>> 0).toString(16).padStart(8, "0")}:${value.length}`;
     }
 
-    function readPromptTool(target) {
+    async function readPromptTool(target) {
         const item = promptRootForTarget(target || "active");
         const prompt = textboxValue(item.root);
         const hash = promptHash(prompt);
-        const template = styleTemplateInfo();
+        const template = await styleTemplateInfo(item.target);
         assistantState.promptReads[item.target] = {
             hash: hash,
             prompt: prompt,
@@ -290,7 +392,10 @@
             prompt: prompt,
             prompt_hash: hash,
             style_template_found: template.found,
-            style_template: template.template
+            style_template: template.template,
+            style_selector: template.style_selector,
+            selected_styles: template.selected_styles,
+            forge_positive_template: template.forge_positive_template
         };
     }
 
@@ -495,11 +600,11 @@
         return Object.assign({ target: item.target }, result);
     }
 
-    function executeAssistantTool(tool) {
+    async function executeAssistantTool(tool) {
         const name = tool.tool || tool.name;
         const args = tool.arguments || {};
         if (name === "read_prompt" || name === "get_current_prompt") {
-            return readPromptTool(args.target || "active");
+            return await readPromptTool(args.target || "active");
         }
         if (name === "edit_prompt") {
             return editPromptTool(args, args.patches || args.patch || []);
@@ -936,7 +1041,7 @@
                 }
                 assistantState.messages.push({ role: "assistant", content: text || `Tool request: ${toolCalls.map(function (call) { return call.tool; }).join(", ")}` });
                 for (const tool of toolCalls) {
-                    const toolResult = executeAssistantTool(tool);
+                    const toolResult = await executeAssistantTool(tool);
                     addAssistantMessage("tool", `工具 ${tool.tool || tool.name}: ${toolResult.ok ? "完成" : "失败"}`);
                     assistantState.messages.push({ role: "user", content: `Tool result for ${tool.tool || tool.name}: ${JSON.stringify(toolResult)}` });
                 }
