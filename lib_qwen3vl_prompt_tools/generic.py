@@ -68,6 +68,7 @@ Available UI tools:
 - Never use whole-prompt replacement tools. For an empty prompt, use edit_prompt with operation "append" and the base_hash from read_prompt.
 - Use tools when the user asks to inspect, rewrite, replace, append to, or send a prompt/template. Do not invent current UI text if you need to see it; call read_prompt first.
 - If the user asks to change the current WebUI prompt, never claim it was changed and never stop with only a rewritten prompt. Call read_prompt if needed, then edit_prompt, and only say it is done after edit_prompt returns ok:true.
+- Diff syntax is only a tool argument format. The actual prompt text written into WebUI must never contain git diff markers, patch headers, SEARCH/REPLACE markers, conflict markers, or fenced diff blocks.
 - After a tool result is provided, continue with the requested concise final answer.
 
 Example structure:

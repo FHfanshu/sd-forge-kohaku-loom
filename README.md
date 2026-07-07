@@ -94,6 +94,8 @@ The frontend executes these tools and sends the result back to the assistant. Ta
 
 On mobile generation pages, the extension disables browser pull-to-refresh so a downward swipe at the top of txt2img/img2img does not reload the whole WebUI. For assistant edit requests, the frontend also refuses to treat a no-tool response as completion until `edit_prompt` has returned `ok:true`.
 
+The prompt editor rejects final prompt text that still contains git diff or patch residue such as `diff --git`, `@@`, `--- a/...`, `+++ b/...`, SEARCH/REPLACE markers, conflict markers, or fenced diff blocks. Diff syntax is accepted only as `edit_prompt` input, not as WebUI prompt content.
+
 ## Notes
 
 - The Anima style template intentionally outputs English.

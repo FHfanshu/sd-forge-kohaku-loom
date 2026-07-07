@@ -525,6 +525,28 @@
         return patchesFromUnifiedDiff(text);
     }
 
+    function promptPatchResidue(text) {
+        const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
+        const matches = [];
+        const patterns = [
+            /\bgit diff\b/i,
+            /\bdiff --git\b/i,
+            /^\s*index [0-9a-f]{6,}\.\.[0-9a-f]{6,}/i,
+            /^\s*(?:---|\+\+\+)\s+(?:a\/|b\/|\/dev\/null)/,
+            /^\s*@@\s+[-+0-9, ]+@@/,
+            /^\s*<<<<<<<\s*(?:SEARCH|HEAD|[\w.-]+)\b/,
+            /^\s*=======\s*$/,
+            /^\s*>>>>>>>\s*(?:REPLACE|[\w.-]+)\b/,
+            /^\s*```\s*(?:diff|patch)\b/i
+        ];
+        lines.forEach(function (line, index) {
+            if (patterns.some(function (pattern) { return pattern.test(line); })) {
+                matches.push({ line: index + 1, text: line.slice(0, 120) });
+            }
+        });
+        return matches;
+    }
+
     function patchPromptRoot(root, patches, baseHash) {
         if (!root) return { ok: false, error: "prompt field not found", prompt: "" };
         const target = root.querySelector("textarea") || root.querySelector("input");
@@ -546,6 +568,16 @@
                 return { ok: false, error: result.error, failed_index: i, results: results, prompt: next };
             }
             next = result.text;
+        }
+        const residue = promptPatchResidue(next);
+        if (residue.length) {
+            return {
+                ok: false,
+                error: "refusing to write prompt: final prompt contains git diff/patch residue. Regenerate clean prompt text only; use diff syntax only inside edit_prompt arguments.",
+                residue: residue,
+                prompt: current,
+                attempted_prompt_preview: truncateAssistantText(next, 500)
+            };
         }
         setNativeValueIfAvailable(target, next);
         return { ok: true, results: results, prompt: next, prompt_hash: promptHash(next) };
