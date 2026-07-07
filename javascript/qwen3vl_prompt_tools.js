@@ -288,6 +288,7 @@
             <div class="q3vl-assistant-actions"><button type="button" id="q3vl_assistant_read">读取当前 prompt</button><button type="button" id="q3vl_assistant_clear">清空</button><button type="button" id="q3vl_assistant_send">发送</button></div>
         `;
         document.body.appendChild(panel);
+        restoreAssistantPosition(panel);
         const backend = panel.querySelector('[data-q3vl-setting="backend"]');
         backend.value = localStorage.getItem("q3vl_assistant_backend") || "deepseek";
         panel.querySelector('[data-q3vl-setting="endpoint"]').value = localStorage.getItem("q3vl_assistant_endpoint") || "https://api.deepseek.com/v1";
@@ -301,6 +302,7 @@
         });
         launcher.addEventListener("click", function () { panel.classList.toggle("q3vl-assistant-open"); });
         panel.querySelector("#q3vl_assistant_close").addEventListener("click", function () { panel.classList.remove("q3vl-assistant-open"); });
+        makeAssistantDraggable(panel, panel.querySelector(".q3vl-assistant-head"));
         panel.querySelector("#q3vl_assistant_send").addEventListener("click", function () {
             const input = panel.querySelector("#q3vl_assistant_input");
             const text = input.value.trim();
@@ -320,6 +322,66 @@
             assistantState.messages = [];
             panel.querySelector("#q3vl_assistant_messages").textContent = "";
         });
+    }
+
+    function restoreAssistantPosition(panel) {
+        const raw = localStorage.getItem("q3vl_assistant_position");
+        if (!raw || window.matchMedia("(max-width: 720px)").matches) return;
+        try {
+            const pos = JSON.parse(raw);
+            if (Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
+                panel.style.left = `${Math.max(8, Math.min(pos.left, window.innerWidth - 120))}px`;
+                panel.style.top = `${Math.max(8, Math.min(pos.top, window.innerHeight - 80))}px`;
+                panel.style.right = "auto";
+                panel.style.bottom = "auto";
+            }
+        } catch (_error) { }
+    }
+
+    function makeAssistantDraggable(panel, handle) {
+        if (!panel || !handle || handle.dataset.q3vlDragBound) return;
+        handle.dataset.q3vlDragBound = "1";
+        let dragging = false;
+        let startX = 0;
+        let startY = 0;
+        let startLeft = 0;
+        let startTop = 0;
+
+        function pointerDown(event) {
+            if (event.target && event.target.closest("button")) return;
+            if (window.matchMedia("(max-width: 720px)").matches) return;
+            const rect = panel.getBoundingClientRect();
+            dragging = true;
+            startX = event.clientX;
+            startY = event.clientY;
+            startLeft = rect.left;
+            startTop = rect.top;
+            panel.style.left = `${rect.left}px`;
+            panel.style.top = `${rect.top}px`;
+            panel.style.right = "auto";
+            panel.style.bottom = "auto";
+            handle.setPointerCapture?.(event.pointerId);
+            event.preventDefault();
+        }
+
+        function pointerMove(event) {
+            if (!dragging) return;
+            const left = Math.max(8, Math.min(startLeft + event.clientX - startX, window.innerWidth - panel.offsetWidth - 8));
+            const top = Math.max(8, Math.min(startTop + event.clientY - startY, window.innerHeight - panel.offsetHeight - 8));
+            panel.style.left = `${left}px`;
+            panel.style.top = `${top}px`;
+        }
+
+        function pointerUp() {
+            if (!dragging) return;
+            dragging = false;
+            const rect = panel.getBoundingClientRect();
+            localStorage.setItem("q3vl_assistant_position", JSON.stringify({ left: rect.left, top: rect.top }));
+        }
+
+        handle.addEventListener("pointerdown", pointerDown);
+        window.addEventListener("pointermove", pointerMove);
+        window.addEventListener("pointerup", pointerUp);
     }
 
     function setupQwenTools() {

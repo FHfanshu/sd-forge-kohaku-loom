@@ -162,7 +162,7 @@
     font-weight: 700;
     padding: 0.55rem 0.9rem;
     position: fixed;
-    right: 1.25rem;
+    left: 1.25rem;
     z-index: 9998;
 }
 
@@ -178,7 +178,7 @@
     max-height: min(720px, calc(100vh - 6rem));
     padding: 0.8rem;
     position: fixed;
-    right: 1.25rem;
+    left: 1.25rem;
     width: min(460px, calc(100vw - 2rem));
     z-index: 9999;
 }
@@ -193,6 +193,11 @@
     display: flex;
     gap: 0.5rem;
     justify-content: space-between;
+}
+
+.q3vl-assistant-head {
+    cursor: move;
+    user-select: none;
 }
 
 .q3vl-assistant-settings {
@@ -278,6 +283,35 @@
 
     .q3vl-inline-actions {
         overflow-x: auto;
+    }
+
+    #q3vl_assistant_launcher {
+        bottom: 0.8rem;
+        left: 0.8rem;
+        right: auto;
+    }
+
+    #q3vl_assistant_panel {
+        border-radius: 12px 12px 0 0;
+        bottom: 0;
+        left: 0;
+        max-height: 86vh;
+        right: 0;
+        top: auto !important;
+        width: 100vw;
+    }
+
+    .q3vl-assistant-head {
+        cursor: default;
+    }
+
+    .q3vl-assistant-settings {
+        grid-template-columns: 1fr;
+    }
+
+    .q3vl-assistant-settings select,
+    .q3vl-assistant-settings input[data-q3vl-setting="api_key"] {
+        grid-column: auto;
     }
 }
 
