@@ -2,7 +2,7 @@
 
 Prompt reverse-engineering tools for Forge Neo.
 
-The main workflow is `WD tagger + llama.cpp`: generate WD tags from an image, then use a local Qwen3.5 VLM GGUF to create an English natural-language prompt suitable for Anima-style image generation. The Krea2 / Qwen3-VL path is kept as a fallback.
+The main workflow is `WD tagger + llama.cpp`: generate WD tags from an image, then use a selectable local VLM GGUF to create an English natural-language prompt suitable for Anima-style image generation. The Krea2 / Qwen3-VL path is kept as a fallback.
 
 ## Features
 
@@ -17,7 +17,7 @@ The main workflow is `WD tagger + llama.cpp`: generate WD tags from an image, th
 - Prompt assistant can use DeepSeek/OpenAI-compatible APIs or a local llama.cpp endpoint.
 - Prompt assistant can read and replace the current txt2img/img2img prompt through UI tools.
 - Prompt assistant can read/write the WebUI style template / trigger-word template when the field is present.
-- Prompt assistant image attachments are analyzed by local Qwen3.5 GGUF VLM first; the text LLM receives only the visual notes.
+- Prompt assistant image attachments are analyzed by a selectable local GGUF VLM first; the DeepSeek/text LLM receives only the visual notes.
 
 ## Default Model
 
@@ -52,7 +52,7 @@ You can also set `LLAMA_SERVER_EXE` or fill the path manually in the UI.
 
 ## Floating Prompt Assistant
 
-The `LLM 助手` button opens a floating chat window. Defaults:
+The `LLM 助手` button opens a floating chat window. Text-assistant defaults:
 
 - Endpoint: `https://api.deepseek.com`
 - Model: `deepseek-v4-pro`
@@ -61,7 +61,9 @@ DeepSeek requests use `thinking: {"type":"enabled"}` with `reasoning_effort: "hi
 
 Older `https://api.deepseek.com/v1` DeepSeek-style endpoints remain accepted; the assistant will append `/chat/completions` to whichever base you configure. Local llama.cpp/OpenAI-compatible endpoints still normally use `/v1`.
 
-You can switch the assistant to `本地 llama.cpp endpoint` and reuse a running Hauhau/Qwen3.5 server, for example:
+You can switch the text assistant to `本地 llama.cpp endpoint`, but DeepSeek remains the default text assistant. Image attachments use a separate local VLM configuration with presets for `Gemma 4 12B`, `Qwen3.5 原版 9B`, `Qwen3.5 破限版 9B`, plus `自定义`. The local VLM thinking switch is optional and off by default.
+
+For local text-assistant testing, an endpoint can still be configured, for example:
 
 ```text
 http://127.0.0.1:8080/v1
@@ -70,7 +72,7 @@ hauhau-qwen3.5-9b-uncensored
 
 The assistant is instructed to generate and revise image-generation prompts, especially multi-character spatial layouts such as left / center / right, foreground / background, interactions, and distinct per-character traits.
 
-Use `附图` to attach a reference image. The extension first asks the local Qwen3.5 9B GGUF VLM to produce a detailed Chinese image caption with subject/spatial facts plus a subject-agnostic reusable style prompt, then sends those visual notes into the assistant conversation. The local VLM does not receive the user's chat text, so the image analysis is not biased by the editing request. This lets text-only remote models such as DeepSeek V4 Pro work from image references without receiving image data directly.
+Use `附图` to attach a reference image. The extension first asks the selected local GGUF VLM to produce a detailed Chinese image caption with subject/spatial facts plus a subject-agnostic reusable style prompt, then sends those visual notes into the assistant conversation. The local VLM does not receive the user's chat text, so the image analysis is not biased by the editing request. This lets text-only remote models such as DeepSeek V4 Pro work from image references without receiving image data directly.
 
 The model can request UI tools by returning exact JSON. The prompt-edit harness exposes only read and edit operations:
 
@@ -99,5 +101,5 @@ The prompt editor rejects final prompt text that still contains git diff or patc
 ## Notes
 
 - The Anima style template intentionally outputs English.
-- DeepSeek assistant thinking is enabled with high reasoning effort. Local Qwen3.5 VLM image analysis keeps thinking disabled to avoid spending the token budget in `reasoning_content` without producing final `content`.
+- DeepSeek assistant thinking is enabled with high reasoning effort. Local VLM image analysis exposes a separate optional thinking switch; keep it off if the model spends the token budget in `reasoning_content` without producing final `content`.
 - Downloaded GGUF models and llama.cpp binaries are ignored by git.

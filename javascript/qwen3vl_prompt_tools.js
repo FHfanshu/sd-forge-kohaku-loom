@@ -145,6 +145,25 @@
         promptStyles: null
     };
 
+    const q3vlVisionPresets = {
+        "Gemma 4 12B": "gemma-4-12b-it",
+        "Qwen3.5 原版 9B": "qwen3.5-9b-vlm",
+        "Qwen3.5 破限版 9B": "hauhau-qwen3.5-9b-uncensored",
+        "自定义": ""
+    };
+
+    function defaultVisionPreset() {
+        return "Gemma 4 12B";
+    }
+
+    function visionModelForPreset(preset) {
+        return q3vlVisionPresets[preset] || q3vlVisionPresets[defaultVisionPreset()] || "local-vlm";
+    }
+
+    function configBool(value) {
+        return ["1", "true", "yes", "on", "enabled"].includes(String(value || "").trim().toLowerCase());
+    }
+
     function assistantConfig() {
         const panel = assistantPanel();
         const get = function (name, fallback) {
@@ -152,6 +171,7 @@
             return value || fallback;
         };
         const endpoint = get("endpoint", "https://api.deepseek.com");
+        const visionPreset = get("vision_preset", defaultVisionPreset());
         return {
             backend: get("backend", "deepseek"),
             endpoint: endpoint,
@@ -159,6 +179,12 @@
             api_key: get("api_key", ""),
             local_endpoint: get("local_endpoint", "http://127.0.0.1:8080/v1"),
             local_model: get("local_model", "hauhau-qwen3.5-9b-uncensored"),
+            vision_preset: visionPreset,
+            vision_endpoint: get("vision_endpoint", "http://127.0.0.1:8080/v1"),
+            vision_model: get("vision_model", visionModelForPreset(visionPreset)),
+            vision_model_path: get("vision_model_path", ""),
+            vision_mmproj_path: get("vision_mmproj_path", ""),
+            vision_thinking: configBool(get("vision_thinking", "0")),
             temperature: 0.35,
             top_p: 0.9,
             max_tokens: normalizeAssistantMaxTokens(get("max_tokens", "8192")),
@@ -938,8 +964,12 @@
             body: JSON.stringify({
                 image: attachment.dataUrl,
                 filename: attachment.name,
-                local_endpoint: config.local_endpoint,
-                local_model: config.local_model,
+                vision_preset: config.vision_preset,
+                vision_endpoint: config.vision_endpoint,
+                vision_model: config.vision_model,
+                vision_model_path: config.vision_model_path,
+                vision_mmproj_path: config.vision_mmproj_path,
+                enable_thinking: config.vision_thinking,
                 timeout: 120
             })
         });
@@ -1066,13 +1096,13 @@
         if (sendButton) sendButton.disabled = true;
         try {
             if (attachment) {
-                addAssistantMessage("status", "本地 Qwen3.5 正在分析附件...");
+                addAssistantMessage("status", "本地 VLM 正在分析附件...");
                 const vision = await analyzeAssistantAttachment(attachment, effectiveText);
                 const visionText = String(vision.text || "").trim();
-                addAssistantMessage("tool", `视觉摘要 (${vision.model || "local Qwen3.5"}):\n${truncateAssistantText(visionText, 1200)}`);
+                addAssistantMessage("tool", `视觉摘要 (${vision.vision_preset || vision.model || "local VLM"}${vision.thinking_enabled ? ", thinking" : ""}):\n${truncateAssistantText(visionText, 1200)}`);
                 assistantState.messages.push({
                     role: "user",
-                    content: `Reference image observation from local Qwen3.5 VLM (${attachment.name || "image"}):\n${visionText}`
+                    content: `Reference image observation from local VLM (${vision.vision_preset || vision.model || "vision model"}, ${attachment.name || "image"}):\n${visionText}`
                 });
             }
             if (effectiveText) {
@@ -1156,6 +1186,20 @@
                     <input data-q3vl-setting="api_key" placeholder="API key" type="password">
                     <input data-q3vl-setting="local_endpoint" placeholder="local lmcpp endpoint">
                     <input data-q3vl-setting="local_model" placeholder="local model">
+                    <select data-q3vl-setting="vision_preset" title="附图/反推使用的本地视觉模型">
+                        <option value="Gemma 4 12B">Vision: Gemma 4 12B</option>
+                        <option value="Qwen3.5 原版 9B">Vision: Qwen3.5 原版 9B</option>
+                        <option value="Qwen3.5 破限版 9B">Vision: Qwen3.5 破限版 9B</option>
+                        <option value="自定义">Vision: 自定义</option>
+                    </select>
+                    <select data-q3vl-setting="vision_thinking" title="本地视觉模型 thinking">
+                        <option value="0">Vision thinking off</option>
+                        <option value="1">Vision thinking on</option>
+                    </select>
+                    <input data-q3vl-setting="vision_endpoint" placeholder="vision lmcpp endpoint">
+                    <input data-q3vl-setting="vision_model" placeholder="vision model alias">
+                    <input data-q3vl-setting="vision_model_path" placeholder="vision GGUF path (optional)">
+                    <input data-q3vl-setting="vision_mmproj_path" placeholder="vision mmproj path (optional)">
                 </div>
             </details>
             <div id="q3vl_assistant_messages"></div>
@@ -1190,6 +1234,19 @@
         panel.querySelector('[data-q3vl-setting="reasoning_effort"]').value = localStorage.getItem("q3vl_assistant_reasoning_effort") || "high";
         panel.querySelector('[data-q3vl-setting="local_endpoint"]').value = localStorage.getItem("q3vl_assistant_local_endpoint") || "http://127.0.0.1:8080/v1";
         panel.querySelector('[data-q3vl-setting="local_model"]').value = localStorage.getItem("q3vl_assistant_local_model") || "hauhau-qwen3.5-9b-uncensored";
+        const visionPreset = panel.querySelector('[data-q3vl-setting="vision_preset"]');
+        const visionModel = panel.querySelector('[data-q3vl-setting="vision_model"]');
+        visionPreset.value = localStorage.getItem("q3vl_assistant_vision_preset") || defaultVisionPreset();
+        panel.querySelector('[data-q3vl-setting="vision_thinking"]').value = localStorage.getItem("q3vl_assistant_vision_thinking") || "0";
+        panel.querySelector('[data-q3vl-setting="vision_endpoint"]').value = localStorage.getItem("q3vl_assistant_vision_endpoint") || "http://127.0.0.1:8080/v1";
+        visionModel.value = localStorage.getItem("q3vl_assistant_vision_model") || visionModelForPreset(visionPreset.value);
+        panel.querySelector('[data-q3vl-setting="vision_model_path"]').value = localStorage.getItem("q3vl_assistant_vision_model_path") || "";
+        panel.querySelector('[data-q3vl-setting="vision_mmproj_path"]').value = localStorage.getItem("q3vl_assistant_vision_mmproj_path") || "";
+        visionPreset.addEventListener("change", function () {
+            if (!visionModel.value || Object.values(q3vlVisionPresets).includes(visionModel.value)) {
+                visionModel.value = visionModelForPreset(visionPreset.value);
+            }
+        });
         panel.querySelectorAll("[data-q3vl-setting]").forEach(function (input) {
             input.addEventListener("change", saveAssistantConfig);
             input.addEventListener("input", saveAssistantConfig);

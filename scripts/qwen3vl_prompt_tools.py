@@ -8,11 +8,15 @@ from lib_qwen3vl_prompt_tools.generation import caption, enhance
 from lib_qwen3vl_prompt_tools.generic import (
     TAGGER,
     TAGGER_MODELS,
+    DEFAULT_VISION_MODEL_PRESET,
+    VISION_MODEL_PRESET_CUSTOM,
+    VISION_MODEL_PRESETS,
     analyze_reference_image,
     build_nl_from_endpoint,
     build_nl_from_local_gguf,
     combine_prompt,
     find_default_llama_server,
+    find_vision_preset_files,
     prompt_assistant_chat,
     repo_from_label,
 )
@@ -491,9 +495,31 @@ def _nl_backend_visibility(backend: str):
     return gr.update(visible=endpoint), gr.update(visible=not endpoint)
 
 
+def _vision_preset_choices() -> list[str]:
+    return list(VISION_MODEL_PRESETS) + [VISION_MODEL_PRESET_CUSTOM]
+
+
+def _vision_preset_update(preset: str):
+    if preset == VISION_MODEL_PRESET_CUSTOM:
+        return gr.update(), gr.update(), gr.update()
+    model, mmproj, alias = find_vision_preset_files(preset)
+    gguf_choices = _llm_choices("model")
+    mmproj_choices = _llm_choices("mmproj")
+    if model and model not in gguf_choices:
+        gguf_choices = [model] + gguf_choices
+    if mmproj and mmproj not in mmproj_choices:
+        mmproj_choices = [mmproj] + mmproj_choices
+    return gr.update(value=alias), gr.update(value=model, choices=gguf_choices), gr.update(value=mmproj, choices=mmproj_choices)
+
+
 def _ui_tab():
     gguf_choices = _llm_choices("model")
     mmproj_choices = _llm_choices("mmproj")
+    default_vision_model, default_vision_mmproj, default_vision_alias = find_vision_preset_files(DEFAULT_VISION_MODEL_PRESET)
+    if default_vision_model and default_vision_model not in gguf_choices:
+        gguf_choices = [default_vision_model] + gguf_choices
+    if default_vision_mmproj and default_vision_mmproj not in mmproj_choices:
+        mmproj_choices = [default_vision_mmproj] + mmproj_choices
     with gr.Blocks(analytics_enabled=False) as interface:
         with gr.Column(elem_id="q3vl-workbench"):
             gr.HTML(
@@ -571,9 +597,15 @@ def _ui_tab():
                     with gr.Row():
                         include_character_tags = gr.Checkbox(True, label="把角色 tag 放入 tags")
                         limit_tags = gr.Slider(0, 120, value=60, step=1, label="最多 general tags", info="0 = 不限制")
+                    vision_preset = gr.Dropdown(
+                        _vision_preset_choices(),
+                        value=DEFAULT_VISION_MODEL_PRESET,
+                        label="本地 VLM 预设",
+                        info="用于图片反推/附件视觉分析：Gemma 4 12B、Qwen3.5 原版 9B、Qwen3.5 破限版 9B。",
+                    )
                     with gr.Row():
                         lmcpp_endpoint = gr.Textbox(value="http://127.0.0.1:8080", label="lmcpp / OpenAI endpoint")
-                        lmcpp_model = gr.Textbox(value="", label="Model 名称", placeholder="留空让服务端默认，比如 uncensored qwen3.5")
+                        lmcpp_model = gr.Textbox(value=default_vision_alias, label="Model 名称", placeholder="例如 gemma-4-12b-it")
                     nl_backend = gr.Radio(["Local GGUF once", "OpenAI endpoint"], value="Local GGUF once", label="NL 后端")
                     with gr.Group(visible=False) as endpoint_settings:
                         gr.Markdown("批量/频繁反推时使用：连接已经运行的 llama.cpp server，避免每次重新加载模型，但会常驻占用显存。")
@@ -584,13 +616,13 @@ def _ui_tab():
                         )
                         gguf_path = gr.Dropdown(
                             choices=gguf_choices,
-                            value=_preferred_choice(gguf_choices),
+                            value=default_vision_model or _preferred_choice(gguf_choices),
                             label="GGUF 模型路径",
                             allow_custom_value=True,
                         )
                         mmproj_path = gr.Dropdown(
                             choices=mmproj_choices,
-                            value=_preferred_choice(mmproj_choices),
+                            value=default_vision_mmproj or _preferred_choice(mmproj_choices),
                             label="mmproj 路径",
                             allow_custom_value=True,
                         )
@@ -616,6 +648,7 @@ def _ui_tab():
         mode.change(fn=lambda selected: gr.update(visible=selected == "WD tagger + lmcpp"), inputs=[mode], outputs=[tags], show_progress=False)
         mode.change(fn=lambda selected: gr.update(visible=selected == "WD tagger + lmcpp"), inputs=[mode], outputs=[wd_output], show_progress=False)
         nl_backend.change(fn=_nl_backend_visibility, inputs=[nl_backend], outputs=[endpoint_settings, local_gguf_settings], show_progress=False)
+        vision_preset.change(fn=_vision_preset_update, inputs=[vision_preset], outputs=[lmcpp_model, gguf_path, mmproj_path], show_progress=False)
         load_tagger.click(fn=_load_tagger, inputs=[tagger_model], outputs=[tagger_status], show_progress="full")
         unload_tagger.click(fn=_unload_tagger, outputs=[tagger_status], show_progress=False)
         run_tags.click(

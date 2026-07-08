@@ -42,6 +42,51 @@ DEFAULT_ASSISTANT_ENDPOINT = "https://api.deepseek.com"
 DEFAULT_ASSISTANT_MODEL = "deepseek-v4-pro"
 DEFAULT_LOCAL_ASSISTANT_ENDPOINT = "http://127.0.0.1:8080/v1"
 DEFAULT_LOCAL_ASSISTANT_MODEL = "hauhau-qwen3.5-9b-uncensored"
+VISION_MODEL_PRESET_CUSTOM = "自定义"
+DEFAULT_VISION_MODEL_PRESET = "Gemma 4 12B"
+VISION_MODEL_PRESETS: dict[str, dict[str, Any]] = {
+    "Gemma 4 12B": {
+        "alias": "gemma-4-12b-it",
+        "model_globs": [
+            "gemma-4-12b-it-UD-Q8_K_XL.gguf",
+            "**/gemma-4-12b-it-UD-Q8_K_XL.gguf",
+            "**/*gemma*4*12b*it*.gguf",
+        ],
+        "mmproj_globs": [
+            "mmproj-BF16.gguf",
+            "**/*gemma*mmproj*.gguf",
+            "**/*mmproj*gemma*.gguf",
+            "**/mmproj-BF16.gguf",
+        ],
+        "auto_download": False,
+    },
+    "Qwen3.5 原版 9B": {
+        "alias": "qwen3.5-9b-vlm",
+        "model_globs": [
+            "Qwen3.5-9B-GGUF/Qwen3.5-9B-UD-Q6_K_XL.gguf",
+            "**/Qwen3.5-9B-GGUF/Qwen3.5-9B-UD-Q6_K_XL.gguf",
+            "**/Qwen3.5-9B-UD-Q6_K_XL.gguf",
+        ],
+        "mmproj_globs": [
+            "Qwen3.5-9B-GGUF/mmproj-F16.gguf",
+            "**/Qwen3.5-9B-GGUF/mmproj-F16.gguf",
+            "**/mmproj-F16.gguf",
+        ],
+        "auto_download": False,
+    },
+    "Qwen3.5 破限版 9B": {
+        "alias": "hauhau-qwen3.5-9b-uncensored",
+        "model_globs": [
+            "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-GGUF/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf",
+            "**/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf",
+        ],
+        "mmproj_globs": [
+            "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-GGUF/mmproj-Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
+            "**/mmproj-Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
+        ],
+        "auto_download": True,
+    },
+}
 
 PROMPT_ASSISTANT_SYSTEM = """You are an expert AI image prompt engineer.
 
@@ -554,12 +599,15 @@ def analyze_reference_image(payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("missing reference image")
     image = _image_from_data_url(image_data)
     messages = _reference_image_messages(image)
+    enable_thinking = _payload_bool(payload.get("enable_thinking", payload.get("vision_thinking")), False)
     timeout = int(payload.get("timeout") or 120)
-    max_tokens = int(payload.get("max_tokens") or 700)
+    max_tokens = int(payload.get("max_tokens") or (1600 if enable_thinking else 700))
     temperature = float(payload.get("temperature") or 0.15)
     top_p = float(payload.get("top_p") or 0.9)
+    vision_preset = str(payload.get("vision_preset") or DEFAULT_VISION_MODEL_PRESET).strip()
+    vision_model = str(payload.get("vision_model") or payload.get("local_model") or vision_preset_alias(vision_preset)).strip()
 
-    local_endpoint = str(payload.get("local_endpoint") or "").strip().rstrip("/")
+    local_endpoint = str(payload.get("vision_endpoint") or payload.get("local_endpoint") or "").strip().rstrip("/")
     if local_endpoint and _local_endpoint_ready(local_endpoint):
         try:
             response = _post_local_chat(
@@ -569,23 +617,26 @@ def analyze_reference_image(payload: dict[str, Any]) -> dict[str, Any]:
                 temperature,
                 top_p,
                 timeout,
-                False,
-                str(payload.get("local_model") or DEFAULT_LOCAL_ASSISTANT_MODEL).strip() or DEFAULT_LOCAL_ASSISTANT_MODEL,
+                enable_thinking,
+                vision_model,
             )
             text = _extract_message_text(response["choices"][0]["message"])
             return {
                 "text": text,
-                "model": str(payload.get("local_model") or DEFAULT_LOCAL_ASSISTANT_MODEL).strip() or DEFAULT_LOCAL_ASSISTANT_MODEL,
+                "model": vision_model,
+                "vision_preset": vision_preset,
                 "endpoint": local_endpoint,
+                "thinking_enabled": enable_thinking,
                 "source": "existing-local-endpoint",
             }
         except Exception:
             pass
 
     llama_server_path = resolve_llama_server(str(payload.get("llama_server_path") or ""))
-    model_path, mmproj_path = ensure_local_gguf_pair(
-        str(payload.get("model_path") or ""),
-        str(payload.get("mmproj_path") or ""),
+    model_path, mmproj_path, vision_alias = resolve_vision_model_pair(
+        vision_preset,
+        str(payload.get("vision_model_path") or payload.get("model_path") or ""),
+        str(payload.get("vision_mmproj_path") or payload.get("mmproj_path") or ""),
         True,
     )
 
@@ -611,7 +662,7 @@ def analyze_reference_image(payload: dict[str, Any]) -> dict[str, Any]:
             "--port",
             str(port),
             "--alias",
-            "local-qwen-vision-once",
+            vision_alias,
             "--jinja",
         ]
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -625,13 +676,16 @@ def analyze_reference_image(payload: dict[str, Any]) -> dict[str, Any]:
             temperature,
             top_p,
             timeout,
-            False,
+            enable_thinking,
+            vision_alias,
         )
         text = _extract_message_text(response["choices"][0]["message"])
         return {
             "text": text,
             "model": Path(model_path).name,
             "mmproj": Path(mmproj_path).name,
+            "vision_preset": vision_preset,
+            "thinking_enabled": enable_thinking,
             "source": "one-shot-local-gguf",
         }
     finally:
@@ -670,6 +724,16 @@ def _local_endpoint_ready(endpoint: str) -> bool:
         return False
 
 
+def _payload_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled", "enable"}
+
+
 def _reference_image_messages(image: Image.Image) -> list[dict[str, Any]]:
     return [
         {"role": "system", "content": REFERENCE_IMAGE_ANALYSIS_SYSTEM},
@@ -683,6 +747,92 @@ def _reference_image_messages(image: Image.Image) -> list[dict[str, Any]]:
     ]
 
 
+def _llm_search_roots() -> list[Path]:
+    raw_roots = [
+        os.environ.get("LLM_MODEL_DIR", ""),
+        str(_forge_root() / "models" / "LLM"),
+        r"E:\AI\lmcpp\models",
+        r"E:\AI\models\LLM",
+    ]
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for raw in raw_roots:
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        try:
+            key = str(path.resolve()).lower()
+        except OSError:
+            key = str(path).lower()
+        if key in seen or not path.exists():
+            continue
+        seen.add(key)
+        roots.append(path)
+    return roots
+
+
+def _find_first_gguf(patterns: list[str]) -> str:
+    for root in _llm_search_roots():
+        for pattern in patterns:
+            matches = sorted(root.glob(pattern), key=lambda item: str(item).lower())
+            for match in matches:
+                if match.is_file() and match.suffix.lower() == ".gguf":
+                    return str(match)
+    return ""
+
+
+def _find_related_mmproj(model: Path) -> str:
+    candidates = sorted(model.parent.glob("*mmproj*.gguf"), key=lambda item: str(item).lower())
+    return str(candidates[0]) if candidates else ""
+
+
+def vision_preset_alias(preset: str) -> str:
+    if preset == VISION_MODEL_PRESET_CUSTOM:
+        return "custom-vlm"
+    item = VISION_MODEL_PRESETS.get(preset) or VISION_MODEL_PRESETS[DEFAULT_VISION_MODEL_PRESET]
+    return str(item.get("alias") or "local-vlm")
+
+
+def find_vision_preset_files(preset: str) -> tuple[str, str, str]:
+    item = VISION_MODEL_PRESETS.get(preset) or {}
+    model = _find_first_gguf(list(item.get("model_globs") or []))
+    mmproj = _find_first_gguf(list(item.get("mmproj_globs") or []))
+    if model and not mmproj:
+        mmproj = _find_related_mmproj(Path(model))
+    return model, mmproj, vision_preset_alias(preset)
+
+
+def resolve_vision_model_pair(preset: str, model_path: str, mmproj_path: str, need_mmproj: bool) -> tuple[str, str, str]:
+    preset = preset if preset in VISION_MODEL_PRESETS or preset == VISION_MODEL_PRESET_CUSTOM else DEFAULT_VISION_MODEL_PRESET
+    model = model_path.strip().strip('"')
+    mmproj = mmproj_path.strip().strip('"')
+    model_exists = bool(model) and Path(model).exists()
+    mmproj_exists = bool(mmproj) and Path(mmproj).exists()
+
+    if not model_exists and preset != VISION_MODEL_PRESET_CUSTOM:
+        model, preset_mmproj, _alias = find_vision_preset_files(preset)
+        model_exists = bool(model) and Path(model).exists()
+        if not mmproj_exists:
+            mmproj = preset_mmproj
+            mmproj_exists = bool(mmproj) and Path(mmproj).exists()
+
+    if model_exists and need_mmproj and not mmproj_exists:
+        mmproj = _find_related_mmproj(Path(model))
+        mmproj_exists = bool(mmproj) and Path(mmproj).exists()
+
+    if model_exists and (mmproj_exists or not need_mmproj):
+        return model, mmproj, vision_preset_alias(preset)
+
+    if (VISION_MODEL_PRESETS.get(preset) or {}).get("auto_download"):
+        model, mmproj = ensure_local_gguf_pair(model, mmproj, need_mmproj)
+        return model, mmproj, vision_preset_alias(preset)
+
+    missing = "model GGUF"
+    if model_exists and need_mmproj and not mmproj_exists:
+        missing = "matching mmproj GGUF"
+    raise RuntimeError(f"找不到 {preset} 的 {missing}。请在视觉模型设置里填写正确路径，或改用已安装的 VLM 预设。")
+
+
 def ensure_local_gguf_pair(model_path: str, mmproj_path: str, need_mmproj: bool) -> tuple[str, str]:
     model = model_path.strip().strip('"')
     mmproj = mmproj_path.strip().strip('"')
@@ -690,6 +840,12 @@ def ensure_local_gguf_pair(model_path: str, mmproj_path: str, need_mmproj: bool)
     mmproj_exists = bool(mmproj) and Path(mmproj).exists()
     if model_exists and (mmproj_exists or not need_mmproj):
         return model, mmproj
+
+    if model_exists and need_mmproj and not mmproj_exists:
+        related = _find_related_mmproj(Path(model))
+        if related:
+            return model, related
+        raise RuntimeError("已选择 GGUF 模型，但缺少匹配的 mmproj。请填写该视觉模型对应的 mmproj 路径。")
 
     target_dir = _forge_root() / "models" / "LLM" / DEFAULT_GGUF_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
