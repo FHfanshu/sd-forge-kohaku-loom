@@ -731,6 +731,12 @@ html.q3vl-no-pull-refresh .gradio-container {
     color: var(--button-primary-text-color);
 }
 
+.q3vl-assistant-stop {
+    background: #b42318;
+    border-color: #f04438;
+    color: #fff;
+}
+
 .q3vl-assistant-secondary,
 .q3vl-assistant-chip-button {
     background: var(--button-secondary-background-fill);

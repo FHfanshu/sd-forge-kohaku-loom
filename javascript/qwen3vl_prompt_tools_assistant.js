@@ -33,10 +33,32 @@
                 const parsed = JSON.parse(value);
                 return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
             } catch (_error) {
-                return {};
+                const loose = parseAssistantLooseObject(value);
+                return loose && typeof loose === "object" && !Array.isArray(loose) ? loose : {};
             }
         }
         return typeof value === "object" && !Array.isArray(value) ? value : {};
+    }
+
+    function parseAssistantLooseObject(value) {
+        const raw = String(value || "").trim();
+        if (!raw.startsWith("{") || !raw.endsWith("}")) return null;
+        const jsonish = raw.replace(/([{,]\s*)([A-Za-z_][\w-]*)\s*:/g, '$1"$2":');
+        try {
+            return JSON.parse(jsonish);
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    function parseAssistantFunctionText(value) {
+        const raw = String(value || "").trim();
+        const match = raw.match(/^(?:call\s*:\s*)?([A-Za-z_][\w]*)\s*([\s\S]*)$/);
+        if (!match) return [];
+        const tool = assistantToolNameFromText(match[1]);
+        if (!tool) return [];
+        const rest = match[2].trim();
+        return [{ tool: tool, arguments: rest ? parseAssistantArguments(rest) : {} }];
     }
 
     function normalizeAssistantToolCall(call, inferredName) {
@@ -70,7 +92,10 @@
         try {
             return collectAssistantToolCalls(JSON.parse(String(raw || "").trim()), inferredName);
         } catch (_error) {
-            return [];
+            const value = String(raw || "").trim();
+            const loose = parseAssistantLooseObject(value);
+            if (loose) return collectAssistantToolCalls(loose, inferredName);
+            return parseAssistantFunctionText(value);
         }
     }
 
@@ -148,6 +173,11 @@
 
         const blocks = String(text || "").matchAll(/<tool_call[^>]*>([\s\S]*?)<\/tool_call>/gi);
         for (const match of blocks) {
+            pushUniqueAssistantToolCalls(result, tryParseAssistantToolCalls(match[1]), seen);
+        }
+
+        const pipeBlocks = String(text || "").matchAll(/<\|tool_call\|?>([\s\S]*?)<tool_call\|>/gi);
+        for (const match of pipeBlocks) {
             pushUniqueAssistantToolCalls(result, tryParseAssistantToolCalls(match[1]), seen);
         }
 
@@ -456,11 +486,13 @@
         return value.length > limit ? `${value.slice(0, limit)}...` : value;
     }
 
-    async function analyzeAssistantAttachment(attachment, userText) {
+    async function analyzeAssistantAttachment(attachment, userText, run) {
         const config = assistantConfig();
+        assertAssistantRunActive(run);
         const response = await fetch("/qwen3vl-prompt-tools/analyze-image", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: run?.controller.signal,
             body: JSON.stringify({
                 image: attachment.dataUrl,
                 filename: attachment.name,
@@ -504,7 +536,7 @@
         const title = document.createElement("strong");
         title.textContent = assistantState.attachment.name || "reference image";
         const hint = document.createElement("span");
-        hint.textContent = "本地 Qwen3.5 VLM 先分析/脱敏，再给 Gemini 教师";
+        hint.textContent = "本地多模态模型先分析/脱敏，再给 Gemini 教师";
         meta.appendChild(title);
         meta.appendChild(hint);
         const remove = document.createElement("button");
@@ -544,11 +576,58 @@
         const input = Number(usage && usage.input_tokens) || 0;
         const output = Number(usage && usage.output_tokens) || 0;
         const thoughts = Number(usage && usage.thought_tokens) || 0;
-        const suffix = thoughts > 0 ? ` thinking ${thoughts} tokens` : "";
+        const elapsed = Number(usage && usage.elapsed_ms) || 0;
+        const speed = Number(usage && usage.tokens_per_second) || 0;
+        const details = [];
+        if (thoughts > 0) details.push(`thinking ${thoughts} tokens`);
+        else if (usage && usage.thinking_enabled === false) details.push("thinking off");
+        if (usage && usage.stream === false) details.push("non-stream");
+        if (elapsed > 0) details.push(`${(elapsed / 1000).toFixed(1)}s`);
+        if (speed > 0) details.push(`${speed} tok/s`);
+        const suffix = details.length ? ` (${details.join(", ")})` : "";
         return `思考中... ↑${input} tokens ↓${output} tokens${suffix}`;
     }
 
-    async function readPromptAssistantStream(response, onProgress) {
+    function assistantInitialStatus(config) {
+        if (String(config && config.backend || "") === "local-qwen-once") {
+            return `本地模型一次性请求中... thinking ${config && config.local_text_thinking ? "on" : "off"}, non-stream`;
+        }
+        return "思考中... ↑0 tokens ↓0 tokens";
+    }
+
+    function assistantRunId() {
+        return `q3vl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
+    function assistantAbortError() {
+        return new Error("assistant run aborted");
+    }
+
+    function assertAssistantRunActive(run) {
+        if (!run || run.cancelled || run.controller.signal.aborted) throw assistantAbortError();
+    }
+
+    function setAssistantSendButtonRunning(button, running) {
+        if (!button) return;
+        button.disabled = false;
+        button.textContent = running ? t("assistant.stop", "终止") : t("assistant.send", "发送");
+        button.classList.toggle("q3vl-assistant-stop", Boolean(running));
+    }
+
+    function cancelAssistantRun() {
+        const run = assistantState.running;
+        if (!run || run.cancelled) return;
+        run.cancelled = true;
+        run.controller.abort();
+        if (run.backend !== "local-qwen-once") return;
+        fetch("/qwen3vl-prompt-tools/assistant-cancel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ run_id: run.id })
+        }).catch(function () { });
+    }
+
+    async function readPromptAssistantStream(response, onProgress, run) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -574,6 +653,7 @@
         }
 
         while (true) {
+            assertAssistantRunActive(run);
             const chunk = await reader.read();
             if (chunk.done) break;
             buffer += decoder.decode(chunk.value, { stream: true });
@@ -586,15 +666,17 @@
         return result;
     }
 
-    async function callPromptAssistant(onProgress) {
-        const payload = Object.assign(assistantConfig(), { messages: assistantState.messages, stream: true });
+    async function callPromptAssistant(onProgress, run) {
+        assertAssistantRunActive(run);
+        const payload = Object.assign(assistantConfig(), { messages: assistantState.messages, stream: true, run_id: run?.id || "" });
         const streamResponse = await fetch("/qwen3vl-prompt-tools/assistant-stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: run?.controller.signal,
             body: JSON.stringify(payload)
         });
         if (streamResponse.ok && streamResponse.body) {
-            return await readPromptAssistantStream(streamResponse, onProgress);
+            return await readPromptAssistantStream(streamResponse, onProgress, run);
         }
         if (streamResponse.status !== 404) {
             const detail = await streamResponse.text();
@@ -604,6 +686,7 @@
         const response = await fetch("/qwen3vl-prompt-tools/assistant", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: run?.controller.signal,
             body: JSON.stringify(payload)
         });
         if (!response.ok) {
@@ -644,12 +727,20 @@
         return ["edit_prompt", "patch_current_prompt", "multi_patch_current_prompt"].includes(String(name || ""));
     }
 
+    function assistantToolResultLabel(name, result) {
+        const status = result && result.ok ? "完成" : "失败";
+        const error = result && result.error ? `: ${result.error}` : "";
+        const target = result && result.target ? ` (${result.target})` : "";
+        return `工具 ${name}${target}: ${status}${error}`;
+    }
+
     function assistantSupportsNativeImages(config) {
         const backend = String(config && config.backend || "");
         if (backend === "moyuu" && String(config && config.teacher_mode || "qwen-redact") === "qwen-redact") return true;
         const model = String(config && config.model || "").toLowerCase();
         const endpoint = String(config && config.endpoint || "");
-        if (backend === "moyuu" || model.includes("gemini")) return true;
+        if (model.includes("gemini")) return true;
+        if (backend !== "moyuu") return false;
         try {
             const host = new URL(endpoint).hostname;
             return host === "moyuu.cc" || host.endsWith(".moyuu.cc");
@@ -659,10 +750,15 @@
     }
 
     async function runAssistantLoop(userText, attachment) {
+        if (assistantState.running) {
+            cancelAssistantRun();
+            return;
+        }
         const effectiveText = userText || (attachment ? "请根据附件例图分析构图和风格，帮助我整理提示词。" : "");
         const mustEditPrompt = assistantUserRequestedPromptEdit(effectiveText);
         const config = assistantConfig();
         const nativeImage = attachment && assistantSupportsNativeImages(config);
+        const run = { id: assistantRunId(), backend: config.backend, controller: new AbortController(), cancelled: false };
         let userMessageSent = false;
         let promptEdited = false;
         let missingEditCorrectionSent = false;
@@ -670,8 +766,10 @@
             addAssistantUserMessage(effectiveText, attachment);
         }
         const sendButton = assistantPanel()?.querySelector("#q3vl_assistant_send");
-        if (sendButton) sendButton.disabled = true;
+        assistantState.running = run;
+        setAssistantSendButtonRunning(sendButton, true);
         try {
+            assertAssistantRunActive(run);
             if (attachment && nativeImage) {
                 assistantState.messages.push({
                     role: "user",
@@ -682,7 +780,8 @@
                 userMessageSent = true;
             } else if (attachment) {
                 addAssistantMessage("status", "本地 VLM 正在分析附件...");
-                const vision = await analyzeAssistantAttachment(attachment, effectiveText);
+                const vision = await analyzeAssistantAttachment(attachment, effectiveText, run);
+                assertAssistantRunActive(run);
                 const visionText = String(vision.text || "").trim();
                 addAssistantMessage("tool", `视觉摘要 (${vision.vision_preset || vision.model || "local VLM"}${vision.thinking_enabled ? ", thinking" : ""}):\n${truncateAssistantText(visionText, 1200)}`);
                 assistantState.messages.push({
@@ -693,11 +792,13 @@
             if (effectiveText && !userMessageSent) {
                 assistantState.messages.push({ role: "user", content: effectiveText });
             }
-            for (let i = 0; i < 6; i += 1) {
-                const statusItem = addAssistantMessage("status", "思考中... ↑0 tokens ↓0 tokens");
+            while (true) {
+                assertAssistantRunActive(run);
+                const statusItem = addAssistantMessage("status", assistantInitialStatus(config));
                 const result = await callPromptAssistant(function (usage) {
                     updateAssistantMessage(statusItem, "status", formatAssistantTokenStatus(usage));
-                });
+                }, run);
+                assertAssistantRunActive(run);
                 const text = result.text || "";
                 const toolCalls = normalizeAssistantToolCalls(result, text);
                 if (!toolCalls.length) {
@@ -725,18 +826,25 @@
                 }
                 assistantState.messages.push({ role: "assistant", content: text || `Tool request: ${toolCalls.map(function (call) { return call.tool; }).join(", ")}` });
                 for (const tool of toolCalls) {
+                    assertAssistantRunActive(run);
                     const toolName = tool.tool || tool.name;
-                    const toolResult = await executeAssistantTool(tool);
+                    const toolResult = await executeAssistantTool(tool, run.controller.signal);
+                    assertAssistantRunActive(run);
                     if (assistantToolMutatesPrompt(toolName) && toolResult.ok) promptEdited = true;
-                    addAssistantMessage("tool", `工具 ${toolName}: ${toolResult.ok ? "完成" : "失败"}`);
+                    addAssistantMessage("tool", assistantToolResultLabel(toolName, toolResult));
                     assistantState.messages.push({ role: "user", content: `Tool result for ${toolName}: ${JSON.stringify(toolResult)}` });
                 }
             }
-            addAssistantMessage("assistant", "工具调用次数过多，已停止。请换一种更直接的指令。比如：读取当前提示词并改成三人自拍构图。 ");
         } catch (error) {
-            addAssistantMessage("error", String(error.message || error));
+            const message = String(error && error.message || error);
+            if (run.cancelled || run.controller.signal.aborted || error?.name === "AbortError" || message === "assistant run aborted") {
+                addAssistantMessage("status", "已终止。");
+            } else {
+                addAssistantMessage("error", message);
+            }
         } finally {
-            if (sendButton) sendButton.disabled = false;
+            if (assistantState.running === run) assistantState.running = null;
+            setAssistantSendButtonRunning(sendButton, false);
         }
     }
 
@@ -764,6 +872,7 @@
         setAssistantAttachment,
         renderAssistantAttachment,
         readAssistantImageFile,
+        cancelAssistantRun,
         formatAssistantTokenStatus,
         readPromptAssistantStream,
         callPromptAssistant,

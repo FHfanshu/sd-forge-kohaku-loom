@@ -14,7 +14,7 @@ The main workflow is `WD tagger + llama.cpp`: generate WD tags from an image, th
 - Auto-downloads the default HauhauCS Qwen3.5 9B uncensored GGUF and mmproj when missing.
 - Auto-downloads a Windows x64 llama.cpp release backend when `llama-server.exe` is missing.
 - Floating LLM prompt assistant for character layout, spatial relationships, and prompt rewriting.
-- Prompt assistant defaults to Moyuu Gemini native API, and can also use DeepSeek/OpenAI-compatible APIs or local llama.cpp backends.
+- Prompt assistant defaults to the best evaluated OpenAI-compatible remote preset, and can also use DeepSeek, Gemini native APIs, or local llama.cpp backends.
 - Prompt assistant can read and replace the current txt2img/img2img prompt through UI tools.
 - Prompt assistant can read/write the WebUI style template / trigger-word template when the field is present.
 - Prompt assistant image attachments and sensitive prompt context can be processed by the local Qwen GGUF first; Gemini receives only a teacher-safe briefing by default.
@@ -54,15 +54,15 @@ You can also set `LLAMA_SERVER_EXE` or fill the path manually in the UI.
 
 The `LLM 助手` button opens a floating chat window. Text-assistant defaults:
 
-- Endpoint: `https://moyuu.cc`
-- Fallback endpoint: `https://hk-api.moyuu.cc`
-- Model: `gemini-3.1-pro-high`
+- Remote preset: `gemini-3.5-flash-preview`
+- Base URL: configurable in the settings panel
+- Local fallback preset: `Qwen3.5 原版 9B`
 
-Moyuu Gemini requests use Gemini native `v1beta` `generateContent` / `streamGenerateContent` by default. The assistant status line streams token counters in the form `↑input tokens ↓output tokens`; final Gemini `usageMetadata` replaces the local estimate when the endpoint provides it. Before text is sent to Gemini, sensitive prompt fragments are replaced with `SAFE_SLOT_###` placeholders and restored locally in the returned tool arguments, so `edit_prompt` still patches the real WebUI prompt while Gemini sees a safer prompt.
+OpenAI-compatible remote presets keep the Base URL separate from the selected model, so the same presets can be used with any compatible relay. Moyuu Gemini native mode remains available for Gemini `v1beta` `generateContent` / `streamGenerateContent`. The assistant status line streams token counters in the form `↑input tokens ↓output tokens`; final Gemini `usageMetadata` replaces the local estimate when the endpoint provides it. Before text is sent to Gemini native mode, sensitive prompt fragments are replaced with `SAFE_SLOT_###` placeholders and restored locally in the returned tool arguments, so `edit_prompt` still patches the real WebUI prompt while Gemini sees a safer prompt.
 
 Older `https://api.deepseek.com/v1` DeepSeek-style endpoints remain accepted; the assistant will append `/chat/completions` to whichever base you configure. Local llama.cpp/OpenAI-compatible endpoints still normally use `/v1`.
 
-You can switch the text assistant to `DeepSeek`, `本地 Qwen 一次性`, or `本地 llama.cpp endpoint`, but Moyuu Gemini remains the default teacher model. By default, Gemini requests first run through local Qwen redaction: the local uncensored Qwen GGUF reads the conversation and any attached reference image, preserves `SAFE_SLOT_###` placeholders, abstracts sensitive prompt fragments, and sends Gemini only a teacher-safe briefing. `本地 Qwen 一次性` starts a local llama.cpp server for one assistant request and then terminates it, releasing VRAM instead of keeping a resident session. The local VLM configuration uses `Qwen3.5 破限版 9B` by default, with presets for `Gemma 4 12B`, `Qwen3.5 原版 9B`, `Qwen3.5 破限版 9B`, plus `自定义`. The local VLM thinking switch is optional and off by default.
+You can switch the text assistant to `DeepSeek`, `Moyuu Gemini native`, `本地 Qwen 一次性`, or `本地 llama.cpp endpoint`. The remote preset menu contains the top evaluated editing models: `gemini-3.5-flash-preview`, `gemini-3.5-flash-high`, and `grok-4.5`; changing the preset updates the model without overwriting the Base URL. `本地 Qwen 一次性` starts a local llama.cpp server for one assistant request and then terminates it, releasing VRAM instead of keeping a resident session. The local VLM/text fallback uses `Qwen3.5 原版 9B` by default, with presets for `Gemma 4 12B`, `Qwen3.5 原版 9B`, `Qwen3.5 破限版 9B`, plus `自定义`. The local VLM thinking switch is optional and off by default.
 
 The floating settings panel keeps common controls visible by default. API keys are stored per text provider, so switching between Moyuu and DeepSeek does not overwrite the other provider's key. Endpoint/model/path overrides are under `高级` and are hidden unless relevant.
 
@@ -110,6 +110,33 @@ The frontend executes these tools and sends the result back to the assistant. Ta
 On mobile generation pages, the extension disables browser pull-to-refresh so a downward swipe at the top of txt2img/img2img does not reload the whole WebUI. For assistant edit requests, the frontend also refuses to treat a no-tool response as completion until `edit_prompt` has returned `ok:true`.
 
 The prompt editor rejects final prompt text that still contains git diff or patch residue such as `diff --git`, `@@`, `--- a/...`, `+++ b/...`, SEARCH/REPLACE markers, conflict markers, or fenced diff blocks. Diff syntax is accepted only as `edit_prompt` input, not as WebUI prompt content.
+
+### External assistant workflow
+
+Python callers can reuse the same prompt-edit loop without copying frontend glue code:
+
+```python
+from lib_qwen3vl_prompt_tools import PromptToolHarness, prompt_edit_messages, run_assistant_loop
+
+base_payload = {
+    "backend": "local-qwen-once",
+    "vision_preset": "Qwen3.5 破限版 9B",
+    "llama_server_path": r"E:\AI\lmcpp\llama.cpp\llama-server.exe",
+}
+harness = PromptToolHarness("two characters, left character, right character")
+result = run_assistant_loop(base_payload, "把当前提示词里的 left character 改成 front character", harness)
+print(result["prompt_edited"], harness.prompt)
+```
+
+For model comparisons, `build_prompt_edit_eval_payloads()` creates one remote baseline, any number of local `local-qwen-once` payloads, extra remote model cases, and an optional DeepSeek case from the same messages.
+
+The same loop is available as a local benchmark helper:
+
+```powershell
+python tools\assistant_workload_eval.py --prompt-file .\workload_prompt.txt --request "给当前提示词加上黑框眼镜，然后调换两个角色的位置"
+```
+
+The default local matrix is `Qwen3.5 原版 9B`, `Qwen3.5 破限版 9B`, and `Gemma 4 12B`. Add `--remote-model MODEL_NAME` for each remote model, and set `Q3VL_MOYUU_API_KEY` for those cases. Use `--remote-backend openai` when a Moyuu-hosted model should use the OpenAI-compatible `/v1/chat/completions` route, such as mixed Gemini/Grok model sweeps. Add `--include-deepseek` when `DEEPSEEK_API_KEY` is set. Add `--show-prompt` only when you explicitly want final prompt text printed.
 
 ## Notes
 

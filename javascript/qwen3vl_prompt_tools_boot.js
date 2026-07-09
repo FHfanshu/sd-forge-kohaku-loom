@@ -12,6 +12,7 @@
         DEEPSEEK_ASSISTANT_ENDPOINT,
         KNOWN_ASSISTANT_MODELS,
         MOYUU_ASSISTANT_FALLBACK_ENDPOINT,
+        REMOTE_ASSISTANT_PRESETS,
         DEFAULT_QWEN_VISION_MODEL_PATH,
         DEFAULT_QWEN_VISION_MMPROJ_PATH,
         DEFAULT_LOCAL_CONTEXT_TOKENS,
@@ -99,6 +100,10 @@
         makeAssistantLauncherDraggable(launcher, panel);
         makeAssistantDraggable(panel, panel.querySelector(".q3vl-assistant-head"));
         panel.querySelector("#q3vl_assistant_send").addEventListener("click", function () {
+            if (assistantState.running && typeof assistantState.running.cancel === "function") {
+                assistantState.running.cancel();
+                return;
+            }
             const input = panel.querySelector("#q3vl_assistant_input");
             const text = input.value.trim();
             const attachment = assistantState.attachment;
@@ -155,7 +160,7 @@
                 <nav class="q3vl-settings-nav" aria-label="${t("settings.primary_nav", "一级设置分类")}">
                     <button type="button" data-q3vl-settings-primary="route" class="q3vl-settings-nav-active">${t("settings.nav.route", "模型路由")}</button>
                     <button type="button" data-q3vl-settings-primary="remote">${t("settings.nav.remote", "远端模型")}</button>
-                    <button type="button" data-q3vl-settings-primary="qwen">${t("settings.nav.local_qwen", "本地 Qwen")}</button>
+                    <button type="button" data-q3vl-settings-primary="qwen">${t("settings.nav.local_qwen", "本地模型")}</button>
                 </nav>
                 <nav class="q3vl-settings-subnav" aria-label="${t("settings.sub_nav", "二级设置分类")}">
                     <button type="button" data-q3vl-settings-page="route-main" data-q3vl-settings-parent="route" class="q3vl-settings-subnav-active">${t("settings.page.main", "主后端")}</button>
@@ -163,34 +168,35 @@
                     <button type="button" data-q3vl-settings-page="remote-preset" data-q3vl-settings-parent="remote">${t("settings.page.preset", "预设")}</button>
                     <button type="button" data-q3vl-settings-page="remote-endpoint" data-q3vl-settings-parent="remote">${t("settings.page.connection", "连接设置")}</button>
                     <button type="button" data-q3vl-settings-page="remote-params" data-q3vl-settings-parent="remote">${t("settings.page.params", "参数")}</button>
-                    <button type="button" data-q3vl-settings-page="qwen-text" data-q3vl-settings-parent="qwen">${t("settings.page.text_model", "文本模型")}</button>
-                    <button type="button" data-q3vl-settings-page="qwen-vision" data-q3vl-settings-parent="qwen">${t("settings.page.vision_model", "视觉模型")}</button>
-                    <button type="button" data-q3vl-settings-page="qwen-paths" data-q3vl-settings-parent="qwen">${t("settings.page.vision_paths", "视觉路径")}</button>
+                    <button type="button" data-q3vl-settings-page="qwen-text" data-q3vl-settings-parent="qwen">${t("settings.page.local_params", "代理参数")}</button>
+                    <button type="button" data-q3vl-settings-page="qwen-vision" data-q3vl-settings-parent="qwen">${t("settings.page.shared_model", "共享模型")}</button>
+                    <button type="button" data-q3vl-settings-page="qwen-paths" data-q3vl-settings-parent="qwen">${t("settings.page.local_paths", "接入/路径")}</button>
                 </nav>
                 <div class="q3vl-settings-pages">
                     <section class="q3vl-settings-page q3vl-settings-page-active" data-q3vl-settings-page-panel="route-main">
                         <h3>${t("settings.page.main", "主后端")}</h3>
                         <div class="q3vl-settings-grid">
-                            <label class="q3vl-settings-field q3vl-settings-field-wide"><span>${t("settings.backend", "后端")}</span><select data-q3vl-setting="backend"><option value="moyuu">Moyuu Gemini</option><option value="deepseek">DeepSeek</option><option value="local-qwen-once">${t("settings.backend.local_qwen_once", "本地 Qwen 一次性")}</option><option value="local-lmcpp">${t("settings.backend.local_endpoint", "本地接入点")}</option></select></label>
+                            <label class="q3vl-settings-field q3vl-settings-field-wide"><span>${t("settings.backend", "后端")}</span><select data-q3vl-setting="backend"><option value="openai">OpenAI-compatible</option><option value="moyuu">Moyuu Gemini native</option><option value="deepseek">DeepSeek</option><option value="local-qwen-once">${t("settings.backend.local_qwen_once", "本地模型一次性")}</option><option value="local-lmcpp">${t("settings.backend.local_endpoint", "本地接入点")}</option></select></label>
                         </div>
                     </section>
                     <section class="q3vl-settings-page" data-q3vl-settings-page-panel="route-policy">
                         <h3>${t("settings.page.workflow", "工作流策略")}</h3>
                         <div class="q3vl-settings-grid">
-                            <label class="q3vl-settings-field" data-q3vl-field="remote" title="${t("settings.teacher_mode.title", "Gemini 教师前置脱敏策略")}"><span>${t("settings.teacher_mode", "教师策略")}</span><select data-q3vl-setting="teacher_mode"><option value="qwen-redact">${t("settings.teacher_mode.qwen_redact", "本地 Qwen 脱敏")}</option><option value="regex">${t("settings.teacher_mode.regex", "仅占位符脱敏")}</option></select></label>
+                            <label class="q3vl-settings-field q3vl-settings-field-wide"><span>${t("settings.workflow_preset", "工作流预设")}</span><select data-q3vl-setting="workflow_preset"><option value="gemini-main-local-filter">${t("settings.workflow.gemini_main_local_filter", "Gemini 3.1 Pro 主力 + 本地 Gemma 脱敏")}</option><option value="local-executor-gemini-adviser">${t("settings.workflow.local_executor_gemini_adviser", "本地 Gemma 工具执行 + Gemini adviser")}</option><option value="custom">${t("settings.preset.custom", "自定义")}</option></select></label>
+                            <label class="q3vl-settings-field" data-q3vl-field="remote" title="${t("settings.teacher_mode.title", "Gemini 教师前置脱敏策略")}"><span>${t("settings.teacher_mode", "教师策略")}</span><select data-q3vl-setting="teacher_mode"><option value="qwen-redact">${t("settings.teacher_mode.qwen_redact", "本地模型脱敏")}</option><option value="regex">${t("settings.teacher_mode.regex", "仅占位符脱敏")}</option></select></label>
                             <label class="q3vl-settings-field" data-q3vl-field="remote" title="${t("settings.sanitize.title", "发送到 Gemini 前把敏感提示词替换为占位符，返回工具参数时本地还原")}"><span>${t("settings.sanitize", "脱敏占位符")}</span><select data-q3vl-setting="sanitize_sensitive"><option value="1">${t("common.on", "开")}</option><option value="0">${t("common.off", "关")}</option></select></label>
                         </div>
                     </section>
                     <section class="q3vl-settings-page" data-q3vl-settings-page-panel="remote-preset">
                         <h3>${t("settings.remote_preset", "远端预设")}</h3>
                         <div class="q3vl-settings-grid">
-                            <label class="q3vl-settings-field q3vl-settings-field-wide"><span>${t("settings.page.preset", "预设")}</span><select data-q3vl-setting="remote_preset"><option value="moyuu">Moyuu Gemini teacher</option><option value="deepseek">DeepSeek V4 Pro</option><option value="custom">${t("settings.preset.custom", "自定义")}</option></select></label>
+                            <label class="q3vl-settings-field q3vl-settings-field-wide"><span>${t("settings.page.preset", "预设")}</span><select data-q3vl-setting="remote_preset"><option value="gemini-3.5-flash-preview">Gemini 3.5 Flash Preview</option><option value="gemini-3.5-flash-high">Gemini 3.5 Flash High</option><option value="grok-4.5">Grok 4.5</option><option value="custom">${t("settings.preset.custom", "自定义")}</option></select></label>
                         </div>
                     </section>
                     <section class="q3vl-settings-page" data-q3vl-settings-page-panel="remote-endpoint">
                         <h3>${t("settings.page.connection", "连接设置")}</h3>
                         <div class="q3vl-settings-grid">
-                            <label class="q3vl-settings-field" data-q3vl-field="remote"><span>${t("settings.page.endpoint", "接入点")}</span><input data-q3vl-setting="endpoint" placeholder="${t("settings.remote_endpoint.placeholder", "Moyuu/Gemini 接入点")}"></label>
+                            <label class="q3vl-settings-field" data-q3vl-field="remote"><span>${t("settings.page.endpoint", "Base URL")}</span><input data-q3vl-setting="endpoint" placeholder="${t("settings.remote_endpoint.placeholder", "OpenAI-compatible base URL")}"></label>
                             <label class="q3vl-settings-field" data-q3vl-field="remote"><span>${t("settings.fallback_endpoint", "备用接入点")}</span><input data-q3vl-setting="fallback_endpoint" placeholder="${t("settings.fallback_endpoint.placeholder", "备用接入点")}"></label>
                             <label class="q3vl-settings-field" data-q3vl-field="remote"><span>${t("settings.model", "模型")}</span><input data-q3vl-setting="model" placeholder="${t("settings.model.placeholder", "Gemini 模型名称")}"></label>
                             <label class="q3vl-settings-field" data-q3vl-field="remote"><span>${t("settings.api_key", "API 密钥")}</span><input data-q3vl-setting="api_key" placeholder="${t("settings.api_key.placeholder", "API 密钥")}" type="password"></label>
@@ -204,27 +210,29 @@
                         </div>
                     </section>
                     <section class="q3vl-settings-page" data-q3vl-settings-page-panel="qwen-text">
-                        <h3>${t("settings.qwen_text", "本地文本模型")}</h3>
+                        <h3>${t("settings.local_agent_params", "本地代理参数")}</h3>
                         <div class="q3vl-settings-grid">
-                            <label class="q3vl-settings-field" data-q3vl-field="local-text"><span>${t("settings.local_endpoint", "文本接入点")}</span><input data-q3vl-setting="local_endpoint" placeholder="http://127.0.0.1:8080/v1"></label>
-                            <label class="q3vl-settings-field" data-q3vl-field="local-text"><span>${t("settings.local_model", "文本模型名称")}</span><input data-q3vl-setting="local_model" placeholder="hauhau-qwen3.5-9b-uncensored"></label>
-                            <label class="q3vl-settings-field q3vl-settings-field-wide"><span>${t("settings.n_ctx", "上下文长度 n_ctx")}</span><input data-q3vl-setting="n_ctx" placeholder="16384"></label>
+                            <label class="q3vl-settings-field" data-q3vl-field="local-once"><span>${t("settings.local_text_thinking", "文本推理")}</span><select data-q3vl-setting="local_text_thinking"><option value="0">${t("common.off", "关")}</option><option value="1">${t("common.on", "开")}</option></select></label>
+                            <label class="q3vl-settings-field" data-q3vl-field="local-vision"><span>${t("settings.vision_thinking", "视觉推理")}</span><select data-q3vl-setting="vision_thinking"><option value="0">${t("common.off", "关")}</option><option value="1">${t("common.on", "开")}</option></select></label>
+                            <label class="q3vl-settings-field" data-q3vl-field="local-once"><span>${t("settings.local_max_tokens", "本地最大 token 数")}</span><input data-q3vl-setting="local_max_tokens" placeholder="8192"></label>
+                            <label class="q3vl-settings-field q3vl-settings-field-wide" data-q3vl-field="local-agent"><span>${t("settings.n_ctx", "上下文长度 n_ctx")}</span><input data-q3vl-setting="n_ctx" placeholder="16384"></label>
                         </div>
                     </section>
                     <section class="q3vl-settings-page" data-q3vl-settings-page-panel="qwen-vision">
-                        <h3>${t("settings.qwen_vision", "本地视觉模型")}</h3>
+                        <h3>${t("settings.local_shared_model", "本地共享多模态模型")}</h3>
                         <div class="q3vl-settings-grid">
-                            <label class="q3vl-settings-field" data-q3vl-field="local-vision"><span>${t("settings.vision_preset", "视觉预设")}</span><select data-q3vl-setting="vision_preset"><option value="Gemma 4 12B">Gemma 4 12B</option><option value="Qwen3.5 原版 9B">Qwen3.5 原版 9B</option><option value="Qwen3.5 破限版 9B">Qwen3.5 破限版 9B</option><option value="自定义">${t("settings.preset.custom", "自定义")}</option></select></label>
-                            <label class="q3vl-settings-field" data-q3vl-field="local-vision"><span>${t("settings.vision_thinking", "视觉推理")}</span><select data-q3vl-setting="vision_thinking"><option value="0">${t("common.off", "关")}</option><option value="1">${t("common.on", "开")}</option></select></label>
+                            <label class="q3vl-settings-field q3vl-settings-field-wide" data-q3vl-field="local-agent"><span>${t("settings.local_model_preset", "模型预设")}</span><select data-q3vl-setting="vision_preset"><option value="Gemma 4 12B">Gemma 4 12B</option><option value="Qwen3.5 原版 9B">Qwen3.5 原版 9B</option><option value="Qwen3.5 破限版 9B">Qwen3.5 破限版 9B</option><option value="自定义">${t("settings.preset.custom", "自定义")}</option></select></label>
                         </div>
                     </section>
                     <section class="q3vl-settings-page" data-q3vl-settings-page-panel="qwen-paths">
-                        <h3>${t("settings.page.vision_paths", "视觉模型路径")}</h3>
+                        <h3>${t("settings.page.local_paths", "接入/路径")}</h3>
                         <div class="q3vl-settings-grid">
+                            <label class="q3vl-settings-field q3vl-settings-field-wide" data-q3vl-field="local-endpoint"><span>${t("settings.local_endpoint", "文本接入点")}</span><input data-q3vl-setting="local_endpoint" placeholder="http://127.0.0.1:8080/v1"></label>
+                            <label class="q3vl-settings-field q3vl-settings-field-wide" data-q3vl-field="local-endpoint"><span>${t("settings.local_model", "文本模型名称")}</span><input data-q3vl-setting="local_model" placeholder="hauhau-qwen3.5-9b-uncensored"></label>
                             <label class="q3vl-settings-field q3vl-settings-field-wide" data-q3vl-field="vision-advanced"><span>${t("settings.vision_endpoint", "视觉接入点")}</span><input data-q3vl-setting="vision_endpoint" placeholder="http://127.0.0.1:8080/v1"></label>
                             <label class="q3vl-settings-field q3vl-settings-field-wide" data-q3vl-field="vision-advanced"><span>${t("settings.vision_model", "模型别名")}</span><input data-q3vl-setting="vision_model" placeholder="hauhau-qwen3.5-9b-uncensored"></label>
-                            <label class="q3vl-settings-field q3vl-settings-field-wide" data-q3vl-field="vision-custom"><span>${t("settings.vision_model_path", "Qwen 视觉 GGUF 路径")}</span><input data-q3vl-setting="vision_model_path" placeholder="${t("settings.vision_model_path.placeholder", "视觉模型 GGUF 路径")}"></label>
-                            <label class="q3vl-settings-field q3vl-settings-field-wide" data-q3vl-field="vision-custom"><span>${t("settings.vision_mmproj_path", "Qwen mmproj 路径")}</span><input data-q3vl-setting="vision_mmproj_path" placeholder="${t("settings.vision_mmproj_path.placeholder", "对应 mmproj GGUF 路径")}"></label>
+                            <label class="q3vl-settings-field q3vl-settings-field-wide" data-q3vl-field="vision-custom"><span>${t("settings.vision_model_path", "模型 GGUF 路径")}</span><input data-q3vl-setting="vision_model_path" placeholder="${t("settings.vision_model_path.placeholder", "视觉模型 GGUF 路径")}"></label>
+                            <label class="q3vl-settings-field q3vl-settings-field-wide" data-q3vl-field="vision-custom"><span>${t("settings.vision_mmproj_path", "mmproj 路径")}</span><input data-q3vl-setting="vision_mmproj_path" placeholder="${t("settings.vision_mmproj_path.placeholder", "对应 mmproj GGUF 路径")}"></label>
                         </div>
                     </section>
                 </div>
@@ -239,7 +247,7 @@
         const storedEndpointValue = localStorage.getItem("q3vl_assistant_endpoint");
         const storedModelValue = localStorage.getItem("q3vl_assistant_model");
         const migrateDeepSeekDefault = storedBackend === "deepseek" && (!storedEndpointValue || storedEndpointValue === DEEPSEEK_ASSISTANT_ENDPOINT) && (!storedModelValue || KNOWN_ASSISTANT_MODELS.includes(storedModelValue));
-        backend.value = migrateDeepSeekDefault ? "moyuu" : storedBackend || "moyuu";
+        backend.value = migrateDeepSeekDefault ? "openai" : storedBackend || "openai";
         const endpointInput = panel.querySelector('[data-q3vl-setting="endpoint"]');
         const fallbackInput = panel.querySelector('[data-q3vl-setting="fallback_endpoint"]');
         const modelInput = panel.querySelector('[data-q3vl-setting="model"]');
@@ -250,15 +258,18 @@
             localStorage.setItem("q3vl_assistant_model", modelInput.value);
         }
         const remotePreset = panel.querySelector('[data-q3vl-setting="remote_preset"]');
-        remotePreset.value = localStorage.getItem("q3vl_assistant_remote_preset") || remotePresetFromSettings(backend.value, endpointInput.value, modelInput.value);
+        remotePreset.value = normalizeRemotePresetName(localStorage.getItem("q3vl_assistant_remote_preset") || remotePresetFromSettings(backend.value, endpointInput.value, modelInput.value));
+        const workflowPreset = panel.querySelector('[data-q3vl-setting="workflow_preset"]');
         loadAssistantApiKey(panel, backend.value);
         panel.querySelector('[data-q3vl-setting="max_tokens"]').value = String(normalizeAssistantMaxTokens(localStorage.getItem("q3vl_assistant_max_tokens") || "8192"));
+        panel.querySelector('[data-q3vl-setting="local_max_tokens"]').value = String(normalizeAssistantMaxTokens(localStorage.getItem("q3vl_assistant_local_max_tokens") || "8192"));
         panel.querySelector('[data-q3vl-setting="n_ctx"]').value = String(normalizeAssistantContextTokens(localStorage.getItem("q3vl_assistant_n_ctx") || String(DEFAULT_LOCAL_CONTEXT_TOKENS)));
         panel.querySelector('[data-q3vl-setting="sanitize_sensitive"]').value = localStorage.getItem("q3vl_assistant_sanitize_sensitive") || "1";
         panel.querySelector('[data-q3vl-setting="teacher_mode"]').value = localStorage.getItem("q3vl_assistant_teacher_mode") || "qwen-redact";
         panel.querySelector('[data-q3vl-setting="reasoning_effort"]').value = localStorage.getItem("q3vl_assistant_reasoning_effort") || "high";
         panel.querySelector('[data-q3vl-setting="local_endpoint"]').value = localStorage.getItem("q3vl_assistant_local_endpoint") || "http://127.0.0.1:8080/v1";
-        panel.querySelector('[data-q3vl-setting="local_model"]').value = localStorage.getItem("q3vl_assistant_local_model") || "hauhau-qwen3.5-9b-uncensored";
+        panel.querySelector('[data-q3vl-setting="local_model"]').value = localStorage.getItem("q3vl_assistant_local_model") || "qwen3.5-9b-vlm";
+        panel.querySelector('[data-q3vl-setting="local_text_thinking"]').value = localStorage.getItem("q3vl_assistant_local_text_thinking") || "0";
         const visionPreset = panel.querySelector('[data-q3vl-setting="vision_preset"]');
         const visionModel = panel.querySelector('[data-q3vl-setting="vision_model"]');
         const visionModelPath = panel.querySelector('[data-q3vl-setting="vision_model_path"]');
@@ -270,13 +281,22 @@
         visionModelPath.value = localStorage.getItem("q3vl_assistant_vision_model_path") || defaultVisionModelPathForPreset(visionPreset.value);
         visionMmprojPath.value = localStorage.getItem("q3vl_assistant_vision_mmproj_path") || defaultVisionMmprojPathForPreset(visionPreset.value);
         syncVisionPresetDefaults(visionPreset, visionModel, visionModelPath, visionMmprojPath);
+        workflowPreset.value = localStorage.getItem("q3vl_assistant_workflow_preset") || workflowPresetFromSettings(panel);
         visionPreset.addEventListener("change", function () {
+            syncVisionPresetDefaults(visionPreset, visionModel, visionModelPath, visionMmprojPath);
+            workflowPreset.value = workflowPresetFromSettings(panel);
+            saveAssistantConfig();
+            setAssistantSettingsVisibility(panel);
+        });
+        workflowPreset.addEventListener("change", function () {
+            applyWorkflowPreset(panel);
             syncVisionPresetDefaults(visionPreset, visionModel, visionModelPath, visionMmprojPath);
             saveAssistantConfig();
             setAssistantSettingsVisibility(panel);
         });
         remotePreset.addEventListener("change", function () {
             applyRemotePreset(panel, true);
+            workflowPreset.value = workflowPresetFromSettings(panel);
             saveAssistantConfig();
             setAssistantSettingsVisibility(panel);
         });
@@ -285,11 +305,16 @@
             input.addEventListener("input", saveAssistantConfig);
             input.addEventListener("change", function () { setAssistantSettingsVisibility(panel); });
         });
+        panel.querySelector('[data-q3vl-setting="teacher_mode"]').addEventListener("change", function () {
+            workflowPreset.value = workflowPresetFromSettings(panel);
+            saveAssistantConfig();
+        });
         backend.addEventListener("change", function () {
             storeAssistantApiKey(panel, assistantState.apiKeyBackend);
             loadAssistantApiKey(panel, backend.value);
             syncAssistantBackendDefaults(panel);
             syncRemotePresetFromBackend(panel);
+            workflowPreset.value = workflowPresetFromSettings(panel);
             saveAssistantConfig();
             setAssistantSettingsVisibility(panel);
         });
@@ -351,33 +376,67 @@
         return panel.querySelector(`[data-q3vl-settings-page="${page}"]`)?.dataset.q3vlSettingsParent || "route";
     }
 
+    function workflowPresetFromSettings(panel) {
+        const backend = panel.querySelector('[data-q3vl-setting="backend"]')?.value || "openai";
+        const teacherMode = panel.querySelector('[data-q3vl-setting="teacher_mode"]')?.value || "qwen-redact";
+        const visionPreset = panel.querySelector('[data-q3vl-setting="vision_preset"]')?.value || defaultVisionPreset();
+        if ((backend === "moyuu" || backend === "openai") && teacherMode === "qwen-redact" && visionPreset === "Qwen3.5 原版 9B") return "gemini-main-local-filter";
+        if (backend === "local-qwen-once" && visionPreset === "Gemma 4 12B") return "local-executor-gemini-adviser";
+        return "custom";
+    }
+
+    function normalizeRemotePresetName(value) {
+        return (REMOTE_ASSISTANT_PRESETS || {})[value] ? value : defaultAssistantModelForBackend("openai");
+    }
+
+    function applyWorkflowPreset(panel) {
+        const preset = panel.querySelector('[data-q3vl-setting="workflow_preset"]')?.value || "custom";
+        if (preset === "custom") return;
+        const backend = panel.querySelector('[data-q3vl-setting="backend"]');
+        const endpoint = panel.querySelector('[data-q3vl-setting="endpoint"]');
+        const fallbackEndpoint = panel.querySelector('[data-q3vl-setting="fallback_endpoint"]');
+        const model = panel.querySelector('[data-q3vl-setting="model"]');
+        const remotePreset = panel.querySelector('[data-q3vl-setting="remote_preset"]');
+        const teacherMode = panel.querySelector('[data-q3vl-setting="teacher_mode"]');
+        const sanitize = panel.querySelector('[data-q3vl-setting="sanitize_sensitive"]');
+        const visionPreset = panel.querySelector('[data-q3vl-setting="vision_preset"]');
+        if (backend) backend.value = preset === "local-executor-gemini-adviser" ? "local-qwen-once" : "openai";
+        if (endpoint && !endpoint.value) endpoint.value = defaultAssistantEndpointForBackend("openai");
+        if (fallbackEndpoint) fallbackEndpoint.value = "";
+        if (model) model.value = defaultAssistantModelForBackend("openai");
+        if (remotePreset) remotePreset.value = defaultAssistantModelForBackend("openai");
+        if (teacherMode) teacherMode.value = "qwen-redact";
+        if (sanitize) sanitize.value = "1";
+        if (visionPreset) visionPreset.value = "Gemma 4 12B";
+        loadAssistantApiKey(panel, backend?.value || "openai");
+    }
+
     function remotePresetFromSettings(backend, endpoint, model) {
-        const deepseekDefault = endpoint === DEEPSEEK_ASSISTANT_ENDPOINT && model === defaultAssistantModelForBackend("deepseek");
-        const moyuuDefault = endpoint === defaultAssistantEndpointForBackend("moyuu") && model === defaultAssistantModelForBackend("moyuu");
-        if (deepseekDefault && (!backend || backend === "deepseek")) return "deepseek";
-        if (moyuuDefault && (!backend || backend === "moyuu")) return "moyuu";
+        for (const [name, preset] of Object.entries(REMOTE_ASSISTANT_PRESETS || {})) {
+            if (model === preset.model && (!backend || backend === preset.backend)) return name;
+        }
         return "custom";
     }
 
     function applyRemotePreset(panel, updateBackend) {
-        const preset = panel.querySelector('[data-q3vl-setting="remote_preset"]')?.value || "moyuu";
-        if (preset === "custom") return;
+        const presetName = normalizeRemotePresetName(panel.querySelector('[data-q3vl-setting="remote_preset"]')?.value);
+        const preset = (REMOTE_ASSISTANT_PRESETS || {})[presetName];
+        if (!preset) return;
         const backend = panel.querySelector('[data-q3vl-setting="backend"]');
-        const endpoint = panel.querySelector('[data-q3vl-setting="endpoint"]');
         const model = panel.querySelector('[data-q3vl-setting="model"]');
         if (updateBackend && backend) {
             storeAssistantApiKey(panel, assistantState.apiKeyBackend);
-            backend.value = preset;
+            backend.value = preset.backend;
             loadAssistantApiKey(panel, backend.value);
         }
-        if (endpoint) endpoint.value = defaultAssistantEndpointForBackend(preset);
-        if (model) model.value = defaultAssistantModelForBackend(preset);
+        if (model) model.value = preset.model;
     }
 
     function syncRemotePresetFromBackend(panel) {
-        const backend = panel.querySelector('[data-q3vl-setting="backend"]')?.value || "moyuu";
+        const backend = panel.querySelector('[data-q3vl-setting="backend"]')?.value || "openai";
+        const model = panel.querySelector('[data-q3vl-setting="model"]')?.value || "";
         const remotePreset = panel.querySelector('[data-q3vl-setting="remote_preset"]');
-        if (remotePreset && (backend === "moyuu" || backend === "deepseek")) remotePreset.value = backend;
+        if (remotePreset && backend === "openai") remotePreset.value = remotePresetFromSettings(backend, "", model);
     }
 
     function syncVisionPresetDefaults(presetInput, modelInput, modelPathInput, mmprojPathInput) {

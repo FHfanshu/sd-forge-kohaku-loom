@@ -154,7 +154,8 @@
         attachment: null,
         promptReads: {},
         promptStyles: null,
-        apiKeyBackend: "moyuu"
+        apiKeyBackend: "moyuu",
+        running: null
     };
 
     const q3vlVisionPresets = {
@@ -165,7 +166,7 @@
     };
 
     function defaultVisionPreset() {
-        return "Qwen3.5 破限版 9B";
+        return "Qwen3.5 原版 9B";
     }
 
     function visionModelForPreset(preset) {
@@ -179,14 +180,16 @@
 
     const MOYUU_ASSISTANT_ENDPOINT = "https://moyuu.cc";
     const MOYUU_ASSISTANT_FALLBACK_ENDPOINT = "https://hk-api.moyuu.cc";
-    const MOYUU_ASSISTANT_MODEL = "gemini-3.1-pro-high";
+    const MOYUU_ASSISTANT_MODEL = "gemini-3.5-flash-preview";
+    const OPENAI_COMPATIBLE_ASSISTANT_MODEL = "gemini-3.5-flash-preview";
     const DEEPSEEK_ASSISTANT_ENDPOINT = "https://api.deepseek.com";
     const DEEPSEEK_ASSISTANT_MODEL = "deepseek-v4-pro";
-    const DEFAULT_QWEN_VISION_MODEL_PATH = "E:\\AI\\lmcpp\\models\\Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-GGUF\\Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf";
-    const DEFAULT_QWEN_VISION_MMPROJ_PATH = "E:\\AI\\lmcpp\\models\\Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-GGUF\\mmproj-Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf";
+    const DEFAULT_QWEN_VISION_MODEL_PATH = "E:\\AI\\lmcpp\\models\\Qwen3.5-9B-GGUF\\Qwen3.5-9B-UD-Q6_K_XL.gguf";
+    const DEFAULT_QWEN_VISION_MMPROJ_PATH = "E:\\AI\\lmcpp\\models\\Qwen3.5-9B-GGUF\\mmproj-F16.gguf";
     const DEFAULT_LOCAL_CONTEXT_TOKENS = 16384;
     const KNOWN_ASSISTANT_ENDPOINTS = [MOYUU_ASSISTANT_ENDPOINT, MOYUU_ASSISTANT_FALLBACK_ENDPOINT, DEEPSEEK_ASSISTANT_ENDPOINT];
-    const KNOWN_ASSISTANT_MODELS = [MOYUU_ASSISTANT_MODEL, DEEPSEEK_ASSISTANT_MODEL, "deepseekv4-pro", "deepseek-chat", "deepseek-reasoner"];
+    const REMOTE_ASSISTANT_PRESETS = { "gemini-3.5-flash-preview": { backend: "openai", model: "gemini-3.5-flash-preview" }, "gemini-3.5-flash-high": { backend: "openai", model: "gemini-3.5-flash-high" }, "grok-4.5": { backend: "openai", model: "grok-4.5" } };
+    const KNOWN_ASSISTANT_MODELS = [MOYUU_ASSISTANT_MODEL, OPENAI_COMPATIBLE_ASSISTANT_MODEL, "gemini-3.5-flash-high", "grok-4.5", DEEPSEEK_ASSISTANT_MODEL, "deepseekv4-pro", "deepseek-chat", "deepseek-reasoner"];
 
     function defaultVisionModelPathForPreset(preset) {
         return preset === defaultVisionPreset() ? DEFAULT_QWEN_VISION_MODEL_PATH : "";
@@ -197,7 +200,7 @@
     }
 
     function assistantApiKeyBackend(backend) {
-        return backend === "deepseek" || backend === "local-lmcpp" || backend === "local-qwen-once" ? backend : "moyuu";
+        return backend === "deepseek" || backend === "openai" || backend === "local-lmcpp" || backend === "local-qwen-once" ? backend : "moyuu";
     }
 
     function assistantApiKeyStorageKey(backend) {
@@ -228,7 +231,7 @@
         if (!input) return;
         assistantState.apiKeyBackend = assistantApiKeyBackend(backend);
         input.value = storedAssistantApiKey(backend);
-        input.placeholder = backend === "deepseek" ? "DeepSeek API key" : backend === "local-lmcpp" || backend === "local-qwen-once" ? t("settings.local_no_api_key", "本地后端无需 API key") : "Moyuu API key";
+        input.placeholder = backend === "deepseek" ? "DeepSeek API key" : backend === "local-lmcpp" || backend === "local-qwen-once" ? t("settings.local_no_api_key", "本地后端无需 API key") : "OpenAI-compatible API key";
     }
 
     function assistantConfig() {
@@ -239,21 +242,24 @@
         };
         const endpoint = get("endpoint", MOYUU_ASSISTANT_ENDPOINT);
         const visionPreset = get("vision_preset", defaultVisionPreset());
-        const backend = get("backend", "moyuu");
+        const backend = get("backend", "openai");
         const localContext = normalizeAssistantContextTokens(get("n_ctx", String(DEFAULT_LOCAL_CONTEXT_TOKENS)));
         return {
             backend: backend,
             endpoint: endpoint,
-            fallback_endpoint: get("fallback_endpoint", MOYUU_ASSISTANT_FALLBACK_ENDPOINT),
+            fallback_endpoint: get("fallback_endpoint", backend === "moyuu" ? MOYUU_ASSISTANT_FALLBACK_ENDPOINT : ""),
             model: normalizeAssistantModel(endpoint, get("model", MOYUU_ASSISTANT_MODEL)),
             api_key: currentAssistantApiKey(panel, backend),
             local_endpoint: get("local_endpoint", "http://127.0.0.1:8080/v1"),
             local_model: get("local_model", "hauhau-qwen3.5-9b-uncensored"),
             vision_preset: visionPreset,
+            local_text_preset: visionPreset,
             vision_endpoint: get("vision_endpoint", "http://127.0.0.1:8080/v1"),
             vision_model: get("vision_model", visionModelForPreset(visionPreset)),
             vision_model_path: get("vision_model_path", defaultVisionModelPathForPreset(visionPreset)),
             vision_mmproj_path: get("vision_mmproj_path", defaultVisionMmprojPathForPreset(visionPreset)),
+            local_model_path: get("vision_model_path", defaultVisionModelPathForPreset(visionPreset)),
+            local_text_thinking: configBool(get("local_text_thinking", "0")),
             vision_thinking: configBool(get("vision_thinking", "0")),
             n_ctx: localContext,
             local_n_ctx: localContext,
@@ -262,30 +268,33 @@
             teacher_mode: get("teacher_mode", "qwen-redact"),
             temperature: 0.35,
             top_p: 0.9,
-            max_tokens: normalizeAssistantMaxTokens(get("max_tokens", "8192")),
+            max_tokens: normalizeAssistantMaxTokens(backend === "local-qwen-once" ? get("local_max_tokens", "8192") : get("max_tokens", "8192")),
             reasoning_effort: get("reasoning_effort", "high"),
             timeout: 120
         };
     }
 
     function normalizeAssistantModel(endpoint, model) {
-        const cleaned = String(model || "").trim() || MOYUU_ASSISTANT_MODEL;
+        const cleaned = String(model || "").trim() || OPENAI_COMPATIBLE_ASSISTANT_MODEL;
         try {
             const url = new URL(String(endpoint || ""));
             if (url.hostname === "api.deepseek.com" && cleaned === "deepseekv4-pro") return "deepseek-v4-pro";
             if (url.hostname === "api.deepseek.com" && cleaned === "deepseek-chat") return "deepseek-v4-pro";
             if (url.hostname === "api.deepseek.com" && cleaned === "deepseek-reasoner") return "deepseek-v4-pro";
-            if ((url.hostname === "moyuu.cc" || url.hostname.endsWith(".moyuu.cc")) && KNOWN_ASSISTANT_MODELS.includes(cleaned) && cleaned !== MOYUU_ASSISTANT_MODEL) return MOYUU_ASSISTANT_MODEL;
         } catch (_error) { }
         return cleaned;
     }
 
     function defaultAssistantEndpointForBackend(backend) {
-        return backend === "deepseek" ? DEEPSEEK_ASSISTANT_ENDPOINT : MOYUU_ASSISTANT_ENDPOINT;
+        if (backend === "deepseek") return DEEPSEEK_ASSISTANT_ENDPOINT;
+        if (backend === "openai") return localStorage.getItem("q3vl_assistant_endpoint") || MOYUU_ASSISTANT_ENDPOINT;
+        return MOYUU_ASSISTANT_ENDPOINT;
     }
 
     function defaultAssistantModelForBackend(backend) {
-        return backend === "deepseek" ? DEEPSEEK_ASSISTANT_MODEL : MOYUU_ASSISTANT_MODEL;
+        if (backend === "deepseek") return DEEPSEEK_ASSISTANT_MODEL;
+        if (backend === "openai") return OPENAI_COMPATIBLE_ASSISTANT_MODEL;
+        return MOYUU_ASSISTANT_MODEL;
     }
 
     function storedAssistantEndpoint() {
@@ -295,14 +304,14 @@
 
     function storedAssistantModel(endpoint) {
         const stored = localStorage.getItem("q3vl_assistant_model");
-        const model = !stored || (KNOWN_ASSISTANT_ENDPOINTS.includes(endpoint) && KNOWN_ASSISTANT_MODELS.includes(stored)) ? MOYUU_ASSISTANT_MODEL : stored;
+        const model = !stored || (KNOWN_ASSISTANT_ENDPOINTS.includes(endpoint) && KNOWN_ASSISTANT_MODELS.includes(stored)) ? OPENAI_COMPATIBLE_ASSISTANT_MODEL : stored;
         return normalizeAssistantModel(endpoint, model);
     }
 
     function syncAssistantBackendDefaults(panel) {
         panel = panel || settingsPanel() || assistantPanel();
         if (!panel) return;
-        const backend = panel.querySelector('[data-q3vl-setting="backend"]')?.value || "moyuu";
+        const backend = panel.querySelector('[data-q3vl-setting="backend"]')?.value || "openai";
         const endpointInput = panel.querySelector('[data-q3vl-setting="endpoint"]');
         const modelInput = panel.querySelector('[data-q3vl-setting="model"]');
         if (!endpointInput || !modelInput) return;
@@ -343,8 +352,10 @@
         const visionPreset = panel.querySelector('[data-q3vl-setting="vision_preset"]')?.value || defaultVisionPreset();
         const teacherMode = panel.querySelector('[data-q3vl-setting="teacher_mode"]')?.value || "qwen-redact";
         const localEndpoint = backend === "local-lmcpp";
-        const localText = localEndpoint || backend === "local-qwen-once";
+        const localOnce = backend === "local-qwen-once";
+        const localText = localEndpoint || localOnce;
         const localVision = backend !== "moyuu" || (backend === "moyuu" && teacherMode === "qwen-redact");
+        const localAgent = localText || localVision;
         const apiKey = panel.querySelector('[data-q3vl-setting="api_key"]');
         const apiKeyField = apiKey?.closest(".q3vl-settings-field");
         if (apiKeyField) apiKeyField.hidden = localText;
@@ -353,14 +364,23 @@
         panel.querySelectorAll('[data-q3vl-field="remote"]').forEach(function (element) {
             element.hidden = localText;
         });
-        panel.querySelectorAll('[data-q3vl-field="local-text"]').forEach(function (element) {
+        panel.querySelectorAll('[data-q3vl-field="local-agent"]').forEach(function (element) {
+            element.hidden = !localAgent;
+        });
+        panel.querySelectorAll('[data-q3vl-field="local-once"]').forEach(function (element) {
+            element.hidden = !localOnce;
+        });
+        panel.querySelectorAll('[data-q3vl-field="local-endpoint"]').forEach(function (element) {
             element.hidden = !localEndpoint;
         });
-        panel.querySelectorAll('[data-q3vl-field="local-vision"], [data-q3vl-field="vision-advanced"]').forEach(function (element) {
+        panel.querySelectorAll('[data-q3vl-field="local-vision"]').forEach(function (element) {
             element.hidden = !localVision;
         });
+        panel.querySelectorAll('[data-q3vl-field="vision-advanced"]').forEach(function (element) {
+            element.hidden = !localEndpoint;
+        });
         panel.querySelectorAll('[data-q3vl-field="vision-custom"]').forEach(function (element) {
-            element.hidden = !localVision;
+            element.hidden = !localAgent;
         });
     }
 
@@ -578,6 +598,21 @@
         return String(value ?? "");
     }
 
+    function escapeRegExp(value) {
+        return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+
+    function flexiblePromptTextRange(text, find) {
+        const normalized = String(find || "").trim();
+        if (normalized.length < 20) return null;
+        const parts = normalized.split(/\s+/).filter(Boolean).map(escapeRegExp);
+        if (!parts.length) return null;
+        const pattern = new RegExp(parts.join("\\s+"), "g");
+        const matches = Array.from(String(text || "").matchAll(pattern));
+        if (matches.length !== 1) return null;
+        return { start: matches[0].index, end: matches[0].index + matches[0][0].length };
+    }
+
     function applyPromptPatchText(text, patch) {
         const operation = String(patch.operation || patch.op || "replace").trim();
         const find = String(patch.find ?? patch.old ?? "");
@@ -632,7 +667,11 @@
         if (operation === "replace") {
             if (!find) return { ok: false, error: "replace requires find text", text: text };
             const first = text.indexOf(find);
-            if (first < 0) return { ok: false, error: "find text not found", text: text };
+            if (first < 0) {
+                const flexible = flexiblePromptTextRange(text, find);
+                if (flexible) return { ok: true, text: text.slice(0, flexible.start) + replacement + text.slice(flexible.end), changed: 1 };
+                return { ok: false, error: "find text not found", text: text };
+            }
             const second = text.indexOf(find, first + find.length);
             if (second >= 0 && !patch.allow_multiple) return { ok: false, error: "find text is not unique; use replace_all, replace_n, or a longer find string", text: text };
             return { ok: true, text: text.slice(0, first) + replacement + text.slice(first + find.length), changed: 1 };
@@ -652,6 +691,9 @@
         while ((match = pattern.exec(diff)) !== null) {
             patches.push({ operation: "replace", find: match[1], replace: match[2] });
         }
+        const loosePattern = /(?:^|\n)SEARCH\s*\n([\s\S]*?)\nREPLACE\s*\n([\s\S]*)$/;
+        const loose = patches.length ? null : diff.match(loosePattern);
+        if (loose) patches.push({ operation: "replace", find: loose[1], replace: loose[2] });
         return patches;
     }
 
@@ -779,7 +821,13 @@
         const item = promptRootForTarget(args.target || "active");
         const readState = assistantState.promptReads[item.target];
         const baseHash = String(args.base_hash || args.prompt_hash || "").trim();
-        const patchList = args.diff !== undefined ? patchesFromDiff(args.diff) : patches;
+        const patchSource = args.patches !== undefined ? args.patches : args.operations !== undefined ? args.operations : args.patch !== undefined ? args.patch : patches;
+        let patchList;
+        if (args.diff && typeof args.diff === "object" && !Array.isArray(args.diff)) {
+            patchList = args.diff.find !== undefined || args.diff.replace !== undefined || args.diff.text !== undefined ? [args.diff] : patchesFromDiff(args.diff.diff);
+        } else {
+            patchList = args.diff !== undefined ? patchesFromDiff(args.diff) : Array.isArray(patchSource) ? patchSource : patchSource && typeof patchSource === "object" ? [patchSource] : [];
+        }
         if (!readState) {
             return { ok: false, target: item.target, error: "must call read_prompt for this target before edit_prompt" };
         }
@@ -789,29 +837,34 @@
         if (baseHash !== readState.hash) {
             return { ok: false, target: item.target, error: "base_hash does not match the latest read_prompt result; read again", last_read_hash: readState.hash };
         }
+        if ((!Array.isArray(patchList) || !patchList.length) && args.prompt !== undefined) {
+            const prompt = String(args.prompt || "");
+            patchList = readState.prompt ? [{ operation: "replace", find: readState.prompt, replace: prompt }] : [{ operation: "append", text: prompt }];
+        }
         if (!Array.isArray(patchList) || !patchList.length) {
             return { ok: false, target: item.target, error: "edit_prompt requires diff or patches" };
         }
-        const result = compactPromptPatchResult(patchPromptRoot(item.root, patchList, baseHash), Boolean(args.return_prompt));
+        const rawResult = patchPromptRoot(item.root, patchList, baseHash);
+        const result = compactPromptPatchResult(rawResult, Boolean(args.return_prompt));
         if (result.ok) {
             switchMainTab(item.target);
             assistantState.promptReads[item.target] = {
                 hash: result.prompt_hash,
-                prompt: result.prompt || "",
+                prompt: rawResult.prompt || "",
                 at: Date.now()
             };
         }
         return Object.assign({ target: item.target }, result);
     }
 
-    async function askTeacherTool(args) {
+    async function askTeacherTool(args, signal) {
         const config = assistantConfig();
         const payload = Object.assign({}, config, args || {}, {
             backend: "moyuu",
             api_key: storedAssistantApiKey("moyuu") || config.api_key,
             endpoint: config.endpoint || MOYUU_ASSISTANT_ENDPOINT,
             fallback_endpoint: config.fallback_endpoint || MOYUU_ASSISTANT_FALLBACK_ENDPOINT,
-            model: config.model || MOYUU_ASSISTANT_MODEL,
+            model: MOYUU_ASSISTANT_MODEL,
             question: String(args?.question || args?.prompt || args?.query || ""),
             context: String(args?.context || args?.briefing || ""),
             teacher_mode: "regex"
@@ -819,6 +872,7 @@
         const response = await fetch("/qwen3vl-prompt-tools/ask-teacher", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: signal,
             body: JSON.stringify(payload)
         });
         if (!response.ok) {
@@ -828,11 +882,11 @@
         return await response.json();
     }
 
-    async function executeAssistantTool(tool) {
+    async function executeAssistantTool(tool, signal) {
         const name = tool.tool || tool.name;
         const args = tool.arguments || {};
         if (name === "ask_teacher") {
-            return await askTeacherTool(args);
+            return await askTeacherTool(args, signal);
         }
         if (name === "read_prompt" || name === "get_current_prompt") {
             return await readPromptTool(args.target || "active");
@@ -886,8 +940,10 @@
         MOYUU_ASSISTANT_ENDPOINT,
         MOYUU_ASSISTANT_FALLBACK_ENDPOINT,
         MOYUU_ASSISTANT_MODEL,
+        OPENAI_COMPATIBLE_ASSISTANT_MODEL,
         DEEPSEEK_ASSISTANT_ENDPOINT,
         DEEPSEEK_ASSISTANT_MODEL,
+        REMOTE_ASSISTANT_PRESETS,
         DEFAULT_QWEN_VISION_MODEL_PATH,
         DEFAULT_QWEN_VISION_MMPROJ_PATH,
         DEFAULT_LOCAL_CONTEXT_TOKENS,
