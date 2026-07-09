@@ -18,6 +18,7 @@ from lib_qwen3vl_prompt_tools.generic import (
     find_default_llama_server,
     find_vision_preset_files,
     prompt_assistant_chat,
+    prompt_assistant_stream,
     repo_from_label,
 )
 from lib_qwen3vl_prompt_tools.prompts import CAPTION_TASKS
@@ -82,6 +83,7 @@ def _run_enhancer(text: str, task: str):
 
 def _assistant_api(_: gr.Blocks, app):
     from fastapi import Body, HTTPException
+    from fastapi.responses import StreamingResponse
 
     @app.post("/qwen3vl-prompt-tools/assistant")
     async def qwen3vl_prompt_assistant(payload: dict = Body(...)):
@@ -89,6 +91,10 @@ def _assistant_api(_: gr.Blocks, app):
             return prompt_assistant_chat(payload)
         except Exception as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
+
+    @app.post("/qwen3vl-prompt-tools/assistant-stream")
+    async def qwen3vl_prompt_assistant_stream(payload: dict = Body(...)):
+        return StreamingResponse(prompt_assistant_stream(payload), media_type="application/x-ndjson")
 
     @app.post("/qwen3vl-prompt-tools/analyze-image")
     async def qwen3vl_reference_image(payload: dict = Body(...)):

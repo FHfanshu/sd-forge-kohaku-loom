@@ -14,10 +14,10 @@ The main workflow is `WD tagger + llama.cpp`: generate WD tags from an image, th
 - Auto-downloads the default HauhauCS Qwen3.5 9B uncensored GGUF and mmproj when missing.
 - Auto-downloads a Windows x64 llama.cpp release backend when `llama-server.exe` is missing.
 - Floating LLM prompt assistant for character layout, spatial relationships, and prompt rewriting.
-- Prompt assistant can use DeepSeek/OpenAI-compatible APIs or a local llama.cpp endpoint.
+- Prompt assistant defaults to Moyuu Gemini native API, and can also use DeepSeek/OpenAI-compatible APIs or local llama.cpp backends.
 - Prompt assistant can read and replace the current txt2img/img2img prompt through UI tools.
 - Prompt assistant can read/write the WebUI style template / trigger-word template when the field is present.
-- Prompt assistant image attachments are analyzed by a selectable local GGUF VLM first; the DeepSeek/text LLM receives only the visual notes.
+- Prompt assistant image attachments go directly to Gemini-native multimodal requests. Text-only backends use a selectable local GGUF VLM first and receive only the visual notes.
 
 ## Default Model
 
@@ -54,16 +54,17 @@ You can also set `LLAMA_SERVER_EXE` or fill the path manually in the UI.
 
 The `LLM 助手` button opens a floating chat window. Text-assistant defaults:
 
-- Endpoint: `https://api.deepseek.com`
-- Model: `deepseek-v4-pro`
+- Endpoint: `https://moyuu.cc`
+- Fallback endpoint: `https://hk-api.moyuu.cc`
+- Model: `gemini-3.1-pro-high`
 
-DeepSeek requests use `thinking: {"type":"enabled"}` with `reasoning_effort: "high"` and `max_tokens: 8192` by default. Both max tokens and reasoning effort are configurable in the assistant settings.
+Moyuu Gemini requests use Gemini native `v1beta` `generateContent` / `streamGenerateContent` by default. The assistant status line streams token counters in the form `↑input tokens ↓output tokens`; final Gemini `usageMetadata` replaces the local estimate when the endpoint provides it. Before text is sent to Gemini, sensitive prompt fragments are replaced with `SAFE_SLOT_###` placeholders and restored locally in the returned tool arguments, so `edit_prompt` still patches the real WebUI prompt while Gemini sees a safer prompt.
 
 Older `https://api.deepseek.com/v1` DeepSeek-style endpoints remain accepted; the assistant will append `/chat/completions` to whichever base you configure. Local llama.cpp/OpenAI-compatible endpoints still normally use `/v1`.
 
-You can switch the text assistant to `本地 llama.cpp endpoint`, but DeepSeek remains the default text assistant. Image attachments use a separate local VLM configuration with presets for `Gemma 4 12B`, `Qwen3.5 原版 9B`, `Qwen3.5 破限版 9B`, plus `自定义`. The local VLM thinking switch is optional and off by default.
+You can switch the text assistant to `DeepSeek`, `本地 Qwen 一次性`, or `本地 llama.cpp endpoint`, but Moyuu Gemini remains the default text assistant. `本地 Qwen 一次性` starts a local llama.cpp server for one assistant request and then terminates it, releasing VRAM instead of keeping a resident session. With Gemini, image attachments are sent directly to the native multimodal request. The separate local VLM configuration remains available for local/offline or non-multimodal text backends, with presets for `Gemma 4 12B`, `Qwen3.5 原版 9B`, `Qwen3.5 破限版 9B`, plus `自定义`. The local VLM thinking switch is optional and off by default.
 
-The floating settings panel keeps common controls visible by default: text backend, API key, visual VLM preset, and visual thinking. Endpoint/model/path overrides are under `高级` and are hidden unless relevant.
+The floating settings panel keeps common controls visible by default. API keys are stored per text provider, so switching between Moyuu and DeepSeek does not overwrite the other provider's key. Endpoint/model/path overrides are under `高级` and are hidden unless relevant.
 
 For local text-assistant testing, an endpoint can still be configured, for example:
 
@@ -74,7 +75,7 @@ hauhau-qwen3.5-9b-uncensored
 
 The assistant is instructed to generate and revise image-generation prompts, especially multi-character spatial layouts such as left / center / right, foreground / background, interactions, and distinct per-character traits.
 
-Use `附图` to attach a reference image. The extension first asks the selected local GGUF VLM to produce a detailed Chinese image caption with subject/spatial facts plus a subject-agnostic reusable style prompt, then sends those visual notes into the assistant conversation. The local VLM does not receive the user's chat text, so the image analysis is not biased by the editing request. This lets text-only remote models such as DeepSeek V4 Pro work from image references without receiving image data directly.
+Use `附图` to attach a reference image. For Gemini-native text assistants, the image is sent directly to the assistant request. For text-only backends, the extension first asks the selected local GGUF VLM to produce a detailed Chinese image caption with subject/spatial facts plus a subject-agnostic reusable style prompt, then sends those visual notes into the assistant conversation.
 
 The model can request UI tools by returning exact JSON. The prompt-edit harness exposes only read and edit operations:
 
