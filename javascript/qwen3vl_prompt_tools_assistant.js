@@ -1,7 +1,13 @@
 (function () {
     const tools = window.q3vlPromptTools;
     if (!tools) return;
-    const { assistantConfig, assistantPanel, assistantState, executeAssistantTool } = tools;
+    const { assistantConfig, assistantPanel, assistantState, executeAssistantTool, tr } = tools;
+
+    function t(key, fallback) {
+        if (typeof tr !== "function") return fallback;
+        const value = tr(key);
+        return value && value !== key ? value : fallback;
+    }
 
     const ASSISTANT_TOOL_NAMES = [
         "ask_teacher",
@@ -397,10 +403,12 @@
     function addAssistantUserMessage(text, attachment) {
         const log = assistantPanel()?.querySelector("#q3vl_assistant_messages");
         if (!log) return;
+        const rewindIndex = assistantState.messages.length;
         const item = document.createElement("div");
         item.className = "q3vl-assistant-msg q3vl-assistant-user";
         if (text) {
             const body = document.createElement("div");
+            body.className = "q3vl-assistant-user-body";
             body.textContent = text;
             item.appendChild(body);
         }
@@ -416,6 +424,29 @@
             media.appendChild(name);
             item.appendChild(media);
         }
+        const rewindBtn = document.createElement("button");
+        rewindBtn.type = "button";
+        rewindBtn.className = "q3vl-assistant-rewind";
+        rewindBtn.title = t("assistant.rewind", "编辑并重新发送");
+        rewindBtn.setAttribute("aria-label", t("assistant.rewind", "编辑并重新发送"));
+        rewindBtn.textContent = "✎";
+        item.appendChild(rewindBtn);
+        rewindBtn.addEventListener("click", function () {
+            assistantState.messages.splice(rewindIndex);
+            let node = item.nextElementSibling;
+            while (node) {
+                const next = node.nextElementSibling;
+                node.remove();
+                node = next;
+            }
+            item.remove();
+            const input = assistantPanel()?.querySelector("#q3vl_assistant_input");
+            if (input && text) {
+                input.value = text;
+                input.focus();
+            }
+            if (attachment) setAssistantAttachment(attachment);
+        });
         log.appendChild(item);
         log.scrollTop = log.scrollHeight;
     }
@@ -439,6 +470,7 @@
                 vision_model_path: config.vision_model_path,
                 vision_mmproj_path: config.vision_mmproj_path,
                 enable_thinking: config.vision_thinking,
+                n_ctx: config.n_ctx,
                 timeout: 120
             })
         });

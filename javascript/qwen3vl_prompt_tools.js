@@ -18,8 +18,17 @@
         return document.getElementById("q3vl_assistant_panel");
     }
 
+    function settingsPanel() {
+        return document.getElementById("q3vl_assistant_settings_panel");
+    }
+
+    function t(key, fallback) {
+        const translate = window.q3vlPromptTools && window.q3vlPromptTools.tr;
+        return typeof translate === "function" ? translate(key) : fallback;
+    }
+
     function removeAssistantWindow() {
-        document.querySelectorAll("#q3vl_assistant_launcher, #q3vl_assistant_panel").forEach(function (el) {
+        document.querySelectorAll("#q3vl_assistant_launcher, #q3vl_assistant_panel, #q3vl_assistant_settings_panel").forEach(function (el) {
             el.remove();
         });
     }
@@ -44,7 +53,7 @@
             row.classList.toggle("q3vl-hidden", !visible);
             row.querySelectorAll("button").forEach(function (button) {
                 button.disabled = !visible;
-                button.title = visible ? "" : "Qwen3-VL 扩写仅在 UI Preset = krea 时可用";
+                button.title = visible ? "" : t("inline.disabled_hint", "Qwen3-VL 扩写仅在 UI Preset = krea 时可用");
             });
         });
     }
@@ -173,8 +182,19 @@
     const MOYUU_ASSISTANT_MODEL = "gemini-3.1-pro-high";
     const DEEPSEEK_ASSISTANT_ENDPOINT = "https://api.deepseek.com";
     const DEEPSEEK_ASSISTANT_MODEL = "deepseek-v4-pro";
+    const DEFAULT_QWEN_VISION_MODEL_PATH = "E:\\AI\\lmcpp\\models\\Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-GGUF\\Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf";
+    const DEFAULT_QWEN_VISION_MMPROJ_PATH = "E:\\AI\\lmcpp\\models\\Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-GGUF\\mmproj-Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf";
+    const DEFAULT_LOCAL_CONTEXT_TOKENS = 16384;
     const KNOWN_ASSISTANT_ENDPOINTS = [MOYUU_ASSISTANT_ENDPOINT, MOYUU_ASSISTANT_FALLBACK_ENDPOINT, DEEPSEEK_ASSISTANT_ENDPOINT];
     const KNOWN_ASSISTANT_MODELS = [MOYUU_ASSISTANT_MODEL, DEEPSEEK_ASSISTANT_MODEL, "deepseekv4-pro", "deepseek-chat", "deepseek-reasoner"];
+
+    function defaultVisionModelPathForPreset(preset) {
+        return preset === defaultVisionPreset() ? DEFAULT_QWEN_VISION_MODEL_PATH : "";
+    }
+
+    function defaultVisionMmprojPathForPreset(preset) {
+        return preset === defaultVisionPreset() ? DEFAULT_QWEN_VISION_MMPROJ_PATH : "";
+    }
 
     function assistantApiKeyBackend(backend) {
         return backend === "deepseek" || backend === "local-lmcpp" || backend === "local-qwen-once" ? backend : "moyuu";
@@ -189,27 +209,30 @@
     }
 
     function currentAssistantApiKey(panel, backend) {
+        panel = panel || settingsPanel() || assistantPanel();
         const input = panel?.querySelector('[data-q3vl-setting="api_key"]');
         if (input && assistantApiKeyBackend(backend) === assistantState.apiKeyBackend) return input.value || "";
         return storedAssistantApiKey(backend);
     }
 
     function storeAssistantApiKey(panel, backend) {
+        panel = panel || settingsPanel() || assistantPanel();
         const input = panel?.querySelector('[data-q3vl-setting="api_key"]');
         if (!input) return;
         localStorage.setItem(assistantApiKeyStorageKey(backend), input.value || "");
     }
 
     function loadAssistantApiKey(panel, backend) {
+        panel = panel || settingsPanel() || assistantPanel();
         const input = panel?.querySelector('[data-q3vl-setting="api_key"]');
         if (!input) return;
         assistantState.apiKeyBackend = assistantApiKeyBackend(backend);
         input.value = storedAssistantApiKey(backend);
-        input.placeholder = backend === "deepseek" ? "DeepSeek API key" : backend === "local-lmcpp" || backend === "local-qwen-once" ? "本地后端无需 API key" : "Moyuu API key";
+        input.placeholder = backend === "deepseek" ? "DeepSeek API key" : backend === "local-lmcpp" || backend === "local-qwen-once" ? t("settings.local_no_api_key", "本地后端无需 API key") : "Moyuu API key";
     }
 
     function assistantConfig() {
-        const panel = assistantPanel();
+        const panel = settingsPanel() || assistantPanel();
         const get = function (name, fallback) {
             const value = panel ? panel.querySelector(`[data-q3vl-setting="${name}"]`)?.value : localStorage.getItem(`q3vl_assistant_${name}`);
             return value || fallback;
@@ -217,6 +240,7 @@
         const endpoint = get("endpoint", MOYUU_ASSISTANT_ENDPOINT);
         const visionPreset = get("vision_preset", defaultVisionPreset());
         const backend = get("backend", "moyuu");
+        const localContext = normalizeAssistantContextTokens(get("n_ctx", String(DEFAULT_LOCAL_CONTEXT_TOKENS)));
         return {
             backend: backend,
             endpoint: endpoint,
@@ -228,9 +252,12 @@
             vision_preset: visionPreset,
             vision_endpoint: get("vision_endpoint", "http://127.0.0.1:8080/v1"),
             vision_model: get("vision_model", visionModelForPreset(visionPreset)),
-            vision_model_path: get("vision_model_path", ""),
-            vision_mmproj_path: get("vision_mmproj_path", ""),
+            vision_model_path: get("vision_model_path", defaultVisionModelPathForPreset(visionPreset)),
+            vision_mmproj_path: get("vision_mmproj_path", defaultVisionMmprojPathForPreset(visionPreset)),
             vision_thinking: configBool(get("vision_thinking", "0")),
+            n_ctx: localContext,
+            local_n_ctx: localContext,
+            teacher_n_ctx: localContext,
             sanitize_sensitive: configBool(get("sanitize_sensitive", "1")),
             teacher_mode: get("teacher_mode", "qwen-redact"),
             temperature: 0.35,
@@ -273,6 +300,8 @@
     }
 
     function syncAssistantBackendDefaults(panel) {
+        panel = panel || settingsPanel() || assistantPanel();
+        if (!panel) return;
         const backend = panel.querySelector('[data-q3vl-setting="backend"]')?.value || "moyuu";
         const endpointInput = panel.querySelector('[data-q3vl-setting="endpoint"]');
         const modelInput = panel.querySelector('[data-q3vl-setting="model"]');
@@ -291,8 +320,14 @@
         return Math.min(parsed, 65536);
     }
 
+    function normalizeAssistantContextTokens(value) {
+        const parsed = Number.parseInt(String(value || ""), 10);
+        if (!Number.isFinite(parsed) || parsed < 1024) return DEFAULT_LOCAL_CONTEXT_TOKENS;
+        return Math.min(parsed, 32768);
+    }
+
     function saveAssistantConfig() {
-        const panel = assistantPanel();
+        const panel = settingsPanel() || assistantPanel();
         if (!panel) return;
         storeAssistantApiKey(panel, assistantState.apiKeyBackend);
         panel.querySelectorAll("[data-q3vl-setting]").forEach(function (input) {
@@ -302,6 +337,7 @@
     }
 
     function setAssistantSettingsVisibility(panel) {
+        panel = panel || settingsPanel() || assistantPanel();
         if (!panel) return;
         const backend = panel.querySelector('[data-q3vl-setting="backend"]')?.value || "moyuu";
         const visionPreset = panel.querySelector('[data-q3vl-setting="vision_preset"]')?.value || defaultVisionPreset();
@@ -309,8 +345,11 @@
         const localEndpoint = backend === "local-lmcpp";
         const localText = localEndpoint || backend === "local-qwen-once";
         const localVision = backend !== "moyuu" || (backend === "moyuu" && teacherMode === "qwen-redact");
-        panel.querySelector('[data-q3vl-setting="api_key"]')?.toggleAttribute("hidden", localText);
-        panel.querySelector('[data-q3vl-setting="api_key"]')?.toggleAttribute("disabled", localText);
+        const apiKey = panel.querySelector('[data-q3vl-setting="api_key"]');
+        const apiKeyField = apiKey?.closest(".q3vl-settings-field");
+        if (apiKeyField) apiKeyField.hidden = localText;
+        apiKey?.toggleAttribute("hidden", localText);
+        apiKey?.toggleAttribute("disabled", localText);
         panel.querySelectorAll('[data-q3vl-field="remote"]').forEach(function (element) {
             element.hidden = localText;
         });
@@ -321,7 +360,7 @@
             element.hidden = !localVision;
         });
         panel.querySelectorAll('[data-q3vl-field="vision-custom"]').forEach(function (element) {
-            element.hidden = !localVision || visionPreset !== "自定义";
+            element.hidden = !localVision;
         });
     }
 
@@ -828,6 +867,7 @@
         q3vlApp,
         q3vlMainApp,
         assistantPanel,
+        settingsPanel,
         removeAssistantWindow,
         currentForgePreset,
         syncQwenPromptActions,
@@ -848,8 +888,13 @@
         MOYUU_ASSISTANT_MODEL,
         DEEPSEEK_ASSISTANT_ENDPOINT,
         DEEPSEEK_ASSISTANT_MODEL,
+        DEFAULT_QWEN_VISION_MODEL_PATH,
+        DEFAULT_QWEN_VISION_MMPROJ_PATH,
+        DEFAULT_LOCAL_CONTEXT_TOKENS,
         KNOWN_ASSISTANT_ENDPOINTS,
         KNOWN_ASSISTANT_MODELS,
+        defaultVisionModelPathForPreset,
+        defaultVisionMmprojPathForPreset,
         assistantApiKeyBackend,
         assistantApiKeyStorageKey,
         storedAssistantApiKey,
@@ -864,6 +909,7 @@
         storedAssistantModel,
         syncAssistantBackendDefaults,
         normalizeAssistantMaxTokens,
+        normalizeAssistantContextTokens,
         saveAssistantConfig,
         setAssistantSettingsVisibility,
         activePromptTarget,
