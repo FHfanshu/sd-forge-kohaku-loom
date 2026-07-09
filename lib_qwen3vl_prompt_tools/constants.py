@@ -85,6 +85,7 @@ Available UI tools:
 - If native tool calling is available, use tool calls instead of writing tool JSON in normal text.
 - If native tool calling is not available through the current API relay, emit the tool request as JSON text. It may be preceded by one short natural-language sentence, but the JSON must be complete and valid.
 - Some prompt text may contain SAFE_SLOT_### placeholders. Treat them as opaque exact text: preserve them in SEARCH/REPLACE blocks, never expand or reinterpret them.
+- To consult the remote Gemini teacher after local redaction, use ask_teacher with a sanitized question and relevant context. Never send raw sensitive text; preserve SAFE_SLOT_### placeholders exactly.
 - To read the current prompt, reply with exactly: {"tool":"read_prompt","arguments":{"target":"active"}}
 - To edit the prompt, use edit_prompt with base_hash and a diff. Preferred diff format is a SEARCH/REPLACE block with markers named SEARCH, separator line =======, and ending marker REPLACE.
 - target can be "active", "txt2img", or "img2img".
@@ -133,6 +134,22 @@ REFERENCE_IMAGE_STYLE_PROMPT = """请作为一名顶级的 AI 绘画提示词专
 6. 不要输出推理过程、免责声明或与图片无关的内容。"""
 
 ASSISTANT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_teacher",
+            "description": "Ask the remote Gemini teacher for a second opinion after local Qwen redaction. Send only sanitized context and preserve SAFE_SLOT_### placeholders.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "Specific question for the Gemini teacher."},
+                    "context": {"type": "string", "description": "Sanitized prompt/context for the teacher. Keep SAFE_SLOT_### placeholders exactly."},
+                    "goal": {"type": "string", "description": "Optional desired outcome, such as critique, rewrite, or edit plan."},
+                },
+                "required": ["question"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {

@@ -765,9 +765,36 @@
         return Object.assign({ target: item.target }, result);
     }
 
+    async function askTeacherTool(args) {
+        const config = assistantConfig();
+        const payload = Object.assign({}, config, args || {}, {
+            backend: "moyuu",
+            api_key: storedAssistantApiKey("moyuu") || config.api_key,
+            endpoint: config.endpoint || MOYUU_ASSISTANT_ENDPOINT,
+            fallback_endpoint: config.fallback_endpoint || MOYUU_ASSISTANT_FALLBACK_ENDPOINT,
+            model: config.model || MOYUU_ASSISTANT_MODEL,
+            question: String(args?.question || args?.prompt || args?.query || ""),
+            context: String(args?.context || args?.briefing || ""),
+            teacher_mode: "regex"
+        });
+        const response = await fetch("/qwen3vl-prompt-tools/ask-teacher", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            const detail = await response.text();
+            return { ok: false, error: detail };
+        }
+        return await response.json();
+    }
+
     async function executeAssistantTool(tool) {
         const name = tool.tool || tool.name;
         const args = tool.arguments || {};
+        if (name === "ask_teacher") {
+            return await askTeacherTool(args);
+        }
         if (name === "read_prompt" || name === "get_current_prompt") {
             return await readPromptTool(args.target || "active");
         }
@@ -863,6 +890,7 @@
         setNativeValueIfAvailable,
         compactPromptPatchResult,
         editPromptTool,
+        askTeacherTool,
         executeAssistantTool,
         truncateAssistantText
     });

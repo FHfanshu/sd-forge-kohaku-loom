@@ -41,3 +41,9 @@ Goal: split oversized backend and browser files, keep files under 1000 lines, an
 - Browser attachments no longer go directly to Gemini in the default mode; local Qwen VLM analyzes/redacts first.
 - `teacher_mode=regex` remains available as an advanced fallback for placeholder-only redaction.
 - Default local VLM preset is `Qwen3.5 破限版 9B` to match the local testing model path.
+
+## 2026-07-09 Ask Teacher Tool
+
+- Added `ask_teacher` to the assistant tool schema for local Qwen-to-Gemini teacher consultation.
+- Added `/qwen3vl-prompt-tools/ask-teacher`; teacher requests force `teacher_mode=regex` and disable Gemini-side tools to avoid recursion.
+- Browser tool execution now posts sanitized `question` / `context` to the teacher endpoint and returns the result to the agent loop.

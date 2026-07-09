@@ -18,6 +18,48 @@ from .constants import (
 )
 from .response_text import _clean_response_text, _extract_message_text
 
+
+def ask_teacher(payload: dict[str, Any]) -> dict[str, Any]:
+    question = str(payload.get("question") or payload.get("teacher_question") or payload.get("prompt") or "").strip()
+    context = str(payload.get("context") or payload.get("teacher_context") or "").strip()
+    goal = str(payload.get("goal") or "").strip()
+    if not question and not context:
+        raise RuntimeError("ask_teacher requires question or context")
+    endpoint = str(payload.get("endpoint") or DEFAULT_ASSISTANT_ENDPOINT).strip().rstrip("/")
+    model = str(payload.get("model") or DEFAULT_ASSISTANT_MODEL).strip()
+    teacher_prompt = (
+        "You are the remote Gemini teacher for a local Qwen prompt agent. "
+        "Review the sanitized context and answer with practical prompt-engineering guidance. "
+        "Do not request tools, do not expand SAFE_SLOT_### placeholders, and do not ask for raw sensitive text."
+    )
+    parts = [teacher_prompt]
+    if goal:
+        parts.append(f"Goal: {goal}")
+    if context:
+        parts.append(f"Sanitized context:\n{context}")
+    if question:
+        parts.append(f"Question:\n{question}")
+    teacher_payload = dict(payload)
+    teacher_payload.update(
+        {
+            "backend": "moyuu",
+            "messages": [{"role": "user", "content": "\n\n".join(parts)}],
+            "teacher_mode": "regex",
+            "disable_tools": True,
+            "max_tokens": int(payload.get("teacher_max_tokens") or payload.get("max_tokens") or 1200),
+        }
+    )
+    api_key = _assistant_api_key(teacher_payload, "moyuu")
+    result = _prompt_assistant_chat_gemini(teacher_payload, endpoint, model, api_key)
+    return {
+        "ok": True,
+        "text": result.get("text", ""),
+        "model": result.get("model", model),
+        "endpoint": result.get("endpoint", endpoint),
+        "usage": result.get("usage"),
+        "teacher_mode": result.get("teacher_mode", "regex"),
+    }
+
 def prompt_assistant_chat(payload: dict[str, Any]) -> dict[str, Any]:
     backend = str(payload.get("backend") or "moyuu").strip()
     if backend == "local-qwen-once":

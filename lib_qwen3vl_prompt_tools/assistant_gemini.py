@@ -216,9 +216,10 @@ def _gemini_request_body(payload: dict[str, Any], messages: list[Any]) -> tuple[
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ],
-        "tools": _gemini_tools(),
-        "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
     }
+    if not _payload_bool(payload.get("disable_tools"), False):
+        body["tools"] = _gemini_tools()
+        body["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
     return body, input_tokens
 
 

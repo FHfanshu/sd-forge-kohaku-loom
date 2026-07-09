@@ -3,8 +3,9 @@ from unittest.mock import patch
 
 from PIL import Image
 
+from lib_qwen3vl_prompt_tools.assistant import ask_teacher
 from lib_qwen3vl_prompt_tools.generic import _PromptSanitizer, _restore_gemini_result
-from lib_qwen3vl_prompt_tools.assistant_gemini import _prompt_assistant_chat_gemini
+from lib_qwen3vl_prompt_tools.assistant_gemini import _gemini_request_body, _prompt_assistant_chat_gemini
 from lib_qwen3vl_prompt_tools.assistant_teacher import qwen_teacher_enabled
 from lib_qwen3vl_prompt_tools.images import prepare_image
 from lib_qwen3vl_prompt_tools.prompts import build_caption_chat, build_enhance_chat, clean_generation
@@ -73,6 +74,24 @@ class PromptToolsTests(unittest.TestCase):
         self.assertEqual(body["contents"][0]["parts"][0]["text"], "teacher safe briefing SAFE_SLOT_001")
         self.assertEqual(result["teacher_mode"], "local-qwen-redact")
         self.assertEqual(result["teacher_model"], "qwen")
+
+    def test_gemini_body_can_disable_tools_for_teacher(self):
+        body, _tokens = _gemini_request_body({"disable_tools": True}, [{"role": "user", "content": "teacher only"}])
+        self.assertNotIn("tools", body)
+        self.assertNotIn("toolConfig", body)
+
+    def test_ask_teacher_uses_gemini_without_tools(self):
+        with patch(
+            "lib_qwen3vl_prompt_tools.assistant._prompt_assistant_chat_gemini",
+            return_value={"text": "teacher advice", "model": "gemini-3.1-pro-high", "endpoint": "https://moyuu.cc", "teacher_mode": "regex"},
+        ) as chat:
+            result = ask_teacher({"question": "How should I improve this?", "context": "SAFE_SLOT_001 composition", "api_key": "test-key"})
+
+        teacher_payload = chat.call_args.args[0]
+        self.assertTrue(teacher_payload["disable_tools"])
+        self.assertEqual(teacher_payload["teacher_mode"], "regex")
+        self.assertIn("SAFE_SLOT_001", teacher_payload["messages"][0]["content"])
+        self.assertEqual(result["text"], "teacher advice")
 
 
 if __name__ == "__main__":

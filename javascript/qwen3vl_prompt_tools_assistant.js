@@ -4,6 +4,7 @@
     const { assistantConfig, assistantPanel, assistantState, executeAssistantTool } = tools;
 
     const ASSISTANT_TOOL_NAMES = [
+        "ask_teacher",
         "read_prompt",
         "get_current_prompt",
         "edit_prompt",

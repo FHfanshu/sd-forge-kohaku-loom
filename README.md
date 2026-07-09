@@ -81,6 +81,14 @@ Use `附图` to attach a reference image. In the default Gemini teacher mode, th
 
 The model can request UI tools by returning exact JSON. The prompt-edit harness exposes only read and edit operations:
 
+Local Qwen can also consult the remote Gemini teacher through `ask_teacher` after it has produced a sanitized question/context:
+
+```json
+{"tool":"ask_teacher","arguments":{"question":"How can this composition be improved?","context":"SAFE_SLOT_001, left/right character layout, dramatic rim light"}}
+```
+
+The `ask_teacher` tool calls `/qwen3vl-prompt-tools/ask-teacher`; the teacher-side Gemini request disables further tool calls to avoid recursion.
+
 ```json
 {"tool":"read_prompt","arguments":{"target":"active"}}
 ```

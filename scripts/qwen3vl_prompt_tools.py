@@ -12,6 +12,7 @@ from lib_qwen3vl_prompt_tools.generic import (
     VISION_MODEL_PRESET_CUSTOM,
     VISION_MODEL_PRESETS,
     analyze_reference_image,
+    ask_teacher,
     build_nl_from_endpoint,
     build_nl_from_local_gguf,
     combine_prompt,
@@ -95,6 +96,13 @@ def _assistant_api(_: gr.Blocks, app):
     @app.post("/qwen3vl-prompt-tools/assistant-stream")
     async def qwen3vl_prompt_assistant_stream(payload: dict = Body(...)):
         return StreamingResponse(prompt_assistant_stream(payload), media_type="application/x-ndjson")
+
+    @app.post("/qwen3vl-prompt-tools/ask-teacher")
+    async def qwen3vl_ask_teacher(payload: dict = Body(...)):
+        try:
+            return ask_teacher(payload)
+        except Exception as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
 
     @app.post("/qwen3vl-prompt-tools/analyze-image")
     async def qwen3vl_reference_image(payload: dict = Body(...)):

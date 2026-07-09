@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # Compatibility facade. New code should import from the focused modules below.
 
-from .assistant import prompt_assistant_chat, prompt_assistant_stream
+from .assistant import ask_teacher, prompt_assistant_chat, prompt_assistant_stream
 from .assistant_common import (
     _assistant_chat_url,
     _assistant_estimate_tokens,
