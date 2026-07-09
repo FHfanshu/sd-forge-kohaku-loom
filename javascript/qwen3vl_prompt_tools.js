@@ -1,4 +1,6 @@
 (function () {
+    window.q3vlPromptTools = window.q3vlPromptTools || {};
+
     function q3vlApp() {
         const app = typeof gradioApp === "function" ? gradioApp() : null;
         return app || document;
@@ -142,7 +144,8 @@
         messages: [],
         attachment: null,
         promptReads: {},
-        promptStyles: null
+        promptStyles: null,
+        apiKeyBackend: "moyuu"
     };
 
     const q3vlVisionPresets = {
@@ -165,19 +168,61 @@
         return ["1", "true", "yes", "on", "enabled"].includes(String(value || "").trim().toLowerCase());
     }
 
+    const MOYUU_ASSISTANT_ENDPOINT = "https://moyuu.cc";
+    const MOYUU_ASSISTANT_FALLBACK_ENDPOINT = "https://hk-api.moyuu.cc";
+    const MOYUU_ASSISTANT_MODEL = "gemini-3.1-pro-high";
+    const DEEPSEEK_ASSISTANT_ENDPOINT = "https://api.deepseek.com";
+    const DEEPSEEK_ASSISTANT_MODEL = "deepseek-v4-pro";
+    const KNOWN_ASSISTANT_ENDPOINTS = [MOYUU_ASSISTANT_ENDPOINT, MOYUU_ASSISTANT_FALLBACK_ENDPOINT, DEEPSEEK_ASSISTANT_ENDPOINT];
+    const KNOWN_ASSISTANT_MODELS = [MOYUU_ASSISTANT_MODEL, DEEPSEEK_ASSISTANT_MODEL, "deepseekv4-pro", "deepseek-chat", "deepseek-reasoner"];
+
+    function assistantApiKeyBackend(backend) {
+        return backend === "deepseek" || backend === "local-lmcpp" || backend === "local-qwen-once" ? backend : "moyuu";
+    }
+
+    function assistantApiKeyStorageKey(backend) {
+        return `q3vl_assistant_api_key_${assistantApiKeyBackend(backend)}`;
+    }
+
+    function storedAssistantApiKey(backend) {
+        return localStorage.getItem(assistantApiKeyStorageKey(backend)) || localStorage.getItem("q3vl_assistant_api_key") || "";
+    }
+
+    function currentAssistantApiKey(panel, backend) {
+        const input = panel?.querySelector('[data-q3vl-setting="api_key"]');
+        if (input && assistantApiKeyBackend(backend) === assistantState.apiKeyBackend) return input.value || "";
+        return storedAssistantApiKey(backend);
+    }
+
+    function storeAssistantApiKey(panel, backend) {
+        const input = panel?.querySelector('[data-q3vl-setting="api_key"]');
+        if (!input) return;
+        localStorage.setItem(assistantApiKeyStorageKey(backend), input.value || "");
+    }
+
+    function loadAssistantApiKey(panel, backend) {
+        const input = panel?.querySelector('[data-q3vl-setting="api_key"]');
+        if (!input) return;
+        assistantState.apiKeyBackend = assistantApiKeyBackend(backend);
+        input.value = storedAssistantApiKey(backend);
+        input.placeholder = backend === "deepseek" ? "DeepSeek API key" : backend === "local-lmcpp" || backend === "local-qwen-once" ? "本地后端无需 API key" : "Moyuu API key";
+    }
+
     function assistantConfig() {
         const panel = assistantPanel();
         const get = function (name, fallback) {
             const value = panel ? panel.querySelector(`[data-q3vl-setting="${name}"]`)?.value : localStorage.getItem(`q3vl_assistant_${name}`);
             return value || fallback;
         };
-        const endpoint = get("endpoint", "https://api.deepseek.com");
+        const endpoint = get("endpoint", MOYUU_ASSISTANT_ENDPOINT);
         const visionPreset = get("vision_preset", defaultVisionPreset());
+        const backend = get("backend", "moyuu");
         return {
-            backend: get("backend", "deepseek"),
+            backend: backend,
             endpoint: endpoint,
-            model: normalizeAssistantModel(endpoint, get("model", "deepseek-v4-pro")),
-            api_key: get("api_key", ""),
+            fallback_endpoint: get("fallback_endpoint", MOYUU_ASSISTANT_FALLBACK_ENDPOINT),
+            model: normalizeAssistantModel(endpoint, get("model", MOYUU_ASSISTANT_MODEL)),
+            api_key: currentAssistantApiKey(panel, backend),
             local_endpoint: get("local_endpoint", "http://127.0.0.1:8080/v1"),
             local_model: get("local_model", "hauhau-qwen3.5-9b-uncensored"),
             vision_preset: visionPreset,
@@ -186,6 +231,7 @@
             vision_model_path: get("vision_model_path", ""),
             vision_mmproj_path: get("vision_mmproj_path", ""),
             vision_thinking: configBool(get("vision_thinking", "0")),
+            sanitize_sensitive: configBool(get("sanitize_sensitive", "1")),
             temperature: 0.35,
             top_p: 0.9,
             max_tokens: normalizeAssistantMaxTokens(get("max_tokens", "8192")),
@@ -195,14 +241,47 @@
     }
 
     function normalizeAssistantModel(endpoint, model) {
-        const cleaned = String(model || "").trim() || "deepseek-v4-pro";
+        const cleaned = String(model || "").trim() || MOYUU_ASSISTANT_MODEL;
         try {
             const url = new URL(String(endpoint || ""));
             if (url.hostname === "api.deepseek.com" && cleaned === "deepseekv4-pro") return "deepseek-v4-pro";
             if (url.hostname === "api.deepseek.com" && cleaned === "deepseek-chat") return "deepseek-v4-pro";
             if (url.hostname === "api.deepseek.com" && cleaned === "deepseek-reasoner") return "deepseek-v4-pro";
+            if ((url.hostname === "moyuu.cc" || url.hostname.endsWith(".moyuu.cc")) && KNOWN_ASSISTANT_MODELS.includes(cleaned) && cleaned !== MOYUU_ASSISTANT_MODEL) return MOYUU_ASSISTANT_MODEL;
         } catch (_error) { }
         return cleaned;
+    }
+
+    function defaultAssistantEndpointForBackend(backend) {
+        return backend === "deepseek" ? DEEPSEEK_ASSISTANT_ENDPOINT : MOYUU_ASSISTANT_ENDPOINT;
+    }
+
+    function defaultAssistantModelForBackend(backend) {
+        return backend === "deepseek" ? DEEPSEEK_ASSISTANT_MODEL : MOYUU_ASSISTANT_MODEL;
+    }
+
+    function storedAssistantEndpoint() {
+        const stored = localStorage.getItem("q3vl_assistant_endpoint");
+        return !stored || stored === DEEPSEEK_ASSISTANT_ENDPOINT ? MOYUU_ASSISTANT_ENDPOINT : stored;
+    }
+
+    function storedAssistantModel(endpoint) {
+        const stored = localStorage.getItem("q3vl_assistant_model");
+        const model = !stored || (KNOWN_ASSISTANT_ENDPOINTS.includes(endpoint) && KNOWN_ASSISTANT_MODELS.includes(stored)) ? MOYUU_ASSISTANT_MODEL : stored;
+        return normalizeAssistantModel(endpoint, model);
+    }
+
+    function syncAssistantBackendDefaults(panel) {
+        const backend = panel.querySelector('[data-q3vl-setting="backend"]')?.value || "moyuu";
+        const endpointInput = panel.querySelector('[data-q3vl-setting="endpoint"]');
+        const modelInput = panel.querySelector('[data-q3vl-setting="model"]');
+        if (!endpointInput || !modelInput) return;
+        if (!endpointInput.value || KNOWN_ASSISTANT_ENDPOINTS.includes(endpointInput.value)) {
+            endpointInput.value = defaultAssistantEndpointForBackend(backend);
+        }
+        if (!modelInput.value || KNOWN_ASSISTANT_MODELS.includes(modelInput.value)) {
+            modelInput.value = defaultAssistantModelForBackend(backend);
+        }
     }
 
     function normalizeAssistantMaxTokens(value) {
@@ -214,25 +293,33 @@
     function saveAssistantConfig() {
         const panel = assistantPanel();
         if (!panel) return;
+        storeAssistantApiKey(panel, assistantState.apiKeyBackend);
         panel.querySelectorAll("[data-q3vl-setting]").forEach(function (input) {
+            if (input.dataset.q3vlSetting === "api_key") return;
             localStorage.setItem(`q3vl_assistant_${input.dataset.q3vlSetting}`, input.value || "");
         });
     }
 
     function setAssistantSettingsVisibility(panel) {
         if (!panel) return;
-        const backend = panel.querySelector('[data-q3vl-setting="backend"]')?.value || "deepseek";
+        const backend = panel.querySelector('[data-q3vl-setting="backend"]')?.value || "moyuu";
         const visionPreset = panel.querySelector('[data-q3vl-setting="vision_preset"]')?.value || defaultVisionPreset();
-        const localText = backend === "local-lmcpp";
+        const localEndpoint = backend === "local-lmcpp";
+        const localText = localEndpoint || backend === "local-qwen-once";
+        const localVision = backend !== "moyuu";
         panel.querySelector('[data-q3vl-setting="api_key"]')?.toggleAttribute("hidden", localText);
+        panel.querySelector('[data-q3vl-setting="api_key"]')?.toggleAttribute("disabled", localText);
         panel.querySelectorAll('[data-q3vl-field="remote"]').forEach(function (element) {
             element.hidden = localText;
         });
         panel.querySelectorAll('[data-q3vl-field="local-text"]').forEach(function (element) {
-            element.hidden = !localText;
+            element.hidden = !localEndpoint;
+        });
+        panel.querySelectorAll('[data-q3vl-field="local-vision"], [data-q3vl-field="vision-advanced"]').forEach(function (element) {
+            element.hidden = !localVision;
         });
         panel.querySelectorAll('[data-q3vl-field="vision-custom"]').forEach(function (element) {
-            element.hidden = visionPreset !== "自定义";
+            element.hidden = !localVision || visionPreset !== "自定义";
         });
     }
 
@@ -703,849 +790,78 @@
         return { ok: false, error: `unknown tool: ${name}` };
     }
 
-    function parseAssistantTool(text) {
-        let raw = String(text || "").trim();
-        raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-        try {
-            const parsed = JSON.parse(raw);
-            if (parsed && (parsed.tool || parsed.name)) return parsed;
-        } catch (_error) {
-            const match = raw.match(/\{[\s\S]*\}/);
-            if (match) {
-                try {
-                    const parsed = JSON.parse(match[0]);
-                    if (parsed && (parsed.tool || parsed.name)) return parsed;
-                } catch (_ignored) { }
-            }
-        }
-        return null;
-    }
-
-    function safeMarkdownHref(href) {
-        const raw = String(href || "").trim();
-        if (!raw) return "";
-        if (raw.startsWith("#")) return raw;
-        try {
-            const url = new URL(raw, window.location.href);
-            if (["http:", "https:", "mailto:"].includes(url.protocol)) return url.href;
-        } catch (_error) { }
-        return "";
-    }
-
-    function appendInlineMarkdown(parent, text) {
-        const value = String(text || "");
-        let index = 0;
-
-        function appendText(until) {
-            if (until > index) parent.appendChild(document.createTextNode(value.slice(index, until)));
-            index = until;
-        }
-
-        while (index < value.length) {
-            if (value.startsWith("`", index)) {
-                const end = value.indexOf("`", index + 1);
-                if (end > index + 1) {
-                    const code = document.createElement("code");
-                    code.textContent = value.slice(index + 1, end);
-                    parent.appendChild(code);
-                    index = end + 1;
-                    continue;
-                }
-            }
-
-            const strongMarker = value.startsWith("**", index) ? "**" : value.startsWith("__", index) ? "__" : "";
-            if (strongMarker) {
-                const end = value.indexOf(strongMarker, index + 2);
-                if (end > index + 2) {
-                    const strong = document.createElement("strong");
-                    appendInlineMarkdown(strong, value.slice(index + 2, end));
-                    parent.appendChild(strong);
-                    index = end + 2;
-                    continue;
-                }
-            }
-
-            const emMarker = value[index] === "*" || value[index] === "_" ? value[index] : "";
-            if (emMarker && value[index + 1] !== emMarker) {
-                const end = value.indexOf(emMarker, index + 1);
-                if (end > index + 1) {
-                    const em = document.createElement("em");
-                    appendInlineMarkdown(em, value.slice(index + 1, end));
-                    parent.appendChild(em);
-                    index = end + 1;
-                    continue;
-                }
-            }
-
-            if (value[index] === "[") {
-                const labelEnd = value.indexOf("]", index + 1);
-                const hrefStart = labelEnd >= 0 && value[labelEnd + 1] === "(" ? labelEnd + 2 : -1;
-                const hrefEnd = hrefStart >= 0 ? value.indexOf(")", hrefStart) : -1;
-                if (labelEnd > index + 1 && hrefEnd > hrefStart) {
-                    const href = safeMarkdownHref(value.slice(hrefStart, hrefEnd));
-                    if (href) {
-                        const link = document.createElement("a");
-                        link.href = href;
-                        link.target = "_blank";
-                        link.rel = "noopener noreferrer";
-                        appendInlineMarkdown(link, value.slice(index + 1, labelEnd));
-                        parent.appendChild(link);
-                        index = hrefEnd + 1;
-                        continue;
-                    }
-                }
-            }
-
-            const nextSpecials = ["`", "*", "_", "["].map(function (char) {
-                const found = value.indexOf(char, index + 1);
-                return found < 0 ? value.length : found;
-            });
-            appendText(Math.min.apply(Math, nextSpecials));
-        }
-    }
-
-    function appendInlineMarkdownWithBreaks(parent, text) {
-        String(text || "").split("\n").forEach(function (line, index) {
-            if (index > 0) parent.appendChild(document.createElement("br"));
-            appendInlineMarkdown(parent, line);
-        });
-    }
-
-    function renderAssistantMarkdown(root, text) {
-        root.textContent = "";
-        root.classList.add("q3vl-markdown");
-        const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
-        let paragraph = [];
-        let list = null;
-        let listType = "";
-        let fence = null;
-
-        function closeList() {
-            list = null;
-            listType = "";
-        }
-
-        function flushParagraph() {
-            if (!paragraph.length) return;
-            const p = document.createElement("p");
-            appendInlineMarkdownWithBreaks(p, paragraph.join("\n"));
-            root.appendChild(p);
-            paragraph = [];
-        }
-
-        function appendListItem(type, text) {
-            flushParagraph();
-            if (!list || listType !== type) {
-                closeList();
-                list = document.createElement(type);
-                listType = type;
-                root.appendChild(list);
-            }
-            const li = document.createElement("li");
-            appendInlineMarkdown(li, text);
-            list.appendChild(li);
-        }
-
-        for (const line of lines) {
-            const fenceMatch = line.match(/^```\s*([\w-]+)?\s*$/);
-            if (fence) {
-                if (fenceMatch) {
-                    const pre = document.createElement("pre");
-                    const code = document.createElement("code");
-                    if (fence.language) code.className = `language-${fence.language}`;
-                    code.textContent = fence.lines.join("\n");
-                    pre.appendChild(code);
-                    root.appendChild(pre);
-                    fence = null;
-                } else {
-                    fence.lines.push(line);
-                }
-                continue;
-            }
-
-            if (fenceMatch) {
-                flushParagraph();
-                closeList();
-                fence = { language: fenceMatch[1] || "", lines: [] };
-                continue;
-            }
-
-            if (!line.trim()) {
-                flushParagraph();
-                closeList();
-                continue;
-            }
-
-            const heading = line.match(/^(#{1,4})\s+(.+)$/);
-            if (heading) {
-                flushParagraph();
-                closeList();
-                const h = document.createElement(`h${Math.min(6, heading[1].length + 3)}`);
-                appendInlineMarkdown(h, heading[2]);
-                root.appendChild(h);
-                continue;
-            }
-
-            if (/^\s*[-*_]{3,}\s*$/.test(line)) {
-                flushParagraph();
-                closeList();
-                root.appendChild(document.createElement("hr"));
-                continue;
-            }
-
-            const quote = line.match(/^>\s?(.+)$/);
-            if (quote) {
-                flushParagraph();
-                closeList();
-                const blockquote = document.createElement("blockquote");
-                appendInlineMarkdown(blockquote, quote[1]);
-                root.appendChild(blockquote);
-                continue;
-            }
-
-            const unordered = line.match(/^\s*[-*+]\s+(.+)$/);
-            if (unordered) {
-                appendListItem("ul", unordered[1]);
-                continue;
-            }
-
-            const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
-            if (ordered) {
-                appendListItem("ol", ordered[1]);
-                continue;
-            }
-
-            closeList();
-            paragraph.push(line);
-        }
-
-        if (fence) {
-            const pre = document.createElement("pre");
-            const code = document.createElement("code");
-            code.textContent = fence.lines.join("\n");
-            pre.appendChild(code);
-            root.appendChild(pre);
-        }
-        flushParagraph();
-    }
-
-    function addAssistantMessage(role, text) {
-        const log = assistantPanel()?.querySelector("#q3vl_assistant_messages");
-        if (!log) return;
-        const item = document.createElement("div");
-        item.className = `q3vl-assistant-msg q3vl-assistant-${role}`;
-        if (role === "assistant" || role === "tool") {
-            renderAssistantMarkdown(item, text);
-        } else {
-            item.textContent = text;
-        }
-        log.appendChild(item);
-        log.scrollTop = log.scrollHeight;
-    }
-
-    function addAssistantUserMessage(text, attachment) {
-        const log = assistantPanel()?.querySelector("#q3vl_assistant_messages");
-        if (!log) return;
-        const item = document.createElement("div");
-        item.className = "q3vl-assistant-msg q3vl-assistant-user";
-        if (text) {
-            const body = document.createElement("div");
-            body.textContent = text;
-            item.appendChild(body);
-        }
-        if (attachment) {
-            const media = document.createElement("div");
-            media.className = "q3vl-assistant-user-attachment";
-            const image = document.createElement("img");
-            image.src = attachment.dataUrl;
-            image.alt = attachment.name || "reference image";
-            const name = document.createElement("span");
-            name.textContent = attachment.name || "reference image";
-            media.appendChild(image);
-            media.appendChild(name);
-            item.appendChild(media);
-        }
-        log.appendChild(item);
-        log.scrollTop = log.scrollHeight;
-    }
-
     function truncateAssistantText(text, limit) {
         const value = String(text || "").trim();
         return value.length > limit ? `${value.slice(0, limit)}...` : value;
     }
 
-    async function analyzeAssistantAttachment(attachment, userText) {
-        const config = assistantConfig();
-        const response = await fetch("/qwen3vl-prompt-tools/analyze-image", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                image: attachment.dataUrl,
-                filename: attachment.name,
-                vision_preset: config.vision_preset,
-                vision_endpoint: config.vision_endpoint,
-                vision_model: config.vision_model,
-                vision_model_path: config.vision_model_path,
-                vision_mmproj_path: config.vision_mmproj_path,
-                enable_thinking: config.vision_thinking,
-                timeout: 120
-            })
-        });
-        if (!response.ok) {
-            const detail = await response.text();
-            if (response.status === 404) {
-                throw new Error("本地视觉分析接口未注册。请重启 Forge/WebUI 后再试。原始错误: " + detail);
-            }
-            throw new Error(detail);
-        }
-        return await response.json();
-    }
-
-    function setAssistantAttachment(attachment) {
-        assistantState.attachment = attachment;
-        renderAssistantAttachment();
-    }
-
-    function renderAssistantAttachment() {
-        const panel = assistantPanel();
-        const holder = panel?.querySelector("#q3vl_assistant_attachment");
-        if (!holder) return;
-        holder.textContent = "";
-        holder.classList.toggle("q3vl-assistant-attachment-empty", !assistantState.attachment);
-        if (!assistantState.attachment) return;
-        const image = document.createElement("img");
-        image.src = assistantState.attachment.dataUrl;
-        image.alt = assistantState.attachment.name || "reference image";
-        const meta = document.createElement("div");
-        meta.className = "q3vl-assistant-attachment-meta";
-        const title = document.createElement("strong");
-        title.textContent = assistantState.attachment.name || "reference image";
-        const hint = document.createElement("span");
-        hint.textContent = "发送时由本地 Qwen3.5 VLM 先分析";
-        meta.appendChild(title);
-        meta.appendChild(hint);
-        const remove = document.createElement("button");
-        remove.type = "button";
-        remove.className = "q3vl-assistant-chip-button";
-        remove.textContent = "移除";
-        remove.addEventListener("click", function () { setAssistantAttachment(null); });
-        holder.appendChild(image);
-        holder.appendChild(meta);
-        holder.appendChild(remove);
-    }
-
-    function readAssistantImageFile(file) {
-        return new Promise(function (resolve, reject) {
-            if (!file) {
-                reject(new Error("no file selected"));
-                return;
-            }
-            if (!String(file.type || "").startsWith("image/")) {
-                reject(new Error("请选择图片文件。"));
-                return;
-            }
-            if (file.size > 24 * 1024 * 1024) {
-                reject(new Error("图片太大，请选择 24 MB 以下的文件。"));
-                return;
-            }
-            const reader = new FileReader();
-            reader.onload = function () {
-                resolve({ name: file.name, dataUrl: String(reader.result || "") });
-            };
-            reader.onerror = function () { reject(new Error("读取图片失败。")); };
-            reader.readAsDataURL(file);
-        });
-    }
-
-    async function callPromptAssistant() {
-        const payload = Object.assign(assistantConfig(), { messages: assistantState.messages });
-        const response = await fetch("/qwen3vl-prompt-tools/assistant", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-            const detail = await response.text();
-            if (response.status === 404) {
-                throw new Error("助手后端接口未注册。请重启 Forge/WebUI 后再试；只刷新浏览器不会注册新的 /qwen3vl-prompt-tools/assistant route。原始错误: " + detail);
-            }
-            throw new Error(detail);
-        }
-        return await response.json();
-    }
-
-    function normalizeAssistantToolCalls(result, text) {
-        const calls = Array.isArray(result.tool_calls) ? result.tool_calls : [];
-        if (calls.length) {
-            return calls.map(function (call) {
-                return {
-                    tool: call.tool || call.name,
-                    arguments: call.arguments || {}
-                };
-            }).filter(function (call) { return call.tool; });
-        }
-        const parsed = parseAssistantTool(text);
-        return parsed ? [parsed] : [];
-    }
-
-    function assistantUserRequestedPromptEdit(text) {
-        const value = String(text || "").replace(/\s+/g, " ").trim().toLowerCase();
-        if (!value) return false;
-        const editVerb = /(改成|修改|改写|重写|优化|精炼|扩写|替换|追加|加上|加入|删除|移除|写入|更新|套用|应用|编辑|修一下|insert|append|replace|rewrite|edit|update|apply|change|remove|delete|optimi[sz]e|refine|expand)/i;
-        const currentPromptRef = /(当前|现在|现有|原来|原有|这个|这段|它|其|提示词|prompt|txt2img|img2img|webui|ui|输入框|文本框)/i;
-        const directEdit = /(帮我|请|直接|把|将|给我).{0,30}(改成|修改|改写|重写|优化|精炼|扩写|替换|追加|加上|加入|删除|移除|写入|更新|套用|应用|编辑|修一下)/i;
-        const adviceOnly = /(怎么改|如何改|哪里.*改|修改建议|改进建议|优化建议|建议.*(修改|优化|改写|调整)|should.*(change|edit|rewrite)|how.*(change|edit|rewrite))/i;
-        return editVerb.test(value) && !adviceOnly.test(value) && (currentPromptRef.test(value) || directEdit.test(value));
-    }
-
-    function assistantToolMutatesPrompt(name) {
-        return ["edit_prompt", "patch_current_prompt", "multi_patch_current_prompt"].includes(String(name || ""));
-    }
-
-    async function runAssistantLoop(userText, attachment) {
-        const effectiveText = userText || (attachment ? "请根据附件例图分析构图和风格，帮助我整理提示词。" : "");
-        const mustEditPrompt = assistantUserRequestedPromptEdit(effectiveText);
-        let promptEdited = false;
-        let missingEditCorrectionSent = false;
-        if (effectiveText || attachment) {
-            addAssistantUserMessage(effectiveText, attachment);
-        }
-        const sendButton = assistantPanel()?.querySelector("#q3vl_assistant_send");
-        if (sendButton) sendButton.disabled = true;
-        try {
-            if (attachment) {
-                addAssistantMessage("status", "本地 VLM 正在分析附件...");
-                const vision = await analyzeAssistantAttachment(attachment, effectiveText);
-                const visionText = String(vision.text || "").trim();
-                addAssistantMessage("tool", `视觉摘要 (${vision.vision_preset || vision.model || "local VLM"}${vision.thinking_enabled ? ", thinking" : ""}):\n${truncateAssistantText(visionText, 1200)}`);
-                assistantState.messages.push({
-                    role: "user",
-                    content: `Reference image observation from local VLM (${vision.vision_preset || vision.model || "vision model"}, ${attachment.name || "image"}):\n${visionText}`
-                });
-            }
-            if (effectiveText) {
-                assistantState.messages.push({ role: "user", content: effectiveText });
-            }
-            for (let i = 0; i < 6; i += 1) {
-                addAssistantMessage("status", "思考中...");
-                const result = await callPromptAssistant();
-                const text = result.text || "";
-                const toolCalls = normalizeAssistantToolCalls(result, text);
-                if (!toolCalls.length) {
-                    if (mustEditPrompt && !promptEdited) {
-                        assistantState.messages.push({ role: "assistant", content: text || "No tool call returned." });
-                        if (!missingEditCorrectionSent) {
-                            missingEditCorrectionSent = true;
-                            addAssistantMessage("tool", "未检测到 edit_prompt，继续要求助手实际修改当前提示词...");
-                            assistantState.messages.push({
-                                role: "user",
-                                content: "The user asked to modify the current WebUI prompt. You must not claim it was changed unless edit_prompt succeeds. Call read_prompt if needed, then call edit_prompt with the latest base_hash. Do not give a final answer until edit_prompt returns ok:true."
-                            });
-                            continue;
-                        }
-                        addAssistantMessage("error", "助手没有调用 edit_prompt，当前提示词未被修改。请重试或明确要求“读取当前提示词并编辑”。");
-                        return;
-                    }
-                    assistantState.messages.push({ role: "assistant", content: text });
-                    addAssistantMessage("assistant", text);
-                    return;
-                }
-                assistantState.messages.push({ role: "assistant", content: text || `Tool request: ${toolCalls.map(function (call) { return call.tool; }).join(", ")}` });
-                for (const tool of toolCalls) {
-                    const toolName = tool.tool || tool.name;
-                    const toolResult = await executeAssistantTool(tool);
-                    if (assistantToolMutatesPrompt(toolName) && toolResult.ok) promptEdited = true;
-                    addAssistantMessage("tool", `工具 ${toolName}: ${toolResult.ok ? "完成" : "失败"}`);
-                    assistantState.messages.push({ role: "user", content: `Tool result for ${toolName}: ${JSON.stringify(toolResult)}` });
-                }
-            }
-            addAssistantMessage("assistant", "工具调用次数过多，已停止。请换一种更直接的指令。比如：读取当前提示词并改成三人自拍构图。 ");
-        } catch (error) {
-            addAssistantMessage("error", String(error.message || error));
-        } finally {
-            if (sendButton) sendButton.disabled = false;
-        }
-    }
-
-    function setupAssistantWindow() {
-        if (!q3vlMainApp()) {
-            removeAssistantWindow();
-            return;
-        }
-        const existingLaunchers = document.querySelectorAll("#q3vl_assistant_launcher");
-        const existingPanels = document.querySelectorAll("#q3vl_assistant_panel");
-        if (existingLaunchers.length === 1 && existingPanels.length === 1) return;
-        if (existingLaunchers.length || existingPanels.length) removeAssistantWindow();
-        const launcher = document.createElement("button");
-        launcher.id = "q3vl_assistant_launcher";
-        launcher.type = "button";
-        launcher.textContent = "LLM 助手";
-        document.body.appendChild(launcher);
-        restoreAssistantLauncherPosition(launcher);
-
-        const panel = document.createElement("div");
-        panel.id = "q3vl_assistant_panel";
-        panel.innerHTML = `
-            <div class="q3vl-assistant-head"><div><strong>LLM 提示词助手</strong><span>文本改写 + 本地视觉</span></div><button type="button" id="q3vl_assistant_close" class="q3vl-assistant-close" title="关闭">×</button></div>
-            <details class="q3vl-assistant-config">
-                <summary><span>设置</span><span class="q3vl-assistant-config-hint">DeepSeek + 视觉预设</span></summary>
-                <div class="q3vl-assistant-settings q3vl-assistant-settings-basic">
-                    <select data-q3vl-setting="backend">
-                        <option value="deepseek">文本: DeepSeek</option>
-                        <option value="local-lmcpp">文本: 本地 endpoint</option>
-                    </select>
-                    <input data-q3vl-setting="api_key" placeholder="API key" type="password">
-                    <select data-q3vl-setting="vision_preset" title="附图/反推使用的本地视觉模型">
-                        <option value="Gemma 4 12B">视觉: Gemma 4 12B</option>
-                        <option value="Qwen3.5 原版 9B">视觉: Qwen3.5 原版 9B</option>
-                        <option value="Qwen3.5 破限版 9B">视觉: Qwen3.5 破限版 9B</option>
-                        <option value="自定义">视觉: 自定义</option>
-                    </select>
-                    <select data-q3vl-setting="vision_thinking" title="本地视觉模型 thinking">
-                        <option value="0">视觉 thinking off</option>
-                        <option value="1">视觉 thinking on</option>
-                    </select>
-                </div>
-                <details class="q3vl-assistant-advanced">
-                    <summary>高级</summary>
-                    <div class="q3vl-assistant-settings q3vl-assistant-settings-advanced">
-                        <input data-q3vl-setting="endpoint" data-q3vl-field="remote" placeholder="DeepSeek endpoint">
-                        <input data-q3vl-setting="model" data-q3vl-field="remote" placeholder="DeepSeek model">
-                        <input data-q3vl-setting="max_tokens" placeholder="Max tokens">
-                        <select data-q3vl-setting="reasoning_effort" data-q3vl-field="remote">
-                            <option value="high">Thinking high</option>
-                            <option value="max">Thinking max</option>
-                        </select>
-                        <input data-q3vl-setting="local_endpoint" data-q3vl-field="local-text" placeholder="text local endpoint">
-                        <input data-q3vl-setting="local_model" data-q3vl-field="local-text" placeholder="text local model">
-                        <input data-q3vl-setting="vision_endpoint" data-q3vl-field="vision-advanced" placeholder="vision endpoint override">
-                        <input data-q3vl-setting="vision_model" data-q3vl-field="vision-advanced" placeholder="vision model alias">
-                        <input data-q3vl-setting="vision_model_path" data-q3vl-field="vision-custom" placeholder="vision GGUF path">
-                        <input data-q3vl-setting="vision_mmproj_path" data-q3vl-field="vision-custom" placeholder="vision mmproj path">
-                    </div>
-                </details>
-            </details>
-            <div id="q3vl_assistant_messages"></div>
-            <div id="q3vl_assistant_attachment" class="q3vl-assistant-attachment q3vl-assistant-attachment-empty"></div>
-            <div class="q3vl-assistant-composer">
-                <textarea id="q3vl_assistant_input" placeholder="例如：读取当前提示词，改成三名角色的自拍构图，明确左中右位置。Enter 换行，Ctrl+Enter 发送。"></textarea>
-                <div class="q3vl-assistant-actions">
-                    <div class="q3vl-assistant-action-group"><button type="button" id="q3vl_assistant_attach" class="q3vl-assistant-secondary">附图</button><button type="button" id="q3vl_assistant_read" class="q3vl-assistant-secondary">读取</button></div>
-                    <div class="q3vl-assistant-action-group"><button type="button" id="q3vl_assistant_clear" class="q3vl-assistant-ghost">清空</button><button type="button" id="q3vl_assistant_send" class="q3vl-assistant-primary">发送</button></div>
-                </div>
-                <input id="q3vl_assistant_file" type="file" accept="image/*" hidden>
-            </div>
-        `;
-        document.body.appendChild(panel);
-        restoreAssistantPosition(panel);
-        const config = panel.querySelector(".q3vl-assistant-config");
-        config.open = localStorage.getItem("q3vl_assistant_config_open") === "1";
-        config.addEventListener("toggle", function () {
-            localStorage.setItem("q3vl_assistant_config_open", config.open ? "1" : "0");
-        });
-        const backend = panel.querySelector('[data-q3vl-setting="backend"]');
-        backend.value = localStorage.getItem("q3vl_assistant_backend") || "deepseek";
-        const endpointInput = panel.querySelector('[data-q3vl-setting="endpoint"]');
-        const modelInput = panel.querySelector('[data-q3vl-setting="model"]');
-        endpointInput.value = localStorage.getItem("q3vl_assistant_endpoint") || "https://api.deepseek.com";
-        modelInput.value = normalizeAssistantModel(endpointInput.value, localStorage.getItem("q3vl_assistant_model") || "deepseek-v4-pro");
-        if (modelInput.value !== localStorage.getItem("q3vl_assistant_model")) {
-            localStorage.setItem("q3vl_assistant_model", modelInput.value);
-        }
-        panel.querySelector('[data-q3vl-setting="api_key"]').value = localStorage.getItem("q3vl_assistant_api_key") || "";
-        panel.querySelector('[data-q3vl-setting="max_tokens"]').value = String(normalizeAssistantMaxTokens(localStorage.getItem("q3vl_assistant_max_tokens") || "8192"));
-        panel.querySelector('[data-q3vl-setting="reasoning_effort"]').value = localStorage.getItem("q3vl_assistant_reasoning_effort") || "high";
-        panel.querySelector('[data-q3vl-setting="local_endpoint"]').value = localStorage.getItem("q3vl_assistant_local_endpoint") || "http://127.0.0.1:8080/v1";
-        panel.querySelector('[data-q3vl-setting="local_model"]').value = localStorage.getItem("q3vl_assistant_local_model") || "hauhau-qwen3.5-9b-uncensored";
-        const visionPreset = panel.querySelector('[data-q3vl-setting="vision_preset"]');
-        const visionModel = panel.querySelector('[data-q3vl-setting="vision_model"]');
-        visionPreset.value = localStorage.getItem("q3vl_assistant_vision_preset") || defaultVisionPreset();
-        panel.querySelector('[data-q3vl-setting="vision_thinking"]').value = localStorage.getItem("q3vl_assistant_vision_thinking") || "0";
-        panel.querySelector('[data-q3vl-setting="vision_endpoint"]').value = localStorage.getItem("q3vl_assistant_vision_endpoint") || "http://127.0.0.1:8080/v1";
-        visionModel.value = localStorage.getItem("q3vl_assistant_vision_model") || visionModelForPreset(visionPreset.value);
-        panel.querySelector('[data-q3vl-setting="vision_model_path"]').value = localStorage.getItem("q3vl_assistant_vision_model_path") || "";
-        panel.querySelector('[data-q3vl-setting="vision_mmproj_path"]').value = localStorage.getItem("q3vl_assistant_vision_mmproj_path") || "";
-        visionPreset.addEventListener("change", function () {
-            if (!visionModel.value || Object.values(q3vlVisionPresets).includes(visionModel.value)) {
-                visionModel.value = visionModelForPreset(visionPreset.value);
-            }
-            setAssistantSettingsVisibility(panel);
-        });
-        panel.querySelectorAll("[data-q3vl-setting]").forEach(function (input) {
-            input.addEventListener("change", saveAssistantConfig);
-            input.addEventListener("input", saveAssistantConfig);
-            input.addEventListener("change", function () { setAssistantSettingsVisibility(panel); });
-        });
-        setAssistantSettingsVisibility(panel);
-        launcher.addEventListener("click", function () {
-            if (launcher.dataset.q3vlSuppressClick === "1") return;
-            panel.classList.toggle("q3vl-assistant-open");
-            if (panel.classList.contains("q3vl-assistant-open") && !localStorage.getItem("q3vl_assistant_position")) {
-                requestAnimationFrame(function () { positionAssistantPanelNearLauncher(panel, launcher); });
-            }
-        });
-        panel.querySelector("#q3vl_assistant_close").addEventListener("click", function () { panel.classList.remove("q3vl-assistant-open"); });
-        makeAssistantLauncherDraggable(launcher, panel);
-        makeAssistantDraggable(panel, panel.querySelector(".q3vl-assistant-head"));
-        panel.querySelector("#q3vl_assistant_send").addEventListener("click", function () {
-            const input = panel.querySelector("#q3vl_assistant_input");
-            const text = input.value.trim();
-            const attachment = assistantState.attachment;
-            if (!text && !attachment) return;
-            input.value = "";
-            setAssistantAttachment(null);
-            runAssistantLoop(text, attachment);
-        });
-        const fileInput = panel.querySelector("#q3vl_assistant_file");
-        panel.querySelector("#q3vl_assistant_attach").addEventListener("click", function () {
-            fileInput.click();
-        });
-        fileInput.addEventListener("change", function () {
-            const file = fileInput.files && fileInput.files[0];
-            fileInput.value = "";
-            readAssistantImageFile(file)
-                .then(setAssistantAttachment)
-                .catch(function (error) { addAssistantMessage("error", String(error.message || error)); });
-        });
-        panel.querySelector("#q3vl_assistant_input").addEventListener("keydown", function (event) {
-            if (event.key !== "Enter") return;
-            if (event.ctrlKey || event.metaKey) {
-                event.preventDefault();
-                panel.querySelector("#q3vl_assistant_send").click();
-            } else {
-                event.stopPropagation();
-            }
-        });
-        panel.querySelector("#q3vl_assistant_read").addEventListener("click", function () {
-            runAssistantLoop("Read the current prompt and WebUI style template. Briefly summarize the composition, trigger words, and spatial relationships they describe. If both are empty, say they are empty.");
-        });
-        panel.querySelector("#q3vl_assistant_clear").addEventListener("click", function () {
-            assistantState.messages = [];
-            setAssistantAttachment(null);
-            panel.querySelector("#q3vl_assistant_messages").textContent = "";
-        });
-        renderAssistantAttachment();
-    }
-
-    function restoreAssistantLauncherPosition(launcher) {
-        const raw = localStorage.getItem("q3vl_assistant_launcher_position");
-        if (!raw) return;
-        try {
-            const pos = JSON.parse(raw);
-            if (Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
-                launcher.style.left = `${Math.max(8, Math.min(pos.left, window.innerWidth - 96))}px`;
-                launcher.style.top = `${Math.max(8, Math.min(pos.top, window.innerHeight - 48))}px`;
-                launcher.style.right = "auto";
-                launcher.style.bottom = "auto";
-            }
-        } catch (_error) { }
-    }
-
-    function positionAssistantPanelNearLauncher(panel, launcher) {
-        if (!panel || !launcher || window.matchMedia("(max-width: 720px)").matches) return;
-        const launcherRect = launcher.getBoundingClientRect();
-        const panelWidth = panel.offsetWidth || 460;
-        const panelHeight = panel.offsetHeight || 560;
-        const left = Math.max(8, Math.min(launcherRect.left, window.innerWidth - panelWidth - 8));
-        const preferredTop = launcherRect.top - panelHeight - 12;
-        const fallbackTop = launcherRect.bottom + 12;
-        const top = preferredTop >= 8
-            ? preferredTop
-            : Math.max(8, Math.min(fallbackTop, window.innerHeight - panelHeight - 8));
-        panel.style.left = `${left}px`;
-        panel.style.top = `${top}px`;
-        panel.style.right = "auto";
-        panel.style.bottom = "auto";
-    }
-
-    function makeAssistantLauncherDraggable(launcher, panel) {
-        if (!launcher || launcher.dataset.q3vlDragBound) return;
-        launcher.dataset.q3vlDragBound = "1";
-        let pointerDown = false;
-        let moved = false;
-        let startX = 0;
-        let startY = 0;
-        let startLeft = 0;
-        let startTop = 0;
-
-        launcher.addEventListener("pointerdown", function (event) {
-            const rect = launcher.getBoundingClientRect();
-            pointerDown = true;
-            moved = false;
-            startX = event.clientX;
-            startY = event.clientY;
-            startLeft = rect.left;
-            startTop = rect.top;
-            launcher.style.left = `${rect.left}px`;
-            launcher.style.top = `${rect.top}px`;
-            launcher.style.right = "auto";
-            launcher.style.bottom = "auto";
-            launcher.setPointerCapture?.(event.pointerId);
-        });
-
-        launcher.addEventListener("pointermove", function (event) {
-            if (!pointerDown) return;
-            const deltaX = event.clientX - startX;
-            const deltaY = event.clientY - startY;
-            if (!moved && Math.hypot(deltaX, deltaY) < 4) return;
-            moved = true;
-            const left = Math.max(8, Math.min(startLeft + deltaX, window.innerWidth - launcher.offsetWidth - 8));
-            const top = Math.max(8, Math.min(startTop + deltaY, window.innerHeight - launcher.offsetHeight - 8));
-            launcher.style.left = `${left}px`;
-            launcher.style.top = `${top}px`;
-            localStorage.removeItem("q3vl_assistant_position");
-            if (panel && panel.classList.contains("q3vl-assistant-open")) {
-                positionAssistantPanelNearLauncher(panel, launcher);
-            }
-            event.preventDefault();
-        });
-
-        launcher.addEventListener("pointerup", function () {
-            if (!pointerDown) return;
-            pointerDown = false;
-            if (!moved) return;
-            const rect = launcher.getBoundingClientRect();
-            localStorage.setItem("q3vl_assistant_launcher_position", JSON.stringify({ left: rect.left, top: rect.top }));
-            launcher.dataset.q3vlSuppressClick = "1";
-            setTimeout(function () { delete launcher.dataset.q3vlSuppressClick; }, 0);
-        });
-    }
-
-    function restoreAssistantPosition(panel) {
-        const raw = localStorage.getItem("q3vl_assistant_position");
-        if (!raw || window.matchMedia("(max-width: 720px)").matches) return;
-        try {
-            const pos = JSON.parse(raw);
-            if (Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
-                panel.style.left = `${Math.max(8, Math.min(pos.left, window.innerWidth - 120))}px`;
-                panel.style.top = `${Math.max(8, Math.min(pos.top, window.innerHeight - 80))}px`;
-                panel.style.right = "auto";
-                panel.style.bottom = "auto";
-            }
-        } catch (_error) { }
-    }
-
-    function makeAssistantDraggable(panel, handle) {
-        if (!panel || !handle || handle.dataset.q3vlDragBound) return;
-        handle.dataset.q3vlDragBound = "1";
-        let dragging = false;
-        let startX = 0;
-        let startY = 0;
-        let startLeft = 0;
-        let startTop = 0;
-
-        function pointerDown(event) {
-            if (event.target && event.target.closest("button")) return;
-            if (window.matchMedia("(max-width: 720px)").matches) return;
-            const rect = panel.getBoundingClientRect();
-            dragging = true;
-            startX = event.clientX;
-            startY = event.clientY;
-            startLeft = rect.left;
-            startTop = rect.top;
-            panel.style.left = `${rect.left}px`;
-            panel.style.top = `${rect.top}px`;
-            panel.style.right = "auto";
-            panel.style.bottom = "auto";
-            handle.setPointerCapture?.(event.pointerId);
-            event.preventDefault();
-        }
-
-        function pointerMove(event) {
-            if (!dragging) return;
-            const left = Math.max(8, Math.min(startLeft + event.clientX - startX, window.innerWidth - panel.offsetWidth - 8));
-            const top = Math.max(8, Math.min(startTop + event.clientY - startY, window.innerHeight - panel.offsetHeight - 8));
-            panel.style.left = `${left}px`;
-            panel.style.top = `${top}px`;
-        }
-
-        function pointerUp() {
-            if (!dragging) return;
-            dragging = false;
-            const rect = panel.getBoundingClientRect();
-            localStorage.setItem("q3vl_assistant_position", JSON.stringify({ left: rect.left, top: rect.top }));
-        }
-
-        handle.addEventListener("pointerdown", pointerDown);
-        window.addEventListener("pointermove", pointerMove);
-        window.addEventListener("pointerup", pointerUp);
-    }
-
-    function isMobileViewport() {
-        return window.matchMedia("(max-width: 720px), (pointer: coarse)").matches;
-    }
-
-    function isVisibleElement(element) {
-        return !!(element && (element.offsetWidth || element.offsetHeight || element.getClientRects().length));
-    }
-
-    function generationPageVisible() {
-        const app = q3vlApp();
-        return ["#txt2img_prompt", "#txt2img_settings", "#img2img_prompt", "#img2img_settings"].some(function (selector) {
-            return isVisibleElement(app.querySelector(selector));
-        });
-    }
-
-    function pullRefreshGuardActive() {
-        return !!q3vlMainApp() && isMobileViewport() && generationPageVisible();
-    }
-
-    function nearestScrollableElement(node) {
-        let current = node instanceof Element ? node : node?.parentElement;
-        while (current && current !== document.body && current !== document.documentElement) {
-            const style = window.getComputedStyle(current);
-            if (/(auto|scroll)/.test(style.overflowY) && current.scrollHeight > current.clientHeight + 1) return current;
-            current = current.parentElement;
-        }
-        return document.scrollingElement || document.documentElement;
-    }
-
-    function setupPullRefreshGuard() {
-        document.documentElement.classList.toggle("q3vl-no-pull-refresh", pullRefreshGuardActive());
-        if (document.documentElement.dataset.q3vlPullRefreshBound === "1") return;
-        document.documentElement.dataset.q3vlPullRefreshBound = "1";
-
-        let startX = 0;
-        let startY = 0;
-        document.addEventListener("touchstart", function (event) {
-            if (!event.touches || !event.touches.length) return;
-            startX = event.touches[0].clientX;
-            startY = event.touches[0].clientY;
-        }, { passive: true, capture: true });
-        document.addEventListener("touchmove", function (event) {
-            if (!pullRefreshGuardActive() || !event.touches || !event.touches.length) return;
-            const dx = event.touches[0].clientX - startX;
-            const dy = event.touches[0].clientY - startY;
-            if (dy <= 0 || Math.abs(dx) > dy) return;
-            const scrollable = nearestScrollableElement(event.target);
-            const page = document.scrollingElement || document.documentElement;
-            if (scrollable.scrollTop > 0 || (scrollable === page && page.scrollTop > 0)) return;
-            event.preventDefault();
-        }, { passive: false, capture: true });
-        window.addEventListener("resize", setupPullRefreshGuard);
-    }
-
-    function setupQwenTools() {
-        if (!q3vlMainApp()) {
-            removeAssistantWindow();
-            setupPullRefreshGuard();
-            return;
-        }
-        setupQwenPresetGate();
-        setupSendButtons();
-        setupAssistantWindow();
-        setupPullRefreshGuard();
-    }
-
-    if (typeof onUiLoaded === "function") {
-        onUiLoaded(setupQwenTools);
-    } else {
-        window.addEventListener("load", setupQwenTools);
-    }
-
-    if (typeof onAfterUiUpdate === "function") {
-        onAfterUiUpdate(setupQwenTools);
-    } else {
-        window.setInterval(setupQwenTools, 1500);
-    }
+    Object.assign(window.q3vlPromptTools, {
+        q3vlApp,
+        q3vlMainApp,
+        assistantPanel,
+        removeAssistantWindow,
+        currentForgePreset,
+        syncQwenPromptActions,
+        setupQwenPresetGate,
+        textboxValue,
+        setTextboxValue,
+        flashButton,
+        switchMainTab,
+        sendReversePrompt,
+        setupSendButtons,
+        assistantState,
+        q3vlVisionPresets,
+        defaultVisionPreset,
+        visionModelForPreset,
+        configBool,
+        MOYUU_ASSISTANT_ENDPOINT,
+        MOYUU_ASSISTANT_FALLBACK_ENDPOINT,
+        MOYUU_ASSISTANT_MODEL,
+        DEEPSEEK_ASSISTANT_ENDPOINT,
+        DEEPSEEK_ASSISTANT_MODEL,
+        KNOWN_ASSISTANT_ENDPOINTS,
+        KNOWN_ASSISTANT_MODELS,
+        assistantApiKeyBackend,
+        assistantApiKeyStorageKey,
+        storedAssistantApiKey,
+        currentAssistantApiKey,
+        storeAssistantApiKey,
+        loadAssistantApiKey,
+        assistantConfig,
+        normalizeAssistantModel,
+        defaultAssistantEndpointForBackend,
+        defaultAssistantModelForBackend,
+        storedAssistantEndpoint,
+        storedAssistantModel,
+        syncAssistantBackendDefaults,
+        normalizeAssistantMaxTokens,
+        saveAssistantConfig,
+        setAssistantSettingsVisibility,
+        activePromptTarget,
+        promptRootForTarget,
+        normalizedLabelText,
+        visibleText,
+        styleSelectorValue,
+        promptStyles,
+        selectedStyleDetails,
+        styleDetailsText,
+        styleTemplateRoot,
+        styleTemplateInfo,
+        optionValue,
+        promptHash,
+        readPromptTool,
+        normalizePatchSeparator,
+        applyPromptPatchText,
+        normalizeDiffText,
+        patchesFromSearchReplaceBlocks,
+        patchesFromUnifiedDiff,
+        patchesFromDiff,
+        promptPatchResidue,
+        patchPromptRoot,
+        setNativeValueIfAvailable,
+        compactPromptPatchResult,
+        editPromptTool,
+        executeAssistantTool,
+        truncateAssistantText
+    });
 })();
