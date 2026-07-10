@@ -32,6 +32,7 @@
         send: '<path d="m3 11 18-8-8 18-2-8zM11 13 21 3"/>',
         stop: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
         model: '<path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6zM18.5 16l.8 2.7 2.7.8-2.7.8-.8 2.7-.8-2.7-2.7-.8 2.7-.8z"/>',
+        chevron: '<path d="m8 10 4 4 4-4"/>',
         reasoning: '<rect class="q3vl-effort-low" x="4" y="14" width="3" height="6" rx="1"/><rect class="q3vl-effort-high" x="10.5" y="9" width="3" height="11" rx="1"/><rect class="q3vl-effort-max" x="17" y="4" width="3" height="16" rx="1"/>'
     };
 
@@ -51,9 +52,24 @@
         if (selector) {
             const route = localStorage.getItem("q3vl_assistant_chat_model_route") || "primary";
             const models = [["primary", config.model], ["fallback", config.fallback_model], ["local", config.vision_preset]];
-            selector.replaceChildren(...models.map(function ([value, label]) { const option = document.createElement("option"); option.value = value; option.textContent = label; return option; }));
-            selector.value = models.some(function ([value]) { return value === route; }) ? route : "primary";
-            selector.title = `${t("settings.model", "模型")}: ${selector.selectedOptions[0]?.textContent || ""}`;
+            const selected = models.find(function ([value]) { return value === route; }) || models[0];
+            selector.dataset.q3vlRoute = selected[0];
+            selector.querySelector(".q3vl-assistant-model-name").textContent = selected[1];
+            selector.title = `${t("settings.model", "模型")}: ${selected[1]}`;
+            const menu = document.querySelector("#q3vl_assistant_model_menu");
+            if (menu) menu.replaceChildren(...models.map(function ([value, label]) {
+                const option = document.createElement("button");
+                option.type = "button";
+                option.dataset.q3vlRoute = value;
+                option.setAttribute("role", "option");
+                option.setAttribute("aria-selected", String(value === selected[0]));
+                const name = document.createElement("span");
+                name.textContent = label;
+                const kind = document.createElement("small");
+                kind.textContent = value === "primary" ? "Primary" : value === "fallback" ? "Fallback" : "Local";
+                option.append(name, kind);
+                return option;
+            }));
         }
         const effort = localStorage.getItem("q3vl_assistant_reasoning_effort") || config.reasoning_effort || "low";
         const effortButton = document.querySelector("#q3vl_assistant_reasoning");
@@ -379,7 +395,7 @@
                 <textarea id="q3vl_assistant_input" rows="1" aria-label="${t("assistant.input.placeholder", "描述你想分析、补充或修改的提示词内容...")}" placeholder="${t("assistant.input.placeholder", "描述你想分析、补充或修改的提示词内容...")}"></textarea>
                 <div class="q3vl-assistant-actions">
                     <div class="q3vl-assistant-action-group"><button type="button" id="q3vl_assistant_attach" class="q3vl-assistant-icon-action" title="${t("assistant.attach", "附图")}" aria-label="${t("assistant.attach", "附图")}">${assistantIcon("attach")}</button><button type="button" id="q3vl_assistant_read" class="q3vl-assistant-icon-action" title="${t("assistant.read", "读取")}" aria-label="${t("assistant.read", "读取")}">${assistantIcon("read")}</button><button type="button" id="q3vl_assistant_clear" class="q3vl-assistant-icon-action" title="${t("assistant.clear", "清空")}" aria-label="${t("assistant.clear", "清空")}">${assistantIcon("clear")}</button></div>
-                    <div class="q3vl-assistant-action-group q3vl-assistant-route-controls"><button type="button" id="q3vl_assistant_reasoning" class="q3vl-assistant-compact-control q3vl-assistant-runtime-control">${assistantIcon("reasoning")}<span>low</span></button><label class="q3vl-assistant-model-control">${assistantIcon("model")}<select id="q3vl_assistant_model" class="q3vl-assistant-runtime-control" aria-label="${t("settings.model", "模型")}"></select></label><button type="button" id="q3vl_assistant_send" class="q3vl-assistant-icon-action q3vl-assistant-primary" title="${t("assistant.send", "发送")}" aria-label="${t("assistant.send", "发送")}"><span class="q3vl-send-icon">${assistantIcon("send")}</span><span class="q3vl-stop-icon">${assistantIcon("stop")}</span></button></div>
+                    <div class="q3vl-assistant-action-group q3vl-assistant-route-controls"><button type="button" id="q3vl_assistant_reasoning" class="q3vl-assistant-compact-control q3vl-assistant-runtime-control">${assistantIcon("reasoning")}<span>low</span></button><div class="q3vl-assistant-model-control">${assistantIcon("model")}<button type="button" id="q3vl_assistant_model" class="q3vl-assistant-runtime-control" aria-haspopup="listbox" aria-expanded="false"><span class="q3vl-assistant-model-name"></span>${assistantIcon("chevron")}</button><div id="q3vl_assistant_model_menu" class="q3vl-assistant-model-menu" role="listbox" aria-label="${t("settings.model", "模型")}" hidden></div></div><button type="button" id="q3vl_assistant_send" class="q3vl-assistant-icon-action q3vl-assistant-primary" title="${t("assistant.send", "发送")}" aria-label="${t("assistant.send", "发送")}"><span class="q3vl-send-icon">${assistantIcon("send")}</span><span class="q3vl-stop-icon">${assistantIcon("stop")}</span></button></div>
                 </div>
                 <input id="q3vl_assistant_file" type="file" accept="image/*" hidden>
             </div>
@@ -389,10 +405,48 @@
         restoreAssistantPosition(panel);
         syncAssistantRouteLabel();
         panel.querySelector("#q3vl_assistant_settings_open").addEventListener("click", openAssistantSettings);
-        panel.querySelector("#q3vl_assistant_model").addEventListener("change", function (event) {
-            localStorage.setItem("q3vl_assistant_chat_model_route", event.target.value);
-            syncAssistantRouteLabel();
+        const modelButton = panel.querySelector("#q3vl_assistant_model");
+        const modelMenu = panel.querySelector("#q3vl_assistant_model_menu");
+        function toggleModelMenu(open) {
+            const next = open === undefined ? modelMenu.hidden : Boolean(open);
+            modelMenu.hidden = !next;
+            modelButton.setAttribute("aria-expanded", String(next));
+            panel.querySelector(".q3vl-assistant-model-control").classList.toggle("q3vl-model-open", next);
+        }
+        modelButton.addEventListener("click", function () { if (!modelButton.disabled) toggleModelMenu(); });
+        modelButton.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && !modelMenu.hidden) { toggleModelMenu(false); event.preventDefault(); return; }
+            if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+            event.preventDefault();
+            toggleModelMenu(true);
+            const options = Array.from(modelMenu.querySelectorAll("button"));
+            const selected = options.findIndex(function (option) { return option.getAttribute("aria-selected") === "true"; });
+            options[Math.max(0, selected < 0 ? 0 : selected)]?.focus();
         });
+        modelMenu.addEventListener("click", function (event) {
+            const option = event.target.closest("button[data-q3vl-route]");
+            if (!option) return;
+            localStorage.setItem("q3vl_assistant_chat_model_route", option.dataset.q3vlRoute);
+            toggleModelMenu(false);
+            syncAssistantRouteLabel();
+            modelButton.focus();
+        });
+        modelMenu.addEventListener("keydown", function (event) {
+            const options = Array.from(modelMenu.querySelectorAll("button"));
+            const index = options.indexOf(document.activeElement);
+            let next = index;
+            if (event.key === "ArrowDown") next = (index + 1) % options.length;
+            else if (event.key === "ArrowUp") next = (index - 1 + options.length) % options.length;
+            else if (event.key === "Home") next = 0;
+            else if (event.key === "End") next = options.length - 1;
+            else if (event.key === "Escape") { toggleModelMenu(false); modelButton.focus(); event.preventDefault(); return; }
+            else return;
+            event.preventDefault();
+            options[next]?.focus();
+        });
+        if (assistantState.modelMenuOutsideHandler) document.removeEventListener("pointerdown", assistantState.modelMenuOutsideHandler);
+        assistantState.modelMenuOutsideHandler = function (event) { if (!panel.querySelector(".q3vl-assistant-model-control").contains(event.target)) toggleModelMenu(false); };
+        document.addEventListener("pointerdown", assistantState.modelMenuOutsideHandler);
         panel.querySelector("#q3vl_assistant_reasoning").addEventListener("click", function (event) {
             const levels = ["low", "high", "max"];
             const current = event.currentTarget.dataset.q3vlEffort || "low";
@@ -418,6 +472,7 @@
                 cancelAssistantRun();
                 return;
             }
+            toggleModelMenu(false);
             const input = panel.querySelector("#q3vl_assistant_input");
             const text = input.value.trim();
             const attachment = assistantState.attachment;
