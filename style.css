@@ -45,55 +45,114 @@ html.q3vl-no-pull-refresh .gradio-container {
     text-transform: uppercase;
 }
 
+:root {
+    --q3vl-violet: #7567f8;
+    --q3vl-cyan: #63d1c5;
+    --q3vl-radius: 14px;
+}
 #q3vl-workbench {
+    isolation: isolate;
     margin: 0 auto;
-    max-width: 1360px;
-    padding: clamp(0.6rem, 2vw, 1.4rem);
+    max-width: 1380px;
+    padding: clamp(0.7rem, 2vw, 1.5rem);
+    position: relative;
 }
-
+#q3vl-workbench::before {
+    background:
+        radial-gradient(circle at 15% 10%, color-mix(in srgb, var(--q3vl-violet) 13%, transparent), transparent 34%),
+        radial-gradient(circle at 82% 8%, color-mix(in srgb, var(--q3vl-cyan) 8%, transparent), transparent 28%);
+    content: "";
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    z-index: -1;
+}
 .q3vl-heading {
-    align-items: stretch;
+    align-items: center;
+    background:
+        linear-gradient(120deg, color-mix(in srgb, var(--block-background-fill) 96%, var(--q3vl-violet) 4%), color-mix(in srgb, var(--block-background-fill) 97%, var(--q3vl-cyan) 3%));
+    border: 1px solid color-mix(in srgb, var(--block-border-color) 72%, var(--q3vl-violet) 28%);
+    border-radius: calc(var(--q3vl-radius) + 2px);
+    box-shadow: 0 18px 48px rgb(0 0 0 / 14%);
     display: flex;
-    gap: 1rem;
+    gap: clamp(1.4rem, 3vw, 3.2rem);
     justify-content: space-between;
-    margin: 0.25rem 0 1rem;
+    margin: 0.2rem 0 0.85rem;
+    overflow: hidden;
+    padding: clamp(1rem, 2.4vw, 1.65rem);
+    position: relative;
 }
-
+.q3vl-heading::after {
+    background-image:
+        linear-gradient(color-mix(in srgb, var(--q3vl-violet) 10%, transparent) 1px, transparent 1px),
+        linear-gradient(90deg, color-mix(in srgb, var(--q3vl-violet) 10%, transparent) 1px, transparent 1px);
+    background-size: 24px 24px;
+    content: "";
+    inset: 0 0 0 48%;
+    mask-image: linear-gradient(90deg, transparent, black 48%);
+    opacity: 0.55;
+    pointer-events: none;
+    position: absolute;
+}
+.q3vl-heading-copy {
+    max-width: 60rem;
+    position: relative;
+    z-index: 1;
+}
 .q3vl-heading h1 {
-    font-size: clamp(1.75rem, 4vw, 3.25rem);
+    font-family: "Bahnschrift SemiCondensed", "Arial Narrow", sans-serif;
+    font-size: clamp(2rem, 4vw, 3.45rem);
+    font-stretch: condensed;
     font-weight: 650;
     letter-spacing: -0.045em;
-    line-height: 0.98;
-    margin: 0.18rem 0 0.55rem;
+    line-height: 0.96;
+    margin: 0.32rem 0 0.65rem;
+    text-wrap: balance;
 }
-
 .q3vl-heading p {
     color: var(--body-text-color-subdued);
+    line-height: 1.55;
     margin: 0;
+    max-width: 44rem;
 }
-
 .q3vl-kicker {
-    color: var(--primary-500);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.72rem;
+    align-items: center;
+    color: color-mix(in srgb, var(--q3vl-cyan) 76%, var(--body-text-color) 24%);
+    display: inline-flex;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 0.69rem;
     font-weight: 750;
-    letter-spacing: 0.13em;
+    gap: 0.48rem;
+    letter-spacing: 0.14em;
 }
-
-.q3vl-rail {
-    background: linear-gradient(180deg, var(--primary-400), #7257d9 55%, transparent);
-    border-radius: 999px;
-    min-height: 5.6rem;
-    opacity: 0.9;
-    width: 0.34rem;
+.q3vl-kicker i {
+    background: var(--q3vl-cyan);
+    border-radius: 50%;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--q3vl-cyan) 14%, transparent), 0 0 16px var(--q3vl-cyan);
+    height: 0.42rem;
+    width: 0.42rem;
 }
-
+.q3vl-mode-switch {
+    background: color-mix(in srgb, var(--block-background-fill) 94%, var(--q3vl-violet) 6%) !important;
+    border-color: color-mix(in srgb, var(--block-border-color) 78%, var(--q3vl-violet) 22%) !important;
+    border-radius: var(--q3vl-radius) !important;
+    margin-bottom: 0.15rem;
+    width: fit-content;
+}
+.q3vl-mode-switch label {
+    border: 1px solid transparent;
+    min-height: 2.1rem;
+    transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+.q3vl-mode-switch label.selected {
+    background: color-mix(in srgb, var(--q3vl-violet) 20%, var(--block-background-fill) 80%);
+    border-color: color-mix(in srgb, var(--q3vl-violet) 42%, var(--block-border-color) 58%);
+}
 .q3vl-grid {
-    gap: 0.85rem;
+    gap: 0.95rem;
 }
-
 .q3vl-panel {
-    gap: 0.7rem;
+    gap: 0.75rem;
     padding: 0;
 }
 
@@ -128,10 +187,16 @@ html.q3vl-no-pull-refresh .gradio-container {
 .q3vl-panel .q3vl-live-log,
 .q3vl-output-panel > .form,
 .q3vl-output-panel > .block {
-    background: color-mix(in srgb, var(--block-background-fill) 96%, var(--primary-500) 4%);
-    border: 1px solid var(--block-border-color);
-    border-radius: var(--block-radius);
-    padding: clamp(0.55rem, 1.2vw, 0.85rem);
+    background: color-mix(in srgb, var(--block-background-fill) 97%, var(--q3vl-violet) 3%);
+    border: 1px solid color-mix(in srgb, var(--block-border-color) 88%, var(--q3vl-violet) 12%);
+    border-radius: var(--q3vl-radius);
+    box-shadow: 0 8px 22px rgb(0 0 0 / 8%);
+    padding: clamp(0.62rem, 1.2vw, 0.9rem);
+    transition: border-color 0.16s ease;
+}
+.q3vl-panel > .form:focus-within,
+.q3vl-panel > .block:focus-within {
+    border-color: color-mix(in srgb, var(--q3vl-violet) 55%, var(--block-border-color) 45%);
 }
 
 .q3vl-panel > .form.generating,
@@ -139,17 +204,45 @@ html.q3vl-no-pull-refresh .gradio-container {
 .q3vl-panel .q3vl-live-log.generating,
 .q3vl-output-panel > .form.generating,
 .q3vl-output-panel > .block.generating {
-    outline: 1px solid var(--primary-500) !important;
+    outline: 1px solid var(--q3vl-violet) !important;
     outline-offset: 2px;
 }
-
+.q3vl-image-stage {
+    background:
+        linear-gradient(135deg, color-mix(in srgb, var(--block-background-fill) 96%, var(--q3vl-violet) 4%), color-mix(in srgb, var(--block-background-fill) 98%, var(--q3vl-cyan) 2%)) !important;
+    border-color: color-mix(in srgb, var(--block-border-color) 74%, var(--q3vl-violet) 26%) !important;
+}
 .q3vl-output-panel textarea {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: "Cascadia Code", Consolas, monospace;
     line-height: 1.55;
 }
-
+.q3vl-run-actions {
+    gap: 0.45rem;
+}
+.q3vl-run-actions button {
+    min-height: 2.75rem;
+}
 .q3vl-run {
-    min-height: 2.8rem;
+    background-image: linear-gradient(120deg, var(--button-primary-background-fill), color-mix(in srgb, var(--q3vl-violet) 72%, var(--q3vl-cyan) 28%)) !important;
+    box-shadow: 0 8px 20px color-mix(in srgb, var(--q3vl-violet) 22%, transparent);
+    flex: 1.35 1 0 !important;
+}
+.q3vl-master-output {
+    border-color: color-mix(in srgb, var(--block-border-color) 62%, var(--q3vl-cyan) 38%) !important;
+}
+.q3vl-send-actions button {
+    min-height: 2.45rem;
+}
+.q3vl-tuning {
+    border-radius: var(--q3vl-radius) !important;
+    overflow: hidden;
+}
+#q3vl-workbench :is(button, input, textarea, select):focus-visible,
+#q3vl_assistant_launcher:focus-visible,
+#q3vl_assistant_panel :is(button, textarea):focus-visible,
+#q3vl_assistant_settings_panel :is(button, input, select):focus-visible {
+    outline: 2px solid var(--q3vl-cyan) !important;
+    outline-offset: 2px !important;
 }
 
 .q3vl-status-idle,
@@ -162,7 +255,7 @@ html.q3vl-no-pull-refresh .gradio-container {
 }
 
 .q3vl-status-ok {
-    border-left-color: var(--primary-500);
+    border-left-color: var(--q3vl-cyan);
     color: var(--body-text-color);
 }
 
@@ -629,23 +722,19 @@ html.q3vl-no-pull-refresh .gradio-container {
     color: var(--body-text-color-subdued);
     font-size: 0.82rem;
 }
-
 .q3vl-assistant-tool {
     background: color-mix(in srgb, var(--block-background-fill) 82%, var(--primary-500) 8%);
     border: 1px dashed var(--block-border-color);
 }
-
 .q3vl-assistant-error {
     background: #4b1111;
     color: #ffd9d9;
 }
-
 #q3vl_assistant_input {
     flex: 0 0 auto;
     min-height: 5.2rem;
     resize: vertical;
 }
-
 .q3vl-assistant-composer {
     background: color-mix(in srgb, var(--block-background-fill) 88%, transparent);
     border: 1px solid var(--block-border-color);
@@ -656,12 +745,10 @@ html.q3vl-no-pull-refresh .gradio-container {
     gap: 0.45rem;
     padding: 0.55rem;
 }
-
 .q3vl-assistant-composer #q3vl_assistant_input {
     border-color: color-mix(in srgb, var(--input-border-color) 78%, transparent);
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
 }
-
 .q3vl-assistant-attachment {
     align-items: center;
     background: color-mix(in srgb, var(--block-background-fill) 90%, var(--primary-500) 10%);
@@ -673,18 +760,15 @@ html.q3vl-no-pull-refresh .gradio-container {
     min-height: 3.75rem;
     padding: 0.45rem;
 }
-
 .q3vl-assistant-attachment-empty {
     display: none;
 }
-
 .q3vl-assistant-attachment img {
     border-radius: 7px;
     height: 3rem;
     object-fit: cover;
     width: 3rem;
 }
-
 .q3vl-assistant-attachment-meta {
     display: flex;
     flex: 1 1 auto;
@@ -692,28 +776,23 @@ html.q3vl-no-pull-refresh .gradio-container {
     gap: 0.1rem;
     min-width: 0;
 }
-
 .q3vl-assistant-attachment-meta strong,
 .q3vl-assistant-attachment-meta span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-
 .q3vl-assistant-attachment-meta span {
     color: var(--body-text-color-subdued);
     font-size: 0.78rem;
 }
-
 .q3vl-assistant-actions {
     flex: 0 0 auto;
 }
-
 .q3vl-assistant-action-group {
     display: flex;
     gap: 0.38rem;
 }
-
 .q3vl-assistant-actions button,
 .q3vl-assistant-chip-button {
     align-items: center;
@@ -724,42 +803,35 @@ html.q3vl-no-pull-refresh .gradio-container {
     min-height: 2rem;
     padding: 0.38rem 0.7rem;
 }
-
 .q3vl-assistant-primary {
     background: var(--button-primary-background-fill);
     border: 1px solid var(--button-primary-border-color);
     color: var(--button-primary-text-color);
 }
-
 .q3vl-assistant-stop {
     background: #b42318;
     border-color: #f04438;
     color: #fff;
 }
-
 .q3vl-assistant-secondary,
 .q3vl-assistant-chip-button {
     background: var(--button-secondary-background-fill);
     border: 1px solid var(--button-secondary-border-color);
     color: var(--button-secondary-text-color);
 }
-
 .q3vl-assistant-ghost {
     background: transparent;
     border: 1px solid var(--block-border-color);
     color: var(--body-text-color-subdued);
 }
-
 .q3vl-assistant-actions button:hover,
 .q3vl-assistant-chip-button:hover {
     filter: brightness(1.06);
 }
-
 .q3vl-assistant-actions button:disabled {
     cursor: wait;
     opacity: 0.62;
 }
-
 .q3vl-assistant-actions button,
 .q3vl-assistant-head button,
 .q3vl-settings-head button {

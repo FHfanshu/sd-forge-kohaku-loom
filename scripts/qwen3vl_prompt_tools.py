@@ -549,17 +549,28 @@ def _ui_tab():
     with gr.Blocks(analytics_enabled=False) as interface:
         with gr.Column(elem_id="q3vl-workbench"):
             gr.HTML(
-                f"<div class='q3vl-heading'><div><span class='q3vl-kicker'>{_('ui.kicker')}</span>"
-                f"<h1>{_('ui.heading.title')}</h1><p>{_('ui.heading.description')}</p></div>"
-                "<div class='q3vl-rail' aria-hidden='true'></div></div>"
+                f"<header class='q3vl-heading'><div class='q3vl-heading-copy'>"
+                f"<span class='q3vl-kicker'><i aria-hidden='true'></i>{_('ui.kicker')}</span>"
+                f"<h1>{_('ui.heading.title')}</h1><p>{_('ui.heading.description')}</p></div></header>"
             )
-            mode = gr.Radio(["WD tagger + lmcpp", "Krea2 / Qwen3-VL"], value="WD tagger + lmcpp", label=_("ui.mode"))
+            mode = gr.Radio(
+                ["WD tagger + lmcpp", "Krea2 / Qwen3-VL"],
+                value="WD tagger + lmcpp",
+                label=_("ui.mode"),
+                elem_classes=["q3vl-mode-switch"],
+            )
             with gr.Row(equal_height=False, elem_classes=["q3vl-grid"]):
                 with gr.Column(scale=5, min_width=320, elem_classes=["q3vl-panel"]):
-                    image = gr.Image(type="pil", label=_("ui.image"), height=430, sources=["upload", "clipboard"])
-                    with gr.Group(visible=False) as krea_controls:
+                    image = gr.Image(
+                        type="pil",
+                        label=_("ui.image"),
+                        height=430,
+                        sources=["upload", "clipboard"],
+                        elem_classes=["q3vl-image-stage"],
+                    )
+                    with gr.Group(visible=False, elem_classes=["q3vl-control-card"]) as krea_controls:
                         task = gr.Radio(list(CAPTION_TASKS), value="完整反推", label=_("ui.read_focus"))
-                    with gr.Group(visible=True) as wd_controls:
+                    with gr.Group(visible=True, elem_classes=["q3vl-control-card"]) as wd_controls:
                         tagger_model = gr.Dropdown(list(TAGGER_MODELS), value="WD EVA02 large v3", label=_("ui.tagger_model"))
                         with gr.Row():
                             load_tagger = gr.Button(_("ui.load_tagger"), variant="secondary")
@@ -569,36 +580,48 @@ def _ui_tab():
                         label=_("ui.extra_guidance"),
                         placeholder=_("ui.extra_guidance.placeholder"),
                         lines=2,
+                        elem_classes=["q3vl-guidance"],
                     )
                     prompt_template = gr.Dropdown(
                         PROMPT_TEMPLATE_CHOICES,
                         value="美学风格抽取（Anima 英文）",
                         label=_("ui.prompt_template"),
+                        elem_classes=["q3vl-template-select"],
                     )
-                    with gr.Row():
+                    with gr.Row(elem_classes=["q3vl-run-actions"]):
                         run = gr.Button(_("ui.run"), variant="primary", elem_classes=["q3vl-run"])
                         run_tags = gr.Button(_("ui.run_tags"), variant="secondary", visible=True)
                         run_nl = gr.Button(_("ui.run_nl"), variant="secondary", visible=True)
                     live_log = gr.Textbox(label=_("ui.live_log"), lines=7, interactive=False, elem_classes=["q3vl-live-log"])
                 with gr.Column(scale=6, min_width=360, elem_classes=["q3vl-panel", "q3vl-output-panel"]):
-                    tags = gr.Textbox(label="Tags", lines=6, show_copy_button=True, visible=True)
-                    with gr.Group(visible=True) as wd_output:
+                    tags = gr.Textbox(label="Tags", lines=6, show_copy_button=True, visible=True, elem_classes=["q3vl-result-card"])
+                    with gr.Group(visible=True, elem_classes=["q3vl-result-stack"]) as wd_output:
                         with gr.Row():
                             characters = gr.Textbox(label=_("ui.characters"), lines=2, show_copy_button=True)
                             rating = gr.Textbox(label=_("ui.rating"), lines=2)
                         nl = gr.Textbox(label="Natural language", lines=7, show_copy_button=True)
                         combine_mode = gr.Radio(["Tags + NL", "Tags only", "NL only"], value="Tags + NL", label=_("ui.combine_format"))
-                        combine = gr.Button(_("ui.combine"), variant="secondary")
+                        combine = gr.Button(_("ui.combine"), variant="secondary", elem_classes=["q3vl-combine"])
                         with gr.Accordion(_("ui.debug"), open=False):
                             raw_json = gr.Code(label="Tag scores JSON", language="json", lines=7)
-                    output = gr.Textbox(label=_("ui.output"), placeholder=_("ui.output.placeholder"), lines=12, show_copy_button=True, elem_id="q3vl_reverse_output")
-                    status = gr.HTML(f"<span class='q3vl-status-idle'>{_('ui.status.waiting')}</span>")
-                    with gr.Row():
+                    output = gr.Textbox(
+                        label=_("ui.output"),
+                        placeholder=_("ui.output.placeholder"),
+                        lines=12,
+                        show_copy_button=True,
+                        elem_id="q3vl_reverse_output",
+                        elem_classes=["q3vl-master-output"],
+                    )
+                    status = gr.HTML(
+                        f"<span class='q3vl-status-idle'>{_('ui.status.waiting')}</span>",
+                        elem_classes=["q3vl-status-wrap"],
+                    )
+                    with gr.Row(elem_classes=["q3vl-send-actions"]):
                         send_txt = gr.Button(_("ui.send_txt2img"), variant="secondary", elem_id="q3vl_send_txt2img")
                         send_img = gr.Button(_("ui.send_img2img"), variant="secondary", elem_id="q3vl_send_img2img")
 
             with gr.Group(visible=False) as krea_settings:
-                with gr.Accordion(_("ui.accordion.krea"), open=False):
+                with gr.Accordion(_("ui.accordion.krea"), open=False, elem_classes=["q3vl-tuning"]):
                     with gr.Row():
                         language = gr.Dropdown(["English", "中文"], value="English", label=_("ui.language"))
                         max_side = gr.Slider(448, 1344, value=768, step=64, label=_("ui.max_side"), info=_("ui.max_side.info"))
@@ -613,7 +636,7 @@ def _ui_tab():
                         release_after = gr.Checkbox(value=True, label=_("ui.release_after"), info=_("ui.release_after.info"))
 
             with gr.Group(visible=True) as wd_settings:
-                with gr.Accordion(_("ui.accordion.wd"), open=True):
+                with gr.Accordion(_("ui.accordion.wd"), open=True, elem_classes=["q3vl-tuning"]):
                     with gr.Row():
                         general_threshold = gr.Slider(0, 1, value=0.5, step=0.01, label="General threshold")
                         general_mcut = gr.Checkbox(False, label="General MCut")
