@@ -35,8 +35,6 @@
             "settings.backend": "后端",
             "settings.backend.local_endpoint": "本地接入点",
             "settings.backend.local_qwen_once": "本地模型一次性",
-            "settings.fallback_endpoint": "备用接入点",
-            "settings.fallback_endpoint.placeholder": "备用接入点",
             "settings.local_endpoint": "文本接入点",
             "settings.local_agent_params": "本地代理参数",
             "settings.local_max_tokens": "本地最大 token 数",
@@ -132,8 +130,6 @@
             "settings.backend": "Backend",
             "settings.backend.local_endpoint": "Local endpoint",
             "settings.backend.local_qwen_once": "Local model one-shot",
-            "settings.fallback_endpoint": "Fallback endpoint",
-            "settings.fallback_endpoint.placeholder": "Fallback endpoint",
             "settings.local_endpoint": "Text endpoint",
             "settings.local_agent_params": "Local Agent Parameters",
             "settings.local_max_tokens": "Local max tokens",
@@ -198,6 +194,38 @@
             "settings.qwen_vision": "Local Model Vision"
         }
     };
+    Object.assign(messages["zh-CN"], {
+        "profiles.title": "模型配置档案", "profiles.list": "模型配置档案", "profiles.close": "关闭",
+        "profiles.status.autosave": "修改会自动保存", "profiles.status.saved": "已保存", "profiles.status.invalid": "请检查该配置项。",
+        "profiles.section.basic": "基本信息", "profiles.section.connection": "连接配置", "profiles.section.capabilities": "能力配置", "profiles.section.generation": "生成参数", "profiles.section.local": "本地运行",
+        "profiles.id": "配置 ID", "profiles.display_name": "显示名称", "profiles.model_id": "模型 ID", "profiles.enabled": "已启用", "profiles.disabled": "已禁用", "profiles.active": "当前主模型",
+        "profiles.protocol": "API 协议", "profiles.protocol.gemini": "Gemini Native", "profiles.protocol.openai": "OpenAI Chat Completions", "profiles.protocol.abbr.gemini": "GEM", "profiles.protocol.abbr.openai": "OAI",
+        "profiles.runtime": "运行方式", "profiles.runtime.remote": "远端 HTTP", "profiles.runtime.endpoint": "llama.cpp Endpoint", "profiles.runtime.once": "llama.cpp 一次性",
+        "profiles.endpoint": "Endpoint", "profiles.fallback_endpoints": "备用 Endpoint（每行一个）", "profiles.api_key": "API Key", "profiles.api_key.show": "显示", "profiles.api_key.hide": "隐藏",
+        "profiles.capability.tools": "工具调用", "profiles.capability.vision": "视觉输入", "profiles.capability.streaming": "流式响应", "profiles.capability.reasoning": "推理参数",
+        "profiles.temperature": "Temperature", "profiles.top_p": "Top P", "profiles.max_tokens": "最大 Tokens", "profiles.reasoning_effort": "推理强度", "profiles.reasoning.low": "低", "profiles.reasoning.high": "高", "profiles.reasoning.max": "最大", "profiles.timeout": "超时（秒）",
+        "profiles.teacher_mode": "教师脱敏模式", "profiles.teacher_mode.qwen": "本地 Qwen 脱敏", "profiles.teacher_mode.regex": "仅占位符脱敏", "profiles.sanitize_sensitive": "敏感内容占位符脱敏", "profiles.teacher_profile": "教师档案",
+        "profiles.model_path": "GGUF 路径", "profiles.mmproj_path": "mmproj 路径", "profiles.llama_server_path": "llama-server 路径", "profiles.n_ctx": "上下文长度", "profiles.n_gpu_layers": "GPU Layers", "profiles.thinking": "Thinking",
+        "profiles.add": "新增", "profiles.duplicate": "复制", "profiles.delete": "删除", "profiles.set_active": "设为主模型", "profiles.restore": "恢复默认配置", "profiles.new_name": "新模型配置", "profiles.new_model_id": "model-id",
+        "profiles.delete.confirm": "确定删除这个模型配置吗？", "profiles.delete.last_enabled": "至少需要保留一个已启用的模型配置。", "profiles.active.disabled": "请先启用该配置，再设为主模型。", "profiles.restore.confirm": "确定用默认配置替换全部模型档案吗？",
+        "profiles.test": "测试连接", "profiles.test.testing": "正在测试连接...", "profiles.test.ping": "Ping。只回复 OK。", "profiles.test.success": "连接成功。", "profiles.test.error": "连接失败，请检查模型配置。"
+    });
+    Object.assign(messages.en, {
+        "profiles.title": "Model profiles", "profiles.list": "Model profiles", "profiles.close": "Close",
+        "profiles.status.autosave": "Changes save automatically", "profiles.status.saved": "Saved", "profiles.status.invalid": "Check this value and try again.",
+        "profiles.section.basic": "Basic information", "profiles.section.connection": "Connection", "profiles.section.capabilities": "Capabilities", "profiles.section.generation": "Generation parameters", "profiles.section.local": "Local runtime",
+        "profiles.id": "Profile ID", "profiles.display_name": "Display name", "profiles.model_id": "Model ID", "profiles.enabled": "Enabled", "profiles.disabled": "Disabled", "profiles.active": "Active model",
+        "profiles.protocol": "API protocol", "profiles.protocol.gemini": "Gemini native", "profiles.protocol.openai": "OpenAI chat completions", "profiles.protocol.abbr.gemini": "GEM", "profiles.protocol.abbr.openai": "OAI",
+        "profiles.runtime": "Runtime", "profiles.runtime.remote": "Remote HTTP", "profiles.runtime.endpoint": "llama.cpp endpoint", "profiles.runtime.once": "llama.cpp one-shot",
+        "profiles.endpoint": "Endpoint", "profiles.fallback_endpoints": "Fallback endpoints (one per line)", "profiles.api_key": "API key", "profiles.api_key.show": "Show", "profiles.api_key.hide": "Hide",
+        "profiles.capability.tools": "Tool calling", "profiles.capability.vision": "Vision input", "profiles.capability.streaming": "Streaming", "profiles.capability.reasoning": "Reasoning parameters",
+        "profiles.temperature": "Temperature", "profiles.top_p": "Top P", "profiles.max_tokens": "Max tokens", "profiles.reasoning_effort": "Reasoning effort", "profiles.reasoning.low": "Low", "profiles.reasoning.high": "High", "profiles.reasoning.max": "Max", "profiles.timeout": "Timeout (seconds)",
+        "profiles.teacher_mode": "Teacher redaction mode", "profiles.teacher_mode.qwen": "Local Qwen redaction", "profiles.teacher_mode.regex": "Placeholder redaction only", "profiles.sanitize_sensitive": "Sanitize sensitive content", "profiles.teacher_profile": "Teacher profile",
+        "profiles.model_path": "GGUF path", "profiles.mmproj_path": "mmproj path", "profiles.llama_server_path": "llama-server path", "profiles.n_ctx": "Context size", "profiles.n_gpu_layers": "GPU layers", "profiles.thinking": "Thinking",
+        "profiles.add": "Add", "profiles.duplicate": "Duplicate", "profiles.delete": "Delete", "profiles.set_active": "Set active", "profiles.restore": "Restore defaults", "profiles.new_name": "New model profile", "profiles.new_model_id": "model-id",
+        "profiles.delete.confirm": "Delete this model profile?", "profiles.delete.last_enabled": "At least one enabled model profile is required.", "profiles.active.disabled": "Enable this profile before making it active.", "profiles.restore.confirm": "Replace all profiles with the defaults?",
+        "profiles.test": "Test connection", "profiles.test.testing": "Testing connection...", "profiles.test.ping": "Ping. Reply with OK.", "profiles.test.success": "Connection successful.", "profiles.test.error": "Connection failed. Check the model profile."
+    });
     let activeLocale = DEFAULT_LOCALE;
 
     function normalizeLocale(value) {
@@ -223,7 +251,7 @@
             .then(function (bundle) {
                 if (!bundle || !bundle.messages) return;
                 const locale = normalizeLocale(bundle.locale);
-                messages[locale] = Object.assign({}, messages[DEFAULT_LOCALE], bundle.messages);
+                messages[locale] = Object.assign({}, messages[DEFAULT_LOCALE], bundle.messages, messages[locale]);
                 activeLocale = locale;
                 tools.q3vlActiveLocale = locale;
             })

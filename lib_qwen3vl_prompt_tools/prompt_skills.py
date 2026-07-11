@@ -6,14 +6,14 @@ from typing import Any
 ANIMA_DIT_GUIDE = """# Anima DiT prompt guide
 
 Source: https://huggingface.co/circlestone-labs/Anima
-Reviewed: 2026-07-10
+Reviewed: 2026-07-11
 
 Use this guide only for Anima image checkpoints.
 
 ## Model variants
 - Anima Base is flexible and neutral. It benefits most from explicit quality, style, subject, and composition guidance.
 - Anima Aesthetic is already quality-tuned. `masterpiece, best quality` is safe, but score tags are optional; remove score tags and lower CFG if the result becomes noisy or over-detailed.
-- Anima Turbo is distilled for fast iteration. Prompt semantics stay the same; generation normally uses CFG 1 and 8-12 steps.
+- Anima Turbo is distilled for fast iteration and normally uses CFG 1 and 8-12 steps. At CFG 1, classifier-free guidance reduces to the positive prediction and the negative prompt has no effect. Do not generate or rely on a negative prompt for the normal Turbo setup.
 
 ## Prompt grammar
 - Anima understands Danbooru/Gelbooru-style tags, natural-language captions, and mixtures of both.
@@ -22,15 +22,20 @@ Use this guide only for Anima image checkpoints.
 - Prefix artist tags with `@`, for example `@artist name`; without `@` the artist effect is weak.
 - Prompt weighting works but usually needs stronger values than SDXL, for example `(chibi:2)`.
 - Preserve wildcard references such as `__artist_names__`, dynamic choices, and LoRA tags such as `<lora:name:1>` exactly. Never expand, translate, rename, or reformat them unless the user explicitly asks.
+- Anima uses a small Qwen3 0.6B text encoder. Assume limited comprehension: use simple tags or short, direct English clauses rather than sophisticated prose.
+- Keep the final positive prompt well below 256 tokens whenever possible; 256 tokens is an absolute ceiling, not a target. A shorter prompt with clear subject, action, composition, and style is more reliable.
+- Express one visual fact at a time. Avoid nested or dependent clauses, abstract relationships, implied references, long chains of interactions, repeated synonyms, exhaustive tag lists, and conflicting micro-details.
+- For complex requests, keep only the highest-priority visible details. Do not try to preserve every instruction by compressing them into a dense paragraph.
 
 ## Useful defaults
 - Base positive prefix: `masterpiece, best quality, score_7, safe, `.
-- Base negative: `worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, chromatic aberration`.
+- Base/Aesthetic negative: `worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, chromatic aberration`.
+- Turbo negative prompts have no effect at CFG 1. Omit them. To make a negative prompt participate, CFG must be above 1, which departs from the recommended Turbo setup and may change or degrade its distilled behavior.
 - Quality tags are optional on Aesthetic. Do not mechanically stack every score tag.
 - Use `safe`, `sensitive`, `nsfw`, or `explicit` only when it matches the user's requested rating.
 
 ## Natural language and multi-character scenes
-- Pure natural-language prompts should be descriptive and normally use at least two sentences.
+- Natural-language prompts may use two or more short sentences when needed, but each sentence should remain simple and concrete.
 - Quality and artist tags may precede natural language.
 - For named characters, state the name first and then describe the visible appearance.
 - For multiple characters, state the exact count and give each character a position, appearance, pose, gaze, and interaction. Do not provide only a list of names.
@@ -49,7 +54,7 @@ PROMPT_SKILLS = {
         "title": "Anima DiT prompt guide",
         "guide": ANIMA_DIT_GUIDE,
         "source": "https://huggingface.co/circlestone-labs/Anima",
-        "reviewed": "2026-07-10",
+        "reviewed": "2026-07-11",
     }
 }
 

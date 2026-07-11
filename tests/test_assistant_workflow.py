@@ -47,7 +47,7 @@ class AssistantWorkflowTests(unittest.TestCase):
             if len(calls) == 1:
                 return {"text": "", "tool_calls": [{"tool": "read_prompt", "arguments": {"target": "active"}}]}
             if len(calls) == 2:
-                base_hash = json.loads(payload["messages"][-1]["content"].split(": ", 1)[1])["prompt_hash"]
+                base_hash = json.loads(payload["messages"][-1]["content"])["prompt_hash"]
                 return {
                     "text": "",
                     "tool_calls": [
@@ -68,6 +68,22 @@ class AssistantWorkflowTests(unittest.TestCase):
         self.assertTrue(result["prompt_edited"])
         self.assertEqual("front character, right character", harness.prompt)
         self.assertEqual("done", result["text"])
+
+    def test_run_assistant_loop_preserves_native_tool_exchange(self):
+        captured = []
+
+        def chat_fn(payload):
+            captured.append(payload)
+            if len(captured) == 1:
+                return {"text": "", "tool_calls": [{"id": "call-read", "tool": "read_prompt", "arguments": {"target": "active"}}]}
+            return {"text": "done", "tool_calls": []}
+
+        result = run_assistant_loop({}, "读取当前提示词", PromptToolHarness("subject"), chat_fn=chat_fn)
+        history = captured[1]["messages"]
+        self.assertTrue(result["ok"])
+        self.assertEqual("call-read", history[-2]["tool_calls"][0]["id"])
+        self.assertEqual("tool", history[-1]["role"])
+        self.assertEqual("call-read", history[-1]["tool_call_id"])
 
     def test_prompt_edit_eval_payloads_builds_local_and_deepseek_cases(self):
         messages = prompt_edit_messages("修改当前提示词")

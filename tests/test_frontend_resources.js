@@ -41,3 +41,14 @@ test("message compaction keeps the first user goal and recent messages", () => {
     assert.ok(compacted.length <= 13);
     assert.ok(compacted.at(-1).content.length <= 1600);
 });
+
+test("message compaction enforces its total payload budget for long chat text", () => {
+    const messages = [
+        { role: "user", content: "original goal" },
+        { role: "assistant", content: "a".repeat(120000) },
+        { role: "user", content: "latest request" }
+    ];
+    const compacted = tools.compactAssistantMessages(messages, 16000);
+    assert.equal(compacted[0].content, "original goal");
+    assert.ok(JSON.stringify(compacted).length <= 16000);
+});

@@ -17,8 +17,6 @@ DEFAULT_ASSISTANT_BACKEND = "moyuu"
 DEFAULT_ASSISTANT_ENDPOINT = "https://moyuu.cc"
 DEFAULT_ASSISTANT_FALLBACK_ENDPOINT = "https://hk-api.moyuu.cc"
 DEFAULT_ASSISTANT_MODEL = "gemini-3.5-flash-preview"
-DEFAULT_ASSISTANT_FALLBACK_BACKEND = "openai"
-DEFAULT_ASSISTANT_FALLBACK_MODEL = "grok-4.5"
 DEFAULT_LOCAL_ASSISTANT_ENDPOINT = "http://127.0.0.1:8080/v1"
 DEFAULT_LOCAL_ASSISTANT_MODEL = "hauhau-qwen3.5-9b-uncensored"
 DEFAULT_LOCAL_CONTEXT_TOKENS = 16384
@@ -109,7 +107,7 @@ Available UI tools:
 - Use search_resources to discover installed wildcard, Style, or LoRA resources. Use inspect_resource before relying on full contents or metadata. Search alone never changes the UI.
 - Only call apply_resource when the user explicitly asks to apply/add/use a resource. Call read_prompt first and pass its latest context_hash. Wildcards remain __name__, LoRAs remain <lora:alias:weight>, and Styles remain native WebUI selections.
 - Only call initialize_prompt when the user explicitly asks to initialize an empty generation prompt. It fills empty positive/negative fields and never overwrites existing content.
-- Use load_prompt_skill("anima_dit") for Anima-specific work when it was not already auto-loaded. Preserve wildcards, dynamic choices, and LoRA tags exactly.
+- Anima-specific guidance is injected automatically when the active Forge preset or checkpoint is Anima. Preserve wildcards, dynamic choices, and LoRA tags exactly.
 
 Example structure:
 Group selfie of three muscular anthropomorphic dragon men. Left: white fur, blue horns, blue goatee, white shirt, loose striped tie. Center: white fur, yellow horns, casual jacket. Right: dark fur, blue horns, open jacket revealing a bare muscular chest. Furry art, bara, all smiling and looking at the camera. Beautiful background with a clear mountain lake and lush green hills, highly detailed, daylight."""
@@ -306,20 +304,6 @@ ASSISTANT_TOOLS = [
                     "negative_prompt": {"type": "string"},
                 },
                 "required": ["target", "context_hash", "positive_prompt", "negative_prompt"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "load_prompt_skill",
-            "description": "Load a built-in image-model prompting guide. anima_dit is currently available.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "enum": ["anima_dit"]},
-                },
-                "required": ["name"],
             },
         },
     },

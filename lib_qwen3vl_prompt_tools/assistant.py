@@ -1,27 +1,94 @@
 from __future__ import annotations
 
-import json
 import os
 import urllib.parse
-from typing import Any
+from typing import Any, Callable, Iterator
 
-import requests
-
-from .assistant_common import _assistant_chat_url, _assistant_request_messages, _assistant_stream_event, _extract_tool_calls
-from .assistant_gemini import _assistant_use_gemini_native, _prompt_assistant_chat_gemini, _prompt_assistant_stream_gemini
+from .assistant_common import _assistant_stream_event
+from .assistant_gemini import _prompt_assistant_chat_gemini, _prompt_assistant_stream_gemini
 from .assistant_local import _prompt_assistant_chat_local_once
-from .constants import (
-    ASSISTANT_TOOLS,
-    DEFAULT_ASSISTANT_BACKEND,
-    DEFAULT_ASSISTANT_ENDPOINT,
-    DEFAULT_ASSISTANT_FALLBACK_BACKEND,
-    DEFAULT_ASSISTANT_FALLBACK_MODEL,
-    DEFAULT_ASSISTANT_MODEL,
-    DEFAULT_LOCAL_ASSISTANT_ENDPOINT,
-    DEFAULT_LOCAL_ASSISTANT_MODEL,
+from .assistant_openai import _prompt_assistant_chat_openai, _prompt_assistant_stream_openai
+from .assistant_profiles import (
+    GEMINI_NATIVE,
+    LLAMA_ONCE,
+    OPENAI_CHAT_COMPLETIONS,
+    normalize_assistant_payload,
 )
-from .response_text import _clean_response_text, _extract_message_text
-from .utils import _payload_bool
+
+ChatHandler = Callable[[dict[str, Any], str, str, str], dict[str, Any]]
+StreamHandler = Callable[[dict[str, Any], str, str, str], Iterator[str]]
+
+
+def _chat_gemini(payload: dict[str, Any], endpoint: str, model: str, api_key: str) -> dict[str, Any]:
+    return _prompt_assistant_chat_gemini(payload, endpoint, model, api_key)
+
+
+def _chat_openai(payload: dict[str, Any], endpoint: str, model: str, api_key: str) -> dict[str, Any]:
+    return _prompt_assistant_chat_openai(payload, endpoint, model, api_key)
+
+
+def _stream_gemini(payload: dict[str, Any], endpoint: str, model: str, api_key: str) -> Iterator[str]:
+    yield from _prompt_assistant_stream_gemini(payload, endpoint, model, api_key)
+
+
+def _stream_openai(payload: dict[str, Any], endpoint: str, model: str, api_key: str) -> Iterator[str]:
+    yield from _prompt_assistant_stream_openai(payload, endpoint, model, api_key)
+
+
+PROTOCOL_CHAT_HANDLERS: dict[str, ChatHandler] = {
+    GEMINI_NATIVE: _chat_gemini,
+    OPENAI_CHAT_COMPLETIONS: _chat_openai,
+}
+PROTOCOL_STREAM_HANDLERS: dict[str, StreamHandler] = {
+    GEMINI_NATIVE: _stream_gemini,
+    OPENAI_CHAT_COMPLETIONS: _stream_openai,
+}
+
+
+def _dispatch_assistant_chat(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload["runtime"] == LLAMA_ONCE:
+        return _prompt_assistant_chat_local_once(payload)
+    handler = PROTOCOL_CHAT_HANDLERS[payload["protocol"]]
+    return handler(payload, payload["endpoint"], payload["model"], _assistant_api_key(payload))
+
+
+def _dispatch_assistant_stream(payload: dict[str, Any]) -> Iterator[str]:
+    if payload["runtime"] == LLAMA_ONCE:
+        try:
+            yield _assistant_stream_event("done", _prompt_assistant_chat_local_once(payload))
+        except Exception as exc:  # noqa: BLE001
+            yield _assistant_stream_event("error", {"error": str(exc)})
+        return
+    capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else {}
+    if capabilities.get("streaming") is False:
+        try:
+            yield _assistant_stream_event("done", _dispatch_assistant_chat(payload))
+        except Exception as exc:  # noqa: BLE001
+            yield _assistant_stream_event("error", {"error": str(exc)})
+        return
+    handler = PROTOCOL_STREAM_HANDLERS[payload["protocol"]]
+    yield from handler(payload, payload["endpoint"], payload["model"], _assistant_api_key(payload))
+
+
+def _prompt_assistant_chat_once(payload: dict[str, Any]) -> dict[str, Any]:
+    return _dispatch_assistant_chat(normalize_assistant_payload(payload))
+
+
+def prompt_assistant_chat(payload: dict[str, Any]) -> dict[str, Any]:
+    return _prompt_assistant_chat_once(payload)
+
+
+def _prompt_assistant_stream_once(payload: dict[str, Any]) -> Iterator[str]:
+    try:
+        normalized = normalize_assistant_payload(payload)
+    except Exception as exc:  # noqa: BLE001
+        yield _assistant_stream_event("error", {"error": str(exc)})
+        return
+    yield from _dispatch_assistant_stream(normalized)
+
+
+def prompt_assistant_stream(payload: dict[str, Any]) -> Iterator[str]:
+    yield from _prompt_assistant_stream_once(payload)
 
 
 def ask_teacher(payload: dict[str, Any]) -> dict[str, Any]:
@@ -30,211 +97,73 @@ def ask_teacher(payload: dict[str, Any]) -> dict[str, Any]:
     goal = str(payload.get("goal") or "").strip()
     if not question and not context:
         raise RuntimeError("ask_teacher requires question or context")
-    endpoint = str(payload.get("endpoint") or DEFAULT_ASSISTANT_ENDPOINT).strip().rstrip("/")
-    model = str(payload.get("model") or DEFAULT_ASSISTANT_MODEL).strip()
-    teacher_prompt = (
-        "You are the remote Gemini teacher for a local Qwen prompt agent. "
-        "Review the sanitized context and answer with practical prompt-engineering guidance. "
-        "Do not request tools, do not expand SAFE_SLOT_### placeholders, and do not ask for raw sensitive text."
-    )
-    parts = [teacher_prompt]
+
+    parts = [
+        "You are a teacher for a local prompt agent. Review the sanitized context and answer with practical "
+        "prompt-engineering guidance. Do not request tools, do not expand SAFE_SLOT_### placeholders, and do not "
+        "ask for raw sensitive text."
+    ]
     if goal:
         parts.append(f"Goal: {goal}")
     if context:
         parts.append(f"Sanitized context:\n{context}")
     if question:
         parts.append(f"Question:\n{question}")
-    teacher_payload = dict(payload)
-    teacher_payload.update(
-        {
-            "backend": "moyuu",
-            "messages": [{"role": "user", "content": "\n\n".join(parts)}],
-            "teacher_mode": "regex",
-            "disable_tools": True,
-            "max_tokens": int(payload.get("teacher_max_tokens") or payload.get("max_tokens") or 1200),
-        }
+
+    configured = payload.get("teacher_profile", payload.get("teacher_config"))
+    if configured is not None and not isinstance(configured, dict):
+        raise RuntimeError("teacher_profile must be an object")
+    teacher_payload = dict(configured) if isinstance(configured, dict) else dict(payload)
+    for field in (
+        "api_key",
+        "teacher_mode",
+        "sanitize_sensitive",
+        "qwen_teacher_enabled",
+        "teacher_model_path",
+        "teacher_mmproj_path",
+        "teacher_n_ctx",
+        "teacher_n_gpu_layers",
+        "llama_server_path",
+    ):
+        if field not in teacher_payload and field in payload:
+            teacher_payload[field] = payload[field]
+    teacher_payload["messages"] = [{"role": "user", "content": "\n\n".join(parts)}]
+    teacher_payload["disable_tools"] = True
+    parameters = teacher_payload.get("parameters") if isinstance(teacher_payload.get("parameters"), dict) else {}
+    teacher_payload["teacher_mode"] = str(teacher_payload.get("teacher_mode") or parameters.get("teacher_mode") or "regex")
+    teacher_payload["max_tokens"] = int(
+        payload.get("teacher_max_tokens")
+        or teacher_payload.get("max_tokens")
+        or payload.get("max_tokens")
+        or 1200
     )
-    api_key = _assistant_api_key(teacher_payload, "moyuu")
-    result = _prompt_assistant_chat_gemini(teacher_payload, endpoint, model, api_key)
+    normalized = normalize_assistant_payload(teacher_payload)
+    normalized["disable_tools"] = True
+    result = _dispatch_assistant_chat(normalized)
     return {
         "ok": True,
         "text": result.get("text", ""),
-        "model": result.get("model", model),
-        "endpoint": result.get("endpoint", endpoint),
+        "model": result.get("model", normalized.get("model", "")),
+        "endpoint": result.get("endpoint", normalized.get("endpoint", "")),
         "usage": result.get("usage"),
-        "teacher_mode": result.get("teacher_mode", "regex"),
+        "teacher_mode": result.get("teacher_mode", normalized.get("teacher_mode", "regex")),
     }
 
-def _assistant_model_fallback_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    if payload.get("disable_model_fallback"):
-        return None
-    primary_backend = str(payload.get("backend") or DEFAULT_ASSISTANT_BACKEND).strip()
-    primary_endpoint = str(payload.get("endpoint") or DEFAULT_ASSISTANT_ENDPOINT).strip().rstrip("/")
-    primary_model = str(payload.get("model") or DEFAULT_ASSISTANT_MODEL).strip()
-    backend = str(payload.get("fallback_backend") or DEFAULT_ASSISTANT_FALLBACK_BACKEND).strip()
-    model = str(payload.get("fallback_model") or DEFAULT_ASSISTANT_FALLBACK_MODEL).strip()
-    endpoint = str(payload.get("fallback_model_endpoint") or primary_endpoint).strip().rstrip("/")
-    if not backend or not endpoint or not model or (backend, endpoint, model) == (primary_backend, primary_endpoint, primary_model):
-        return None
-    fallback = dict(payload)
-    fallback.update(
-        {
-            "backend": backend,
-            "endpoint": endpoint,
-            "model": model,
-            "api_key": str(payload.get("fallback_api_key") or payload.get("api_key") or "").strip(),
-            "disable_model_fallback": True,
-        }
-    )
-    return fallback
 
-
-def _prompt_assistant_chat_once(payload: dict[str, Any]) -> dict[str, Any]:
-    backend = str(payload.get("backend") or DEFAULT_ASSISTANT_BACKEND).strip()
-    if backend == "local-qwen-once":
-        return _prompt_assistant_chat_local_once(payload)
-    if backend == "local-lmcpp":
-        endpoint = str(payload.get("local_endpoint") or DEFAULT_LOCAL_ASSISTANT_ENDPOINT).strip().rstrip("/")
-        model = str(payload.get("local_model") or DEFAULT_LOCAL_ASSISTANT_MODEL).strip()
-        api_key = ""
-    else:
-        endpoint = str(payload.get("endpoint") or DEFAULT_ASSISTANT_ENDPOINT).strip().rstrip("/")
-        model = str(payload.get("model") or DEFAULT_ASSISTANT_MODEL).strip()
-        api_key = _assistant_api_key(payload, backend)
-    messages = payload.get("messages") or []
-    if not isinstance(messages, list):
-        raise RuntimeError("messages must be a list")
-    if not endpoint:
-        raise RuntimeError("OpenAI-compatible endpoint is empty")
-    if not model:
-        raise RuntimeError("model is empty")
-    if _assistant_use_gemini_native(backend, endpoint, model):
-        return _prompt_assistant_chat_gemini(payload, endpoint, model, api_key)
-    url = _assistant_chat_url(endpoint)
-
-    disable_tools = _payload_bool(payload.get("disable_tools"), False)
-    request_messages = _assistant_request_messages(messages, disable_tools)
-
-    body = {
-        "model": model,
-        "messages": request_messages,
-        "temperature": float(payload.get("temperature") or 0.35),
-        "top_p": float(payload.get("top_p") or 0.9),
-        "max_tokens": int(payload.get("max_tokens") or 8192),
-        "stream": False,
-    }
-    if backend != "local-lmcpp" and not disable_tools:
-        body["tools"] = ASSISTANT_TOOLS
-        body["tool_choice"] = "auto"
-    if urllib.parse.urlparse(endpoint).netloc.lower() == "api.deepseek.com":
-        body["thinking"] = {"type": "enabled"}
-        body["reasoning_effort"] = str(payload.get("reasoning_effort") or "low")
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    response = requests.post(url, json=body, headers=headers, timeout=int(payload.get("timeout") or 120))
-    if response.status_code >= 400:
-        detail = response.text.strip()
-        raise RuntimeError(f"Assistant API {response.status_code} error from {url}: {detail or response.reason}")
-    data = response.json()
-    message = data["choices"][0]["message"]
-    tool_calls = _extract_tool_calls(message)
-    if tool_calls:
-        text = _clean_response_text(message.get("content", ""))
-    else:
-        text = _extract_message_text(message)
-    return {"text": text, "tool_calls": tool_calls, "model": model, "endpoint": endpoint}
-
-
-def prompt_assistant_chat(payload: dict[str, Any]) -> dict[str, Any]:
-    try:
-        return _prompt_assistant_chat_once(payload)
-    except Exception as primary_error:
-        fallback = _assistant_model_fallback_payload(payload)
-        if fallback is None:
-            raise
-        try:
-            result = _prompt_assistant_chat_once(fallback)
-        except Exception as fallback_error:
-            raise RuntimeError(f"Primary assistant failed: {primary_error}; fallback failed: {fallback_error}") from fallback_error
-        result.update(
-            {
-                "fallback_used": True,
-                "primary_backend": str(payload.get("backend") or DEFAULT_ASSISTANT_BACKEND),
-                "primary_model": str(payload.get("model") or DEFAULT_ASSISTANT_MODEL),
-                "primary_error": str(primary_error),
-            }
-        )
-        return result
-
-
-def _prompt_assistant_stream_once(payload: dict[str, Any]):
-    backend = str(payload.get("backend") or DEFAULT_ASSISTANT_BACKEND).strip()
-    if backend == "local-qwen-once":
-        try:
-            yield _assistant_stream_event("done", _prompt_assistant_chat_local_once(payload))
-        except Exception as exc:  # noqa: BLE001
-            yield _assistant_stream_event("error", {"error": str(exc)})
-        return
-    if backend == "local-lmcpp":
-        endpoint = str(payload.get("local_endpoint") or DEFAULT_LOCAL_ASSISTANT_ENDPOINT).strip().rstrip("/")
-        model = str(payload.get("local_model") or DEFAULT_LOCAL_ASSISTANT_MODEL).strip()
-        api_key = ""
-    else:
-        endpoint = str(payload.get("endpoint") or DEFAULT_ASSISTANT_ENDPOINT).strip().rstrip("/")
-        model = str(payload.get("model") or DEFAULT_ASSISTANT_MODEL).strip()
-        api_key = _assistant_api_key(payload, backend)
-    if _assistant_use_gemini_native(backend, endpoint, model):
-        yield from _prompt_assistant_stream_gemini(payload, endpoint, model, api_key)
-        return
-    try:
-        result = _prompt_assistant_chat_once(payload)
-        yield _assistant_stream_event("done", result)
-    except Exception as exc:  # noqa: BLE001
-        yield _assistant_stream_event("error", {"error": str(exc)})
-
-
-def prompt_assistant_stream(payload: dict[str, Any]):
-    emitted_content = False
-    primary_error = ""
-    primary_error_event = ""
-    for raw_event in _prompt_assistant_stream_once(payload):
-        try:
-            event = json.loads(raw_event)
-        except (TypeError, json.JSONDecodeError):
-            event = {}
-        if event.get("type") == "error" and not emitted_content:
-            primary_error = str(event.get("error") or "assistant stream failed")
-            primary_error_event = raw_event
-            break
-        if event.get("type") == "done" or (event.get("type") == "delta" and event.get("text")):
-            emitted_content = True
-        yield raw_event
-    if not primary_error:
-        return
-    fallback = _assistant_model_fallback_payload(payload)
-    if fallback is None:
-        yield primary_error_event
-        return
-    yield _assistant_stream_event(
-        "fallback",
-        {
-            "fallback_used": True,
-            "primary_backend": str(payload.get("backend") or DEFAULT_ASSISTANT_BACKEND),
-            "primary_model": str(payload.get("model") or DEFAULT_ASSISTANT_MODEL),
-            "primary_error": primary_error,
-            "backend": fallback["backend"],
-            "model": fallback["model"],
-        },
-    )
-    yield from _prompt_assistant_stream_once(fallback)
-
-
-def _assistant_api_key(payload: dict[str, Any], backend: str) -> str:
+def _assistant_api_key(payload: dict[str, Any], backend: str = "") -> str:
     explicit = str(payload.get("api_key") or "").strip()
-    if explicit:
+    if explicit or payload.get("_profile_payload"):
         return explicit
-    names = ["DEEPSEEK_API_KEY"] if backend == "deepseek" else ["Q3VL_MOYUU_API_KEY", "MOYUU_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]
+    legacy_backend = backend or str(payload.get("_legacy_backend") or "")
+    if legacy_backend in {"local-lmcpp", "local-qwen-once"}:
+        return ""
+    endpoint_host = urllib.parse.urlparse(str(payload.get("endpoint") or "")).netloc.lower()
+    if legacy_backend == "deepseek" or endpoint_host == "api.deepseek.com":
+        names = ["DEEPSEEK_API_KEY"]
+    elif payload.get("protocol") == GEMINI_NATIVE:
+        names = ["Q3VL_MOYUU_API_KEY", "MOYUU_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]
+    else:
+        names = ["OPENAI_API_KEY", "Q3VL_MOYUU_API_KEY", "MOYUU_API_KEY"]
     for name in names:
         value = os.environ.get(name, "").strip()
         if value:

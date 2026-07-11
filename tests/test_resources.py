@@ -54,8 +54,9 @@ class ResourceCatalogTests(unittest.TestCase):
 
     def test_assistant_tool_contract_contains_resource_and_negative_prompt_tools(self):
         tools = {item["function"]["name"]: item["function"] for item in ASSISTANT_TOOLS}
-        for name in ("search_resources", "inspect_resource", "apply_resource", "initialize_prompt", "load_prompt_skill"):
+        for name in ("search_resources", "inspect_resource", "apply_resource", "initialize_prompt"):
             self.assertIn(name, tools)
+        self.assertNotIn("load_prompt_skill", tools)
         edit_fields = tools["edit_prompt"]["parameters"]["properties"]["field"]["enum"]
         self.assertEqual(["positive", "negative"], edit_fields)
 
@@ -65,6 +66,10 @@ class PromptSkillTests(unittest.TestCase):
         result = load_prompt_skill("anima-dit")
         self.assertTrue(result["ok"])
         self.assertIn("@artist name", result["guide"])
+        self.assertIn("Qwen3 0.6B text encoder", result["guide"])
+        self.assertIn("256 tokens is an absolute ceiling, not a target", result["guide"])
+        self.assertIn("negative prompt has no effect", result["guide"])
+        self.assertIn("CFG must be above 1", result["guide"])
         self.assertEqual("anima_dit", automatic_prompt_skill("anima", "anything"))
         self.assertEqual("anima_dit", automatic_prompt_skill("all", "Anima-Aesthetic-v1"))
         self.assertEqual("", automatic_prompt_skill("sdxl", "other-model"))

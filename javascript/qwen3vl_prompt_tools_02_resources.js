@@ -246,13 +246,22 @@
         const tail = values.slice(-12);
         const compacted = [];
         if (firstUser && !tail.includes(firstUser)) compacted.push(firstUser);
-        tail.forEach(function (message) {
-            const clone = Object.assign({}, message);
-            const content = String(clone.content || "");
-            if (content.startsWith("Tool result for ") && content.length > 1600) clone.content = truncateAssistantText(content, 1600);
-            compacted.push(clone);
-        });
-        return compacted;
+        tail.forEach(function (message) { compacted.push(message); });
+        let contentLimit = Math.max(96, Math.floor(limit / Math.max(1, compacted.length)) - 96);
+        const truncate = function () {
+            return compacted.map(function (message) {
+                const clone = Object.assign({}, message);
+                const content = String(clone.content || "");
+                if (content.length > contentLimit) clone.content = truncateAssistantText(content, contentLimit);
+                return clone;
+            });
+        };
+        let result = truncate();
+        while (JSON.stringify(result).length > limit && contentLimit > 24) {
+            contentLimit = Math.max(24, Math.floor(contentLimit * 0.7));
+            result = truncate();
+        }
+        return result;
     }
 
     function compactToolResult(result, limit) {

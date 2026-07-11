@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import urllib.parse
 from typing import Any
 
 from .constants import PROMPT_ASSISTANT_SYSTEM
@@ -36,15 +35,43 @@ def _assistant_message_content(item: dict[str, Any]) -> str | list[dict[str, Any
     return parts
 
 
-def _assistant_request_messages(messages: list[Any], disable_tools: bool = False) -> list[dict[str, Any]]:
+def _assistant_request_messages(messages: list[Any], disable_tools: bool = False, preserve_window: bool = False) -> list[dict[str, Any]]:
     system_prompt = PROMPT_ASSISTANT_SYSTEM + (TOOLS_DISABLED_INSTRUCTION if disable_tools else "")
     request_messages = [{"role": "system", "content": system_prompt}]
-    for item in messages[-20:]:
+    pending_tool_call_ids: set[str] = set()
+    for item in (messages if preserve_window else messages[-20:]):
         if not isinstance(item, dict):
             continue
         role = str(item.get("role") or "").strip()
+        if role == "assistant" and isinstance(item.get("tool_calls"), list):
+            tool_calls = []
+            for index, call in enumerate(item["tool_calls"]):
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function") if isinstance(call.get("function"), dict) else {}
+                name = str(function.get("name") or call.get("tool") or call.get("name") or "").strip()
+                if not name:
+                    continue
+                arguments = function.get("arguments", call.get("arguments", {}))
+                if not isinstance(arguments, str):
+                    arguments = json.dumps(arguments if isinstance(arguments, dict) else {}, ensure_ascii=False)
+                tool_calls.append({
+                    "id": str(call.get("id") or f"call_{index}"),
+                    "type": "function",
+                    "function": {"name": name, "arguments": arguments},
+                })
+            if tool_calls:
+                request_messages.append({"role": "assistant", "content": item.get("content") or None, "tool_calls": tool_calls})
+                pending_tool_call_ids.update(call["id"] for call in tool_calls)
+                continue
+        if role == "tool":
+            tool_call_id = str(item.get("tool_call_id") or "").strip()
+            if tool_call_id in pending_tool_call_ids:
+                request_messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": str(item.get("content") or "")})
+                pending_tool_call_ids.discard(tool_call_id)
+            continue
         content = _assistant_message_content(item)
-        if role in {"user", "assistant"} and content:
+        if role in {"system", "user", "assistant"} and content:
             request_messages.append({"role": role, "content": content})
     if len(request_messages) == 1:
         raise RuntimeError("message is empty")
@@ -81,7 +108,10 @@ def _extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
                 arguments = {"diff": raw_args}
         if not isinstance(arguments, dict):
             arguments = {}
-        result.append({"tool": name, "arguments": arguments})
+        normalized = {"tool": name, "arguments": arguments}
+        if call.get("id"):
+            normalized["id"] = str(call["id"])
+        result.append(normalized)
 
     calls = message.get("tool_calls") or []
     if isinstance(calls, str):
@@ -102,17 +132,3 @@ def _extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
             if isinstance(part, dict) and str(part.get("type") or "") in {"tool_use", "tool_call", "function_call"}:
                 append_call(part)
     return result
-
-
-def _assistant_chat_url(endpoint: str) -> str:
-    endpoint = endpoint.strip().rstrip("/")
-    if endpoint.endswith("/chat/completions"):
-        return endpoint
-    parsed = urllib.parse.urlparse(endpoint)
-    if parsed.netloc.lower() == "api.deepseek.com":
-        base_path = parsed.path.rstrip("/")
-        path = f"{base_path}/chat/completions"
-        return urllib.parse.urlunparse((parsed.scheme or "https", parsed.netloc, path, "", "", ""))
-    if endpoint.endswith("/v1"):
-        return endpoint + "/chat/completions"
-    return endpoint + "/v1/chat/completions"

@@ -192,7 +192,7 @@ def run_assistant_loop(
     tool_handler: ToolHandler,
     chat_fn: ChatFunction = prompt_assistant_chat,
     messages: list[Any] | None = None,
-    max_turns: int = 6,
+    max_turns: int = 32,
     force_prompt_edit: bool | None = None,
     stop_after_edit: bool = False,
 ) -> dict[str, Any]:
@@ -233,14 +233,29 @@ def run_assistant_loop(
                 "last_result": result,
             }
 
-        history.append({"role": "assistant", "content": text or "Tool request: " + ", ".join(call["tool"] for call in tool_calls)})
-        for call in tool_calls:
+        structured_calls = []
+        for index, call in enumerate(tool_calls):
+            structured_calls.append(
+                {
+                    "id": str(call.get("id") or f"call_{_turn}_{index}"),
+                    "type": "function",
+                    "function": {"name": call["tool"], "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False)},
+                }
+            )
+        history.append({"role": "assistant", "content": text or "", "tool_calls": structured_calls})
+        for index, call in enumerate(tool_calls):
             tool_result = tool_handler(call)
             if assistant_tool_mutates_prompt(call["tool"]) and tool_result.get("ok"):
                 prompt_edited = True
             item = {"tool": call["tool"], "arguments": call.get("arguments") or {}, "result": tool_result}
             tool_results.append(item)
-            history.append({"role": "user", "content": f"Tool result for {call['tool']}: {json.dumps(tool_result, ensure_ascii=False)}"})
+            history.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": structured_calls[index]["id"],
+                    "content": json.dumps(tool_result, ensure_ascii=False),
+                }
+            )
             if stop_after_edit and must_edit and assistant_tool_mutates_prompt(call["tool"]) and tool_result.get("ok"):
                 return {
                     "ok": True,
@@ -379,7 +394,10 @@ def _normalize_tool_call(call: Any) -> dict[str, Any] | None:
             raw_args = json.loads(raw_args) if raw_args.strip() else {}
         except json.JSONDecodeError:
             raw_args = {}
-    return {"tool": name, "arguments": raw_args if isinstance(raw_args, dict) else {}}
+    normalized = {"tool": name, "arguments": raw_args if isinstance(raw_args, dict) else {}}
+    if call.get("id"):
+        normalized["id"] = str(call["id"])
+    return normalized
 
 
 def _parse_tool_json(raw: str, inferred_name: str = "") -> list[dict[str, Any]]:

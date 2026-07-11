@@ -80,19 +80,22 @@ def _prompt_assistant_chat_local_once(payload: dict[str, Any]) -> dict[str, Any]
     messages = payload.get("messages") or []
     if not isinstance(messages, list):
         raise RuntimeError("messages must be a list")
-    request_messages = _assistant_request_messages(messages, _payload_bool(payload.get("disable_tools"), False))
+    request_messages = _assistant_request_messages(messages, _payload_bool(payload.get("disable_tools"), False), _payload_bool(payload.get("_session_context"), False))
     preset = str(payload.get("local_text_preset") or payload.get("vision_preset") or DEFAULT_LOCAL_TEXT_PRESET).strip()
-    model_path, _mmproj_path, alias = resolve_vision_model_pair(
+    has_image = any(isinstance(item, dict) and (item.get("image") or item.get("data_url") or isinstance(item.get("content"), list)) for item in messages)
+    model_path, mmproj_path, alias = resolve_vision_model_pair(
         preset,
-        str(payload.get("local_model_path") or payload.get("vision_model_path") or ""),
-        "",
-        False,
+        str(payload.get("model_path") or payload.get("local_model_path") or payload.get("vision_model_path") or ""),
+        str(payload.get("mmproj_path") or payload.get("vision_mmproj_path") or ""),
+        has_image,
     )
+    if payload.get("_profile_payload") and payload.get("model"):
+        alias = str(payload["model"])
     llama_server_path = resolve_llama_server(str(payload.get("llama_server_path") or ""))
     port = _free_port()
     proc: subprocess.Popen | None = None
     timeout = int(payload.get("timeout") or 120)
-    enable_thinking = _payload_bool(payload.get("local_text_thinking", payload.get("enable_thinking")), False)
+    enable_thinking = _payload_bool(payload.get("thinking", payload.get("local_text_thinking", payload.get("enable_thinking"))), False)
     run_id = str(payload.get("run_id") or "").strip()
     try:
         n_gpu_layers = payload.get("local_n_gpu_layers", payload.get("n_gpu_layers", "all"))
@@ -116,6 +119,8 @@ def _prompt_assistant_chat_local_once(payload: dict[str, Any]) -> dict[str, Any]
             alias,
             "--jinja",
         ]
+        if mmproj_path:
+            args[3:3] = ["-mm", mmproj_path]
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
         if not _register_local_assistant_run(run_id, proc):
@@ -136,8 +141,9 @@ def _prompt_assistant_chat_local_once(payload: dict[str, Any]) -> dict[str, Any]
         message = response["choices"][0]["message"]
         tool_calls = _extract_tool_calls(message)
         text = _clean_response_text(message.get("content", "")) if tool_calls else _extract_message_text(message)
+        reasoning = _clean_response_text(message.get("reasoning_content") or message.get("reasoning") or "")
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        return {"text": text, "tool_calls": tool_calls, "model": alias, "endpoint": endpoint, "source": "one-shot-local-qwen", "usage": _local_chat_usage(response, request_messages, text, elapsed_ms, enable_thinking)}
+        return {"text": text, "reasoning": reasoning, "tool_calls": tool_calls, "model": alias, "endpoint": endpoint, "source": "one-shot-local-qwen", "usage": _local_chat_usage(response, request_messages, text, elapsed_ms, enable_thinking)}
     finally:
         _unregister_local_assistant_run(run_id, proc)
         if proc and proc.poll() is None:

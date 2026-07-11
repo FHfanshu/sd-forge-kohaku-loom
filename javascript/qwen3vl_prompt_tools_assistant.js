@@ -1,7 +1,7 @@
 (function () {
     const tools = window.q3vlPromptTools;
     if (!tools) return;
-    const { assistantConfig, assistantPanel, assistantState, compactAssistantMessages, compactToolResult, ensureAutomaticPromptSkills, executeAssistantTool, resourceToolResultLabel, tr } = tools;
+    const { assistantConfig, assistantPanel, assistantState, compactAssistantMessages, compactToolResult, ensureAutomaticPromptSkills, executeAssistantTool, resourceToolResultLabel, tr, analyzeAssistantAttachmentWithGemini, assistantUsesGeminiVisionDelegate, updateAssistantStreamingMessage } = tools;
 
     function t(key, fallback) {
         if (typeof tr !== "function") return fallback;
@@ -22,22 +22,20 @@
         "search_resources",
         "inspect_resource",
         "apply_resource",
-        "initialize_prompt",
-        "load_prompt_skill"
+        "initialize_prompt"
     ];
     const ASSISTANT_REPEATABLE_READ_TOOLS = new Set([
         "read_prompt",
         "get_current_prompt",
         "get_style_template",
         "search_resources",
-        "inspect_resource",
-        "load_prompt_skill"
+        "inspect_resource"
     ]);
 
     function assistantRepeatedToolAction(name, count) {
-        if (count < 2) return "execute";
-        if (ASSISTANT_REPEATABLE_READ_TOOLS.has(String(name || "")) && count === 2) return "converge";
-        return "stop";
+        if (count < 4) return "execute";
+        if (count === 4) return "converge";
+        return count >= 6 ? "stop" : "execute";
     }
 
     function assistantToolNameFromText(value) {
@@ -88,7 +86,9 @@
         const hasExplicitArguments = call.arguments !== undefined || call.input !== undefined || call.args !== undefined || (fn && fn.arguments !== undefined);
         const rawArgs = call.arguments !== undefined ? call.arguments : call.input !== undefined ? call.input : call.args !== undefined ? call.args : fn ? fn.arguments : undefined;
         const args = hasExplicitArguments ? parseAssistantArguments(rawArgs) : inferredName ? call : {};
-        return { tool: tool, arguments: args };
+        const normalized = { tool: tool, arguments: args };
+        if (call.id) normalized.id = String(call.id);
+        return normalized;
     }
 
     function collectAssistantToolCalls(parsed, inferredName) {
@@ -608,10 +608,12 @@
         const input = Number(usage && usage.input_tokens) || 0;
         const output = Number(usage && usage.output_tokens) || 0;
         const thoughts = Number(usage && usage.thought_tokens) || 0;
+        const cached = Number(usage && usage.cached_tokens) || 0;
         const elapsed = Number(usage && usage.elapsed_ms) || 0;
         const speed = Number(usage && usage.tokens_per_second) || 0;
         const details = [];
         if (thoughts > 0) details.push(`thinking ${thoughts} tokens`);
+        if (cached > 0) details.push(`cache ${cached} tokens`);
         else if (usage && usage.thinking_enabled === false) details.push("thinking off");
         if (usage && usage.stream === false) details.push("non-stream");
         if (elapsed > 0) details.push(`${(elapsed / 1000).toFixed(1)}s`);
@@ -619,26 +621,21 @@
         const suffix = details.length ? ` (${details.join(", ")})` : "";
         return `思考中... ↑${input} tokens ↓${output} tokens${suffix}`;
     }
-
     function assistantInitialStatus(config) {
-        if (String(config && config.backend || "") === "local-qwen-once") {
+        if (String(config && config.runtime || "") === "llama-once") {
             return `本地模型一次性请求中... thinking ${config && config.local_text_thinking ? "on" : "off"}, non-stream`;
         }
         return "思考中... ↑0 tokens ↓0 tokens";
     }
-
     function assistantRunId() {
         return `q3vl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     }
-
     function assistantAbortError() {
         return new Error("assistant run aborted");
     }
-
     function assertAssistantRunActive(run) {
         if (!run || run.cancelled || run.controller.signal.aborted) throw assistantAbortError();
     }
-
     function setAssistantSendButtonRunning(button, running) {
         if (!button) return;
         button.disabled = false;
@@ -648,13 +645,12 @@
         button.classList.toggle("q3vl-assistant-stop", Boolean(running));
         assistantPanel()?.querySelectorAll(".q3vl-assistant-runtime-control").forEach(function (control) { control.disabled = Boolean(running); });
     }
-
     function cancelAssistantRun() {
         const run = assistantState.running;
         if (!run || run.cancelled) return;
         run.cancelled = true;
         run.controller.abort();
-        if (run.backend !== "local-qwen-once") return;
+        if (run.runtime !== "llama-once") return;
         fetch("/qwen3vl-prompt-tools/assistant-cancel", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -666,7 +662,7 @@
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        let result = { text: "", tool_calls: [], usage: null };
+        let result = { text: "", reasoning: "", tool_calls: [], usage: null };
 
         async function handleLine(line) {
             const raw = String(line || "").trim();
@@ -674,24 +670,16 @@
             const event = JSON.parse(raw);
             if (event.type === "error") throw new Error(event.error || "assistant stream failed");
             if (event.usage && typeof onProgress === "function") onProgress(event.usage);
-            if (event.type === "fallback") {
-                result.fallback_used = true;
-                result.primary_backend = event.primary_backend || "";
-                result.primary_model = event.primary_model || "";
-                result.primary_error = event.primary_error || "";
-                result.backend = event.backend || "";
-                result.model = event.model || "";
-                return;
-            }
-            if (event.type === "delta") {
-                result.text += event.text || "";
+            if (event.type === "delta") result.text += event.text || "";
+            if (event.type === "reasoning_delta") result.reasoning += event.text || "";
+            if (["delta", "reasoning_delta"].includes(event.type)) {
+                if (typeof onProgress === "function") onProgress(event.usage || result.usage, { text: result.text, reasoning: result.reasoning });
                 return;
             }
             if (event.type === "done") {
                 result = Object.assign({}, result, event, {
-                    text: event.text !== undefined ? event.text : result.text,
-                    tool_calls: Array.isArray(event.tool_calls) ? event.tool_calls : result.tool_calls,
-                    usage: event.usage || result.usage
+                    text: event.text !== undefined ? event.text : result.text, reasoning: event.reasoning !== undefined ? event.reasoning : result.reasoning,
+                    tool_calls: Array.isArray(event.tool_calls) ? event.tool_calls : result.tool_calls, usage: event.usage || result.usage
                 });
             }
         }
@@ -712,20 +700,26 @@
 
     async function callPromptAssistant(onProgress, run) {
         assertAssistantRunActive(run);
-        const payload = Object.assign(assistantConfig(), {
+        const config = assistantConfig();
+        const payload = Object.assign(config, {
             messages: assistantState.messages,
-            stream: true,
+            stream: config.capabilities?.streaming !== false,
             run_id: run?.id || "",
             disable_tools: Boolean(run?.disableTools)
         });
-        const streamResponse = await fetch("/qwen3vl-prompt-tools/assistant-stream", {
+        const streamResponse = await fetch(payload.stream ? "/qwen3vl-prompt-tools/assistant-stream" : "/qwen3vl-prompt-tools/assistant", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             signal: run?.controller.signal,
             body: JSON.stringify(payload)
         });
-        if (streamResponse.ok && streamResponse.body) {
+        if (payload.stream && streamResponse.ok && streamResponse.body) {
             return await readPromptAssistantStream(streamResponse, onProgress, run);
+        }
+        if (!payload.stream && streamResponse.ok) {
+            const result = await streamResponse.json();
+            if (result.usage && typeof onProgress === "function") onProgress(result.usage);
+            return result;
         }
         if (streamResponse.status !== 404) {
             const detail = await streamResponse.text();
@@ -796,20 +790,12 @@
     }
 
     function assistantSupportsNativeImages(config) {
-        const backend = String(config && config.backend || "");
-        if (backend === "moyuu" && String(config && config.teacher_mode || "qwen-redact") === "qwen-redact") return true;
-        const model = String(config && config.model || "").toLowerCase();
-        const endpoint = String(config && config.endpoint || "");
-        if (model.includes("gemini") || model.includes("grok")) return true;
-        if (backend !== "moyuu") return false;
-        try {
-            const host = new URL(endpoint).hostname;
-            return host === "moyuu.cc" || host.endsWith(".moyuu.cc");
-        } catch (_error) {
-            return false;
-        }
+        return Boolean(config && config.capabilities && config.capabilities.vision);
     }
-
+    function assistantUsesGeminiVisionDelegateForAttachment(config) {
+        if (typeof assistantUsesGeminiVisionDelegate === "function") return assistantUsesGeminiVisionDelegate(config);
+        return String(config?.model_id || config?.model || "").toLowerCase().includes("grok");
+    }
     async function runAssistantLoop(userText, attachment, displayText) {
         if (assistantState.running) {
             cancelAssistantRun();
@@ -820,8 +806,9 @@
         const mutationAllowed = mustEditPrompt || assistantUserRequestedResourceMutation(effectiveText);
         const mustMutateUi = mustEditPrompt || mutationAllowed;
         const config = assistantConfig();
-        const nativeImage = attachment && assistantSupportsNativeImages(config);
-        const run = { id: assistantRunId(), backend: config.backend, controller: new AbortController(), cancelled: false, turns: 0, toolCalls: 0, lastTool: "", repeatedTool: 0 };
+        const geminiVisionDelegate = attachment && assistantUsesGeminiVisionDelegateForAttachment(config);
+        const nativeImage = attachment && !geminiVisionDelegate && assistantSupportsNativeImages(config);
+        const run = { id: assistantRunId(), runtime: config.runtime, controller: new AbortController(), cancelled: false, turns: 0, toolCalls: 0, lastTool: "", repeatedTool: 0 };
         let userMessageSent = false;
         let promptEdited = false;
         let missingEditCorrectionSent = false;
@@ -843,10 +830,12 @@
                 });
                 userMessageSent = true;
             } else if (attachment) {
-                const visionStatus = addAssistantMessage("status", "本地 VLM 正在分析附件...");
+                const visionStatus = addAssistantMessage("status", geminiVisionDelegate ? "Gemini 正在生成安全视觉摘要..." : "本地 VLM 正在分析附件...");
                 let vision;
                 try {
-                    vision = await analyzeAssistantAttachment(attachment, effectiveText, run);
+                    vision = geminiVisionDelegate
+                        ? await analyzeAssistantAttachmentWithGemini(attachment, effectiveText, run)
+                        : await analyzeAssistantAttachment(attachment, effectiveText, run);
                 } finally {
                     visionStatus?.remove();
                 }
@@ -855,7 +844,7 @@
                 addAssistantMessage("tool", `视觉摘要 (${vision.vision_preset || vision.model || "local VLM"}${vision.thinking_enabled ? ", thinking" : ""}):\n${truncateAssistantText(visionText, 1200)}`);
                 assistantState.messages.push({
                     role: "user",
-                    content: `Reference image observation from local VLM (${vision.vision_preset || vision.model || "vision model"}, ${attachment.name || "image"}):\n${visionText}`
+                    content: `Reference image observation from ${geminiVisionDelegate ? "Gemini safety vision delegate" : "local VLM"} (${vision.vision_preset || vision.model || "vision model"}, ${attachment.name || "image"}):\n${visionText}`
                 });
             }
             if (effectiveText && !userMessageSent) {
@@ -868,13 +857,16 @@
             while (true) {
                 assertAssistantRunActive(run);
                 run.turns += 1;
-                if (run.turns > 8) throw new Error("Agent loop 已达到 8 轮上限，已停止以避免无进展循环。");
-                if (typeof compactAssistantMessages === "function") assistantState.messages = compactAssistantMessages(assistantState.messages, 65536);
-                const statusItem = addAssistantMessage("status", assistantInitialStatus(config));
+                if (run.turns > 32) throw new Error("Agent loop 已达到 32 轮安全上限；当前 session 状态已保留，可继续执行。");
+                if (typeof compactAssistantMessages === "function") assistantState.messages = compactAssistantMessages(assistantState.messages, 262144);
+                const statusItem = addAssistantMessage("status", assistantInitialStatus(config)); let streamItem = null;
                 let result;
                 try {
-                    result = await callPromptAssistant(function (usage) {
-                        updateAssistantMessage(statusItem, "status", formatAssistantTokenStatus(usage));
+                    result = await callPromptAssistant(function (usage, partial) {
+                        if (usage) updateAssistantMessage(statusItem, "status", formatAssistantTokenStatus(usage));
+                        if (!partial || (!partial.text && !partial.reasoning)) return;
+                        if (!streamItem) streamItem = addAssistantMessage("assistant", "");
+                        updateAssistantStreamingMessage(streamItem, partial.text, partial.reasoning, renderAssistantMarkdown);
                     }, run);
                 } catch (error) {
                     statusItem?.remove();
@@ -882,13 +874,11 @@
                 }
                 statusItem?.remove();
                 assertAssistantRunActive(run);
-                if (result.fallback_used && !run.fallbackAnnounced) {
-                    run.fallbackAnnounced = true;
-                    addAssistantMessage("tool", `主模型 ${result.primary_model || config.model} 请求失败，已切换到 ${result.model || config.fallback_model}。`);
-                }
                 const text = result.text || "";
+                const reasoning = result.reasoning || "";
+                if (streamItem) updateAssistantStreamingMessage(streamItem, text, reasoning, renderAssistantMarkdown);
                 const toolCalls = normalizeAssistantToolCalls(result, text);
-                if (toolCalls.length > 4) throw new Error("模型单轮请求了超过 4 个工具，已停止。请缩小任务范围后重试。");
+                if (toolCalls.length > 64) throw new Error("模型单轮生成了超过 64 个工具调用，疑似异常批量响应，已暂停执行。");
                 if (!toolCalls.length) {
                     if (!String(text || "").trim()) {
                         addAssistantMessage("error", "Gemini 返回了空内容，未检测到文本或工具调用。请重试；如果反复出现，降低 thinking/提高 Max tokens 或检查模型安全拦截。 ");
@@ -909,15 +899,25 @@
                         return;
                     }
                     assistantState.messages.push({ role: "assistant", content: text });
-                    addAssistantMessage("assistant", text);
+                    if (!streamItem) streamItem = addAssistantMessage("assistant", "");
+                    updateAssistantStreamingMessage(streamItem, text, reasoning, renderAssistantMarkdown);
                     return;
                 }
-                assistantState.messages.push({ role: "assistant", content: text || `Tool request: ${toolCalls.map(function (call) { return call.tool; }).join(", ")}` });
-                for (const tool of toolCalls) {
+                assistantState.messages.push({
+                    role: "assistant",
+                    content: text || "",
+                    tool_calls: toolCalls.map(function (call, index) {
+                        return {
+                            id: call.id || `call_${run.turns}_${index}`,
+                            type: "function",
+                            function: { name: call.tool, arguments: JSON.stringify(call.arguments || {}) }
+                        };
+                    })
+                });
+                for (const [toolIndex, tool] of toolCalls.entries()) {
                     assertAssistantRunActive(run);
                     const toolName = tool.tool || tool.name;
                     run.toolCalls += 1;
-                    if (run.toolCalls > 12) throw new Error("Agent loop 已达到 12 次工具调用上限，已停止。");
                     const signature = `${toolName}\u0000${JSON.stringify(tool.arguments || {})}`;
                     run.repeatedTool = signature === run.lastTool ? run.repeatedTool + 1 : 1;
                     run.lastTool = signature;
@@ -927,7 +927,7 @@
                     assertAssistantRunActive(run);
                     if (assistantToolMutatesPrompt(toolName) && toolResult.ok) promptEdited = true;
                     addAssistantMessage("tool", assistantToolResultLabel(toolName, toolResult));
-                    const serialized = typeof compactToolResult === "function" ? compactToolResult(toolResult, 12000) : JSON.stringify(toolResult);
+                    const serialized = typeof compactToolResult === "function" ? compactToolResult(toolResult, 64000) : JSON.stringify(toolResult);
                     let toolMessage = `Tool result for ${toolName}: ${serialized}`;
                     const emptyPrompt = ["read_prompt", "get_current_prompt"].includes(toolName) && toolResult.ok && !String(toolResult.positive_prompt ?? toolResult.prompt ?? "").trim();
                     if (emptyPrompt && mustMutateUi) toolMessage += "\nThe current positive prompt is empty. Do not call read_prompt again and do not ask for existing prompt content. Based on the user's original request, write a complete production-ready prompt now, then call edit_prompt for field positive with operation append and the latest positive_prompt_hash/prompt_hash as base_hash.";
@@ -939,7 +939,10 @@
                             toolMessage += "\nThis read-only result is current and has already been returned twice. Do not call another tool. Answer the user's original request naturally using this result.";
                         }
                     }
-                    assistantState.messages.push({ role: "user", content: toolMessage });
+                    const toolCallId = tool.id || assistantState.messages[assistantState.messages.length - 1]?.tool_calls?.[toolIndex]?.id;
+                    assistantState.messages.push(toolCallId
+                        ? { role: "tool", tool_call_id: toolCallId, content: toolMessage }
+                        : { role: "user", content: toolMessage });
                 }
             }
         } catch (error) {
@@ -976,7 +979,7 @@
         addAssistantMessage,
         updateAssistantMessage,
         addAssistantUserMessage,
-        truncateAssistantText,
+        truncateAssistantText, renderAssistantMarkdown, assistantToolResultLabel,
         analyzeAssistantAttachment,
         setAssistantAttachment,
         renderAssistantAttachment,
@@ -990,6 +993,7 @@
         assistantUserRequestedResourceMutation,
         assistantToolMutatesPrompt,
         assistantSupportsNativeImages,
+        assistantUsesGeminiVisionDelegate: assistantUsesGeminiVisionDelegateForAttachment,
         runAssistantLoop
     });
 })();

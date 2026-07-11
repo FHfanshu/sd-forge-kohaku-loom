@@ -14,7 +14,7 @@ The main workflow is `WD tagger + llama.cpp`: generate WD tags from an image, th
 - Auto-downloads the default HauhauCS Qwen3.5 9B uncensored GGUF and mmproj when missing.
 - Auto-downloads a Windows x64 llama.cpp release backend when `llama-server.exe` is missing.
 - Floating LLM prompt assistant for character layout, spatial relationships, and prompt rewriting.
-- Prompt assistant defaults to the best evaluated OpenAI-compatible remote preset, and can also use DeepSeek, Gemini native APIs, or local llama.cpp backends.
+- Versioned Model Profiles for Gemini native, OpenAI Chat Completions, remote HTTP, resident llama.cpp endpoints, and one-shot local models.
 - Prompt assistant can safely read and edit positive/negative txt2img/img2img prompts through hash-guarded UI tools.
 - Prompt assistant can search installed Wildcards, WebUI Styles, and LoRAs, then apply their native Forge references after an explicit user request.
 - Prompt assistant image attachments and sensitive prompt context can be processed by the local Qwen GGUF first; Gemini receives only a teacher-safe briefing by default.
@@ -52,22 +52,29 @@ You can also set `LLAMA_SERVER_EXE` or fill the path manually in the UI.
 
 ## Floating Prompt Assistant
 
-The `LLM 助手` button opens a floating chat window. Text-assistant defaults:
+The `LLM 助手` button opens a floating chat window. On first run it creates five editable Model Profiles:
 
-- Primary route: Moyuu Gemini native / `gemini-3.5-flash-preview`
-- Model fallback: OpenAI-compatible / `grok-4.5` on the same Moyuu Base URL
-- Base URL and backup Base URL: configurable in the settings panel
-- Local fallback preset: `Qwen3.5 原版 9B`
+- Moyuu Gemini: `gemini-native` + `remote-http`
+- Grok 4.5: `openai-chat-completions` + `remote-http`, with streaming and vision enabled
+- DeepSeek: `openai-chat-completions` + `remote-http`
+- Local llama.cpp Endpoint: `openai-chat-completions` + `llama-endpoint`
+- Local Qwen once: `openai-chat-completions` + `llama-once`
 
-OpenAI-compatible remote presets keep the Base URL separate from the selected model, so the same presets can be used with any compatible relay. Moyuu Gemini native mode remains available for Gemini `v1beta` `generateContent` / `streamGenerateContent`. The assistant status line streams token counters in the form `↑input tokens ↓output tokens`; final Gemini `usageMetadata` replaces the local estimate when the endpoint provides it. Before text is sent to Gemini native mode, sensitive prompt fragments are replaced with `SAFE_SLOT_###` placeholders and restored locally in the returned tool arguments, so `edit_prompt` still patches the real WebUI prompt while Gemini sees a safer prompt.
+Profiles are stored together in `q3vl_assistant_profiles_v2`. Each profile owns its display name, stable ID, model ID, explicit protocol/runtime, endpoint list, API key, capabilities, parameters, and local paths. Profiles can be added, copied, edited, deleted, enabled, tested, selected as the active model, or selected independently as the teacher model. API keys remain isolated per profile and are not returned by the legacy settings export endpoint.
+
+Protocol selection is explicit. New requests never infer Gemini/OpenAI behavior from model names, endpoint domains, or legacy backend labels. Fallback endpoints retry the same profile and model in order; they never switch to a different model. The assistant status line streams token counters in the form `↑input tokens ↓output tokens`; final provider usage replaces local estimates when available. Before text is sent to Gemini native mode, sensitive prompt fragments can be replaced with `SAFE_SLOT_###` placeholders and restored locally in returned tool arguments.
+
+OpenAI Chat Completions profiles use the official OpenAI Python SDK with the configured endpoint as `base_url`. This covers NewAPI, Grok, DeepSeek, and llama.cpp-compatible relays while preserving native assistant tool calls and `role: tool` results. When a relay reports `prompt_tokens_details.cached_tokens`, the assistant status shows the cache-hit token count; no non-standard `cache: true` field is injected.
+
+Gemini native profiles use Google's official `google-genai` Python SDK (`from google import genai`) for regular and streaming requests. The configured endpoint is supplied as the SDK base URL, so Gemini-native Moyuu/NewAPI-style relays and their fallback endpoints remain supported. Relay keys beginning with `sk-` are also sent as a bearer token for relays that require it, while the SDK continues to send the standard Gemini API-key header.
 
 Older `https://api.deepseek.com/v1` DeepSeek-style endpoints remain accepted; the assistant will append `/chat/completions` to whichever base you configure. Local llama.cpp/OpenAI-compatible endpoints still normally use `/v1`.
 
-You can switch the text assistant to `DeepSeek`, `Moyuu Gemini native`, `本地 Qwen 一次性`, or `本地 llama.cpp endpoint`. The default remote route uses Moyuu Gemini native first, tries both configured Moyuu domains, and falls back to `grok-4.5` through the OpenAI-compatible route only when the primary model fails before producing content. `本地 Qwen 一次性` starts a local llama.cpp server for one assistant request and then terminates it, releasing VRAM instead of keeping a resident session. The local VLM/text preset uses `Qwen3.5 原版 9B` by default, with presets for `Gemma 4 12B`, `Qwen3.5 原版 9B`, `Qwen3.5 破限版 9B`, plus `自定义`. The local VLM thinking switch is optional and off by default.
+Select any enabled profile directly from the chat composer. `llama-once` starts a local llama.cpp server for one assistant request and then terminates it, releasing VRAM instead of keeping a resident session. Capability flags explicitly control tools, vision input, streaming, and reasoning parameters.
 
-The floating settings panel keeps common controls visible by default. API keys are stored per text provider, so switching between Moyuu and DeepSeek does not overwrite the other provider's key. Endpoint/model/path overrides are under `高级` and are hidden unless relevant.
+The floating settings panel uses a profile list on the left and a profile editor on the right. Connection and local-runtime fields appear only when relevant to the selected protocol and runtime. Existing `q3vl_assistant_*` browser settings migrate once into the version 2 profile store; legacy keys are left untouched as a recovery source.
 
-For disposable remote testing, the backend also reads `Q3VL_MOYUU_API_KEY`, `MOYUU_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY` when the UI API key field is empty.
+Version 2 Profile requests use only the API key stored on that Profile. Environment-variable API key fallback remains limited to legacy request payloads.
 
 For local text-assistant testing, an endpoint can still be configured, for example:
 
@@ -88,7 +95,7 @@ Local Qwen can also consult the remote Gemini teacher through `ask_teacher` afte
 {"tool":"ask_teacher","arguments":{"question":"How can this composition be improved?","context":"SAFE_SLOT_001, left/right character layout, dramatic rim light"}}
 ```
 
-The `ask_teacher` tool calls `/qwen3vl-prompt-tools/ask-teacher`; the teacher-side Gemini request disables further tool calls to avoid recursion.
+The `ask_teacher` tool calls `/qwen3vl-prompt-tools/ask-teacher` with the explicitly selected teacher profile; the teacher request disables further tool calls to avoid recursion.
 
 ```json
 {"tool":"read_prompt","arguments":{"target":"active"}}
@@ -110,7 +117,7 @@ The frontend executes these tools and sends the result back to the assistant. Ta
 
 `read_prompt` additionally returns positive/negative prompt hashes, a combined `context_hash`, the active Forge preset/checkpoint, and loaded prompt skills. `edit_prompt` accepts `field: "positive" | "negative"`. Resource discovery uses `search_resources` and `inspect_resource`; results are paginated and expose logical IDs rather than local absolute paths. `apply_resource` keeps native syntax (`__wildcard__`, `<lora:alias:weight>`, or a WebUI Style selection), is idempotent, and refuses stale `context_hash` values. `initialize_prompt` fills only empty positive/negative fields.
 
-When the active Forge preset or checkpoint contains `Anima`, the assistant automatically loads the built-in `anima_dit` guide. The same guide can be requested with `load_prompt_skill`. Agent runs are bounded to 8 model turns and 12 tool calls, with a four-tool per-turn limit, duplicate-call fuse, paginated resource output, and 64 KiB conversation compaction.
+When the active Forge preset or checkpoint contains `Anima`, the assistant automatically loads the built-in `anima_dit` guide. It is injected as context rather than exposed as a model tool. Agent runs are bounded to 8 model turns and 12 tool calls, with a four-tool per-turn limit, duplicate-call fuse, paginated resource output, and 64 KiB conversation compaction.
 
 On mobile generation pages, the extension disables browser pull-to-refresh so a downward swipe at the top of txt2img/img2img does not reload the whole WebUI. For assistant edit requests, the frontend also refuses to treat a no-tool response as completion until `edit_prompt` has returned `ok:true`.
 

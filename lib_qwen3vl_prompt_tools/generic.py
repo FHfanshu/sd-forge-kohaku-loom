@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from .assistant import ask_teacher, prompt_assistant_chat, prompt_assistant_stream
 from .assistant_common import (
-    _assistant_chat_url,
     _assistant_estimate_tokens,
     _assistant_request_messages,
     _assistant_stream_event,
@@ -12,7 +11,6 @@ from .assistant_common import (
 )
 from .assistant_gemini import (
     _PromptSanitizer,
-    _assistant_remote_endpoints,
     _assistant_use_gemini_native,
     _data_url_inline_data,
     _gemini_contents,
@@ -31,6 +29,23 @@ from .assistant_gemini import (
     _restore_gemini_result,
 )
 from .assistant_local import _prompt_assistant_chat_local_once, cancel_local_assistant_run
+from .assistant_openai import (
+    _openai_chat_url,
+    _openai_chat_url as _assistant_chat_url,
+    _openai_headers,
+    _openai_request_body,
+    _openai_result,
+    _prompt_assistant_chat_openai,
+)
+from .assistant_profiles import (
+    GEMINI_NATIVE,
+    LLAMA_ENDPOINT,
+    LLAMA_ONCE,
+    OPENAI_CHAT_COMPLETIONS,
+    REMOTE_HTTP,
+    normalize_assistant_payload,
+    normalize_model_profile,
+)
 from .assistant_workflow import (
     PromptToolHarness,
     assistant_tool_mutates_prompt,

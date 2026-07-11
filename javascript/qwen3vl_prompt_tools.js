@@ -186,133 +186,36 @@
         return q3vlVisionPresets[defaultVisionPreset()] || "local-vlm";
     }
 
-    function configBool(value) {
-        return ["1", "true", "yes", "on", "enabled"].includes(String(value || "").trim().toLowerCase());
-    }
-
-    const MOYUU_ASSISTANT_ENDPOINT = "https://moyuu.cc";
-    const MOYUU_ASSISTANT_FALLBACK_ENDPOINT = "https://hk-api.moyuu.cc";
-    const MOYUU_ASSISTANT_MODEL = "gemini-3.5-flash-preview";
-    const OPENAI_COMPATIBLE_ASSISTANT_MODEL = "gemini-3.5-flash-preview";
-    const DEFAULT_ASSISTANT_BACKEND = "moyuu";
-    const DEFAULT_ASSISTANT_FALLBACK_BACKEND = "openai";
-    const DEFAULT_ASSISTANT_FALLBACK_MODEL = "grok-4.5";
-    const DEEPSEEK_ASSISTANT_ENDPOINT = "https://api.deepseek.com";
-    const DEEPSEEK_ASSISTANT_MODEL = "deepseek-v4-pro";
-    const DEFAULT_QWEN_VISION_MODEL_PATH = "E:\\AI\\lmcpp\\models\\Qwen3.5-9B-GGUF\\Qwen3.5-9B-UD-Q6_K_XL.gguf";
-    const DEFAULT_QWEN_VISION_MMPROJ_PATH = "E:\\AI\\lmcpp\\models\\Qwen3.5-9B-GGUF\\mmproj-F16.gguf";
-    const DEFAULT_LOCAL_CONTEXT_TOKENS = 16384;
-    function defaultVisionModelPathForPreset(preset) {
-        return preset === defaultVisionPreset() ? DEFAULT_QWEN_VISION_MODEL_PATH : "";
-    }
-
-    function defaultVisionMmprojPathForPreset(preset) {
-        return preset === defaultVisionPreset() ? DEFAULT_QWEN_VISION_MMPROJ_PATH : "";
-    }
-
-    function assistantOption(name, fallback) {
-        const stored = localStorage.getItem(`q3vl_assistant_${name}`);
-        if (stored !== null) return stored;
-        if (typeof opts === "object" && opts !== null) {
-            const key = `q3vl_assistant_${name}`;
-            if (Object.prototype.hasOwnProperty.call(opts, key)) return opts[key];
-        }
-        return fallback;
-    }
-
-    function assistantApiKey(backend) {
-        if (backend === "local-lmcpp" || backend === "local-qwen-once") return "";
-        const provider = backend === "deepseek" ? "deepseek" : backend === "moyuu" ? "moyuu" : "openai";
-        return String(assistantOption(`api_key_${provider}`, "") || "");
-    }
-
     function assistantConfig(routeOverride) {
-        const get = function (name, fallback) {
-            const value = assistantOption(name, fallback);
-            return value === undefined || value === null || value === "" ? fallback : value;
-        };
-        const visionPreset = get("vision_preset", defaultVisionPreset());
-        const backend = get("backend", DEFAULT_ASSISTANT_BACKEND);
-        const fallbackBackend = get("fallback_backend", DEFAULT_ASSISTANT_FALLBACK_BACKEND);
-        const configuredEndpoint = get("endpoint", MOYUU_ASSISTANT_ENDPOINT);
-        const endpoint = backend === "deepseek" && configuredEndpoint === MOYUU_ASSISTANT_ENDPOINT ? DEEPSEEK_ASSISTANT_ENDPOINT : configuredEndpoint;
-        const configuredModel = get("model", MOYUU_ASSISTANT_MODEL);
-        const model = backend === "deepseek" && configuredModel === MOYUU_ASSISTANT_MODEL ? DEEPSEEK_ASSISTANT_MODEL : configuredModel;
-        const localContext = normalizeAssistantContextTokens(get("n_ctx", String(DEFAULT_LOCAL_CONTEXT_TOKENS)));
-        const localTemperature = Number(get("local_temperature", 0.25));
-        const localTopP = Number(get("local_top_p", 0.9));
-        const localTimeout = Number(get("local_timeout", 180));
-        const localGpuLayers = Number(get("local_n_gpu_layers", -1));
-        const localText = backend === "local-lmcpp" || backend === "local-qwen-once";
-        const fallbackUsesMoyuuKey = fallbackBackend === "openai" && /(^|\.)moyuu\.cc$/i.test((function () {
-            try { return new URL(endpoint).hostname; } catch (_error) { return ""; }
-        })());
-        const config = {
-            backend: backend,
-            endpoint: endpoint,
-            fallback_endpoint: get("fallback_endpoint", backend === "moyuu" ? MOYUU_ASSISTANT_FALLBACK_ENDPOINT : ""),
-            model: normalizeAssistantModel(endpoint, model),
-            api_key: assistantApiKey(backend),
-            fallback_backend: fallbackBackend,
-            fallback_model: get("fallback_model", DEFAULT_ASSISTANT_FALLBACK_MODEL),
-            fallback_model_endpoint: endpoint,
-            fallback_api_key: fallbackUsesMoyuuKey ? (assistantApiKey("moyuu") || assistantApiKey("openai")) : (assistantApiKey(fallbackBackend) || assistantApiKey(backend)),
-            local_endpoint: get("local_endpoint", "http://127.0.0.1:8080/v1"),
-            local_model: get("local_model", "hauhau-qwen3.5-9b-uncensored"),
-            vision_preset: visionPreset,
-            local_text_preset: visionPreset,
-            vision_endpoint: get("vision_endpoint", "http://127.0.0.1:8080/v1"),
-            vision_model: get("vision_model", visionModelForPreset(visionPreset)),
-            vision_model_path: get("vision_model_path", defaultVisionModelPathForPreset(visionPreset)),
-            vision_mmproj_path: get("vision_mmproj_path", defaultVisionMmprojPathForPreset(visionPreset)),
-            local_model_path: get("vision_model_path", defaultVisionModelPathForPreset(visionPreset)),
-            local_text_thinking: configBool(get("local_text_thinking", "0")),
-            vision_thinking: configBool(get("vision_thinking", "0")),
-            llama_server_path: get("llama_server_path", ""),
-            local_n_gpu_layers: localGpuLayers,
-            n_gpu_layers: localGpuLayers,
-            teacher_n_gpu_layers: localGpuLayers,
-            n_ctx: localContext,
-            local_n_ctx: localContext,
-            teacher_n_ctx: localContext,
-            sanitize_sensitive: configBool(get("sanitize_sensitive", "1")),
-            teacher_mode: get("teacher_mode", "qwen-redact"),
-            temperature: localText ? localTemperature : 0.35,
-            top_p: localText ? localTopP : 0.9,
-            teacher_temperature: localTemperature,
-            teacher_top_p: localTopP,
-            teacher_timeout: localTimeout,
-            max_tokens: normalizeAssistantMaxTokens(backend === "local-qwen-once" ? get("local_max_tokens", "8192") : get("max_tokens", "8192")),
-            reasoning_effort: get("reasoning_effort", "low"),
-            timeout: localText ? localTimeout : 120
-        };
-        const route = routeOverride || get("chat_model_route", "primary");
-        if (route === "fallback") Object.assign(config, { backend: config.fallback_backend, endpoint: config.fallback_model_endpoint, model: config.fallback_model, api_key: config.fallback_api_key, disable_model_fallback: true });
-        if (route === "local") Object.assign(config, { backend: "local-qwen-once", model: config.vision_preset, api_key: "", temperature: localTemperature, top_p: localTopP, max_tokens: normalizeAssistantMaxTokens(get("local_max_tokens", "8192")), timeout: localTimeout, disable_model_fallback: true });
-        return config;
-    }
-
-    function normalizeAssistantModel(endpoint, model) {
-        const cleaned = String(model || "").trim() || OPENAI_COMPATIBLE_ASSISTANT_MODEL;
-        try {
-            const url = new URL(String(endpoint || ""));
-            if (url.hostname === "api.deepseek.com" && cleaned === "deepseekv4-pro") return "deepseek-v4-pro";
-            if (url.hostname === "api.deepseek.com" && cleaned === "deepseek-chat") return "deepseek-v4-pro";
-            if (url.hostname === "api.deepseek.com" && cleaned === "deepseek-reasoner") return "deepseek-v4-pro";
-        } catch (_error) { }
-        return cleaned;
-    }
-
-    function normalizeAssistantMaxTokens(value) {
-        const parsed = Number.parseInt(String(value || ""), 10);
-        if (!Number.isFinite(parsed) || parsed < 512) return 8192;
-        return Math.min(parsed, 65536);
-    }
-
-    function normalizeAssistantContextTokens(value) {
-        const parsed = Number.parseInt(String(value || ""), 10);
-        if (!Number.isFinite(parsed) || parsed < 1024) return DEFAULT_LOCAL_CONTEXT_TOKENS;
-        return Math.min(parsed, 32768);
+        const profiles = window.q3vlPromptTools && window.q3vlPromptTools.profileStore;
+        if (!profiles) throw new Error("Model Profile store is unavailable");
+        const state = profiles.load();
+        const selectedId = routeOverride && state.profiles.some(function (profile) { return profile.id === routeOverride && profile.enabled; }) ? routeOverride : state.active_profile_id;
+        const selected = state.profiles.find(function (profile) { return profile.id === selectedId; });
+        const local = state.profiles.find(function (profile) { return profile.enabled && profile.runtime === "llama-once"; });
+        const projected = profiles.requestProjection(selectedId);
+        const parameters = projected.parameters || {};
+        return Object.assign({}, projected, parameters, {
+            display_name: selected?.display_name || projected.model,
+            stream: projected.capabilities?.streaming !== false,
+            vision_preset: local?.display_name || selected?.display_name || "",
+            local_text_preset: local?.display_name || "",
+            vision_model: local?.model_id || projected.model,
+            local_model: local?.model_id || projected.model,
+            vision_model_path: local?.model_path || projected.model_path || "",
+            local_model_path: local?.model_path || projected.model_path || "",
+            vision_mmproj_path: local?.mmproj_path || projected.mmproj_path || "",
+            llama_server_path: local?.llama_server_path || projected.llama_server_path || "",
+            local_n_ctx: local?.n_ctx || projected.n_ctx,
+            teacher_n_ctx: local?.n_ctx || projected.n_ctx,
+            local_n_gpu_layers: local?.n_gpu_layers ?? projected.n_gpu_layers,
+            teacher_n_gpu_layers: local?.n_gpu_layers ?? projected.n_gpu_layers,
+            local_text_thinking: Boolean(local?.thinking),
+            vision_thinking: Boolean(local?.thinking),
+            teacher_temperature: local?.parameters?.temperature ?? 0.25,
+            teacher_top_p: local?.parameters?.top_p ?? 0.9,
+            teacher_timeout: local?.parameters?.timeout ?? 180
+        });
     }
 
     function activePromptTarget() {
@@ -839,15 +742,16 @@
 
     async function askTeacherTool(args, signal) {
         const config = assistantConfig();
-        const payload = Object.assign({}, config, args || {}, {
-            backend: "moyuu",
-            api_key: assistantApiKey("moyuu") || config.api_key,
-            endpoint: MOYUU_ASSISTANT_ENDPOINT,
-            fallback_endpoint: MOYUU_ASSISTANT_FALLBACK_ENDPOINT,
-            model: MOYUU_ASSISTANT_MODEL,
+        const profiles = window.q3vlPromptTools && window.q3vlPromptTools.profileStore;
+        const state = profiles ? profiles.load() : null;
+        const teacherProfile = profiles && state ? profiles.requestProjection(state.teacher_profile_id) : config;
+        const payload = Object.assign({}, args || {}, {
+            teacher_profile_id: state?.teacher_profile_id || teacherProfile.profile_id || "",
+            teacher_profile: teacherProfile,
             question: String(args?.question || args?.prompt || args?.query || ""),
             context: String(args?.context || args?.briefing || ""),
-            teacher_mode: "regex"
+            teacher_mode: "regex",
+            sanitize_sensitive: true
         });
         const response = await fetch("/qwen3vl-prompt-tools/ask-teacher", {
             method: "POST",
@@ -902,6 +806,75 @@
         return value.length > limit ? `${value.slice(0, limit)}...` : value;
     }
 
+    function updateAssistantStreamingMessage(item, text, reasoning, renderMarkdown) {
+        if (!item) return;
+        item.replaceChildren();
+        if (reasoning) {
+            const details = document.createElement("details");
+            details.className = "q3vl-assistant-reasoning";
+            details.open = !text;
+            const summary = document.createElement("summary");
+            summary.textContent = "思考过程";
+            const body = document.createElement("div");
+            body.className = "q3vl-assistant-reasoning-body";
+            body.textContent = reasoning;
+            details.append(summary, body);
+            item.appendChild(details);
+        }
+        if (text) {
+            const body = document.createElement("div");
+            body.className = "q3vl-assistant-stream-body";
+            renderMarkdown(body, text);
+            item.appendChild(body);
+        }
+        const log = item.closest("#q3vl_assistant_messages");
+        if (log) log.scrollTop = log.scrollHeight;
+    }
+
+    function assistantUsesGeminiVisionDelegate(config) {
+        return String(config?.model_id || config?.model || "").toLowerCase().includes("grok");
+    }
+
+    function assistantVisionDelegateProfile() {
+        const profiles = window.q3vlPromptTools && window.q3vlPromptTools.profileStore;
+        const teacher = profiles && typeof profiles.teacher === "function" ? profiles.teacher() : null;
+        if (!teacher || teacher.protocol !== "gemini-native" || teacher.capabilities?.vision !== true) {
+            throw new Error("Grok 附图需要选择支持视觉的 Gemini 教师档案。");
+        }
+        return teacher;
+    }
+
+    async function analyzeAssistantAttachmentWithGemini(attachment, userText, run) {
+        const profile = assistantVisionDelegateProfile();
+        const payload = Object.assign({}, profile, {
+            messages: [{
+                role: "user",
+                content: "Analyze the attached image for a downstream prompt assistant. Return a concise factual visual briefing covering subject count, composition, spatial relationships, clothing, objects, setting, lighting, camera, and reusable style. Replace every sensitive or explicit term with SAFE_SLOT_###. Do not output raw sensitive words, markdown, or tool calls.",
+                image: attachment.dataUrl,
+                filename: attachment.name || "reference image"
+            }],
+            stream: false,
+            disable_tools: true,
+            teacher_mode: "regex",
+            sanitize_sensitive: true,
+            redact_output: true,
+            reasoning_enabled: false,
+            run_id: run?.id || ""
+        });
+        if (userText) payload.messages[0].content += "\nUser task context: " + String(userText).slice(0, 800);
+        const response = await fetch("/qwen3vl-prompt-tools/assistant", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: run?.controller.signal,
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) throw new Error(await response.text());
+        const result = await response.json();
+        const text = String(result.text || "").trim();
+        if (!text) throw new Error("Gemini 视觉代理没有返回可用摘要。");
+        return { text: text, model: result.model, vision_preset: profile.display_name || profile.model_id || "Gemini", sanitized_slots: result.sanitized_slots || 0 };
+    }
+
     Object.assign(window.q3vlPromptTools, {
         q3vlApp,
         q3vlMainApp,
@@ -922,27 +895,7 @@
         q3vlVisionPresets,
         defaultVisionPreset,
         visionModelForPreset,
-        configBool,
-        MOYUU_ASSISTANT_ENDPOINT,
-        MOYUU_ASSISTANT_FALLBACK_ENDPOINT,
-        MOYUU_ASSISTANT_MODEL,
-        OPENAI_COMPATIBLE_ASSISTANT_MODEL,
-        DEEPSEEK_ASSISTANT_ENDPOINT,
-        DEEPSEEK_ASSISTANT_MODEL,
-        DEFAULT_ASSISTANT_BACKEND,
-        DEFAULT_ASSISTANT_FALLBACK_BACKEND,
-        DEFAULT_ASSISTANT_FALLBACK_MODEL,
-        DEFAULT_QWEN_VISION_MODEL_PATH,
-        DEFAULT_QWEN_VISION_MMPROJ_PATH,
-        DEFAULT_LOCAL_CONTEXT_TOKENS,
-        defaultVisionModelPathForPreset,
-        defaultVisionMmprojPathForPreset,
-        assistantOption,
-        assistantApiKey,
         assistantConfig,
-        normalizeAssistantModel,
-        normalizeAssistantMaxTokens,
-        normalizeAssistantContextTokens,
         activePromptTarget,
         promptFieldRootForTarget,
         promptRootForTarget,
@@ -971,6 +924,9 @@
         editPromptTool,
         askTeacherTool,
         executeAssistantTool,
-        truncateAssistantText
+        truncateAssistantText,
+        updateAssistantStreamingMessage,
+        analyzeAssistantAttachmentWithGemini,
+        assistantUsesGeminiVisionDelegate
     });
 })();
