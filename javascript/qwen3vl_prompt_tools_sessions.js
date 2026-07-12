@@ -297,7 +297,7 @@
         const data = await response.json();
         const menu = document.createElement("div");
         menu.id = "q3vl_assistant_session_menu";
-        menu.className = "q3vl-assistant-model-menu";
+        menu.className = "q3vl-assistant-session-menu";
         menu.hidden = false;
         (data.sessions || []).forEach(function (session) {
             const item = document.createElement("button");

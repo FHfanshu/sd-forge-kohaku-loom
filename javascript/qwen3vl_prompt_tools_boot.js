@@ -457,6 +457,8 @@
         }, { passive: true, capture: true });
         document.addEventListener("touchmove", function (event) {
             if (!pullRefreshGuardActive() || !event.touches || !event.touches.length) return;
+            const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+            if (target?.closest("#lightboxModal, [role='dialog'], .global-popup")) return;
             const dx = event.touches[0].clientX - startX;
             const dy = event.touches[0].clientY - startY;
             if (dy <= 0 || Math.abs(dx) > dy) return;
