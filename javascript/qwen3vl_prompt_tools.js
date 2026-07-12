@@ -468,6 +468,20 @@
         };
     }
 
+    async function readStyleTemplateTool(target) {
+        const item = promptRootForTarget(target || "active");
+        const template = await styleTemplateInfo(item.target);
+        return {
+            ok: true,
+            target: item.target,
+            style_template_found: template.found,
+            style_template: template.template,
+            style_selector: template.style_selector,
+            selected_styles: template.selected_styles,
+            forge_positive_template: template.forge_positive_template
+        };
+    }
+
     function normalizePatchSeparator(value) {
         if (value === "space") return " ";
         if (value === "newline") return "\n";
@@ -638,7 +652,15 @@
         return matches;
     }
 
-    function patchPromptRoot(root, patches, baseHash) {
+    function positivePromptNoPhrases(text) {
+        const matches = [];
+        const pattern = /\bno\s+[a-z0-9][\w-]*(?:\s+[a-z0-9][\w-]*){0,4}/gi;
+        let match;
+        while ((match = pattern.exec(String(text || ""))) !== null) matches.push(match[0]);
+        return matches;
+    }
+
+    function patchPromptRoot(root, patches, baseHash, forbidNoPhrases) {
         if (!root) return { ok: false, error: "prompt field not found", prompt: "" };
         const target = root.querySelector("textarea") || root.querySelector("input");
         if (!target) return { ok: false, error: "prompt input not found", prompt: "" };
@@ -666,6 +688,16 @@
                 ok: false,
                 error: "refusing to write prompt: final prompt contains git diff/patch residue. Regenerate clean prompt text only; use diff syntax only inside edit_prompt arguments.",
                 residue: residue,
+                prompt: current,
+                attempted_prompt_preview: truncateAssistantText(next, 500)
+            };
+        }
+        const noPhrases = forbidNoPhrases ? positivePromptNoPhrases(next) : [];
+        if (noPhrases.length) {
+            return {
+                ok: false,
+                error: 'refusing to write positive prompt: do not use "no ..." phrases. Describe desired visible content positively, or put exclusions in the negative prompt.',
+                no_phrases: noPhrases,
                 prompt: current,
                 attempted_prompt_preview: truncateAssistantText(next, 500)
             };
@@ -724,7 +756,7 @@
         if (!Array.isArray(patchList) || !patchList.length) {
             return { ok: false, target: item.target, error: "edit_prompt requires diff or patches" };
         }
-        const rawResult = patchPromptRoot(item.root, patchList, baseHash);
+        const rawResult = patchPromptRoot(item.root, patchList, baseHash, field === "positive");
         const result = compactPromptPatchResult(rawResult, Boolean(args.return_prompt));
         if (result.ok) {
             switchMainTab(item.target);
@@ -774,6 +806,9 @@
         }
         if (name === "read_prompt" || name === "get_current_prompt") {
             return await readPromptTool(args.target || "active");
+        }
+        if (name === "read_style_template") {
+            return await readStyleTemplateTool(args.target || "active");
         }
         if (name === "edit_prompt") {
             return editPromptTool(args, args.patches || args.patch || []);
@@ -911,6 +946,7 @@
         promptHash,
         promptContextSnapshot,
         readPromptTool,
+        readStyleTemplateTool,
         normalizePatchSeparator,
         applyPromptPatchText,
         normalizeDiffText,
@@ -918,6 +954,7 @@
         patchesFromUnifiedDiff,
         patchesFromDiff,
         promptPatchResidue,
+        positivePromptNoPhrases,
         patchPromptRoot,
         setNativeValueIfAvailable,
         compactPromptPatchResult,

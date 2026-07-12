@@ -22,6 +22,10 @@ class AssistantWorkflowTests(unittest.TestCase):
         calls = normalize_assistant_tool_calls({"text": text})
         self.assertEqual([{"tool": "read_prompt", "arguments": {"target": "active"}}], calls)
 
+    def test_normalize_tool_calls_accepts_style_template_reader(self):
+        calls = normalize_assistant_tool_calls({"text": '{"tool":"read_style_template","arguments":{"target":"txt2img"}}'})
+        self.assertEqual([{"tool": "read_style_template", "arguments": {"target": "txt2img"}}], calls)
+
     def test_prompt_tool_harness_applies_search_replace_diff(self):
         harness = PromptToolHarness("left character, right character")
         read = harness({"tool": "read_prompt", "arguments": {"target": "active"}})

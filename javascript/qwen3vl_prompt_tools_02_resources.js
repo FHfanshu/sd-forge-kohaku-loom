@@ -9,6 +9,7 @@
         promptFieldRootForTarget,
         q3vlApp,
         readPromptTool,
+        positivePromptNoPhrases,
         setNativeValueIfAvailable,
         setTextboxValue,
         styleSelectorValue,
@@ -20,7 +21,11 @@
         "inspect_resource",
         "apply_resource",
         "initialize_prompt",
-        "load_prompt_skill"
+        "load_prompt_skill",
+        "search_danbooru_tags",
+        "inspect_danbooru_tag",
+        "inspect_danbooru_tags",
+        "related_danbooru_tags"
     ]);
 
     function wait(ms) {
@@ -81,6 +86,31 @@
         return result;
     }
 
+    async function searchDanbooruTagsTool(args, signal) {
+        return await resourceGet("/qwen3vl-prompt-tools/danbooru/tags/search", {
+            query: args.query || "",
+            category: args.category || "",
+            limit: args.limit || 12
+        }, signal);
+    }
+
+    async function inspectDanbooruTagTool(args, signal) {
+        return await resourceGet("/qwen3vl-prompt-tools/danbooru/tags/inspect", { name: args.name || "" }, signal);
+    }
+
+    async function inspectDanbooruTagsTool(args, signal) {
+        const names = Array.isArray(args.names) ? args.names.join(",") : "";
+        return await resourceGet("/qwen3vl-prompt-tools/danbooru/tags/inspect-batch", { names: names, include_wiki: !!args.include_wiki }, signal);
+    }
+
+    async function relatedDanbooruTagsTool(args, signal) {
+        return await resourceGet("/qwen3vl-prompt-tools/danbooru/tags/related", {
+            name: args.name || "",
+            category: args.category || "",
+            limit: args.limit || 12
+        }, signal);
+    }
+
     function resourceMutationGuard(args) {
         if (!assistantState.resourceMutationAllowed) {
             return { ok: false, error: "resource mutation requires an explicit user apply/initialize request" };
@@ -108,6 +138,7 @@
     }
 
     function writePromptField(target, field, value) {
+        if (field === "positive" && positivePromptNoPhrases(value).length) return false;
         const item = promptFieldRootForTarget(target, field);
         if (!item.root) return false;
         return setTextboxValue(item.root, value);
@@ -221,21 +252,31 @@
         return { ok: true, target: guard.target, initialized_fields: initialized, skipped_fields: skipped, context_hash: latest.context_hash };
     }
 
-    function automaticPromptSkillName() {
+    function automaticPromptSkillNames(requestText) {
         const context = `${currentForgePreset()} ${currentCheckpoint()}`.toLowerCase();
-        return context.includes("anima") ? "anima_dit" : "";
+        const isTagRequest = /\bdanbooru\b|\bgelbooru\b|\bbooru\s+tags?\b|\btag\s*(?:prompt|list|syntax)\b|(?:标签|tag).{0,12}(?:提示词|prompt)|danbooru\s*(?:标签|标注|tag)|标签\s*wiki/i.test(String(requestText || ""));
+        const names = [];
+        if (context.includes("anima")) names.push("anima_dit");
+        if (isTagRequest) names.push("danbooru_tags");
+        return names;
     }
 
-    async function ensureAutomaticPromptSkills(run) {
-        const name = automaticPromptSkillName();
-        if (!name) return [];
-        const skill = await loadPromptSkillTool({ name: name }, run && run.controller ? run.controller.signal : undefined);
-        if (!skill.ok) return [];
-        const marker = `Built-in prompt skill ${name}:`;
-        const alreadySent = assistantState.messages.some(function (message) { return String(message.content || "").startsWith(marker); });
-        if (alreadySent) return [];
-        assistantState.messages.push({ role: "user", content: `${marker}\n${skill.guide}` });
-        return [name];
+    function automaticPromptSkillName(requestText) {
+        return automaticPromptSkillNames(requestText)[0] || "";
+    }
+
+    async function ensureAutomaticPromptSkills(run, requestText) {
+        const loaded = [];
+        for (const name of automaticPromptSkillNames(requestText)) {
+            const skill = await loadPromptSkillTool({ name: name }, run && run.controller ? run.controller.signal : undefined);
+            if (!skill.ok) continue;
+            const marker = `Built-in prompt skill ${name}:`;
+            const alreadySent = assistantState.messages.some(function (message) { return String(message.content || "").startsWith(marker); });
+            if (alreadySent) continue;
+            assistantState.messages.push({ role: "user", content: `${marker}\n${skill.guide}` });
+            loaded.push(name);
+        }
+        return loaded;
     }
 
     function compactAssistantMessages(messages, maximum) {
@@ -280,6 +321,10 @@
         if (name === "apply_resource") return `已应用 · ${result.kind} · ${result.id}\n${(result.applied || []).join(" · ") || "已存在，无需重复添加"}`;
         if (name === "initialize_prompt") return `已初始化 · ${result.target} · ${(result.initialized_fields || []).join(" + ")}`;
         if (name === "load_prompt_skill") return `已加载指南 · ${result.title || result.name}`;
+        if (name === "search_danbooru_tags") return `Danbooru 标签搜索 · ${result.query}\n${(result.items || []).slice(0, 5).map(function (item) { return item.name; }).join(" · ") || "无结果"}`;
+        if (name === "inspect_danbooru_tag") return `Danbooru 标签详情 · ${result.name}`;
+        if (name === "inspect_danbooru_tags") return `Danbooru 批量标签详情 · ${(result.items || []).length}`;
+        if (name === "related_danbooru_tags") return `Danbooru 关联标签 · ${result.name}\n${(result.related || []).slice(0, 5).map(function (item) { return item.name; }).join(" · ")}`;
         return "";
     }
 
@@ -292,6 +337,10 @@
         if (name === "apply_resource") return await applyResourceTool(args, signal);
         if (name === "initialize_prompt") return await initializePromptTool(args);
         if (name === "load_prompt_skill") return await loadPromptSkillTool(args, signal);
+        if (name === "search_danbooru_tags") return await searchDanbooruTagsTool(args, signal);
+        if (name === "inspect_danbooru_tag") return await inspectDanbooruTagTool(args, signal);
+        if (name === "inspect_danbooru_tags") return await inspectDanbooruTagsTool(args, signal);
+        if (name === "related_danbooru_tags") return await relatedDanbooruTagsTool(args, signal);
         return undefined;
     }
 
@@ -302,12 +351,17 @@
         searchResourcesTool,
         inspectResourceTool,
         loadPromptSkillTool,
+        searchDanbooruTagsTool,
+        inspectDanbooruTagTool,
+        inspectDanbooruTagsTool,
+        relatedDanbooruTagsTool,
         resourceMutationGuard,
         appendFragment,
         formatWeight,
         addStyleSelection,
         applyResourceTool,
         initializePromptTool,
+        automaticPromptSkillNames,
         automaticPromptSkillName,
         ensureAutomaticPromptSkills,
         compactAssistantMessages,

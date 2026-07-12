@@ -52,6 +52,8 @@ You can also set `LLAMA_SERVER_EXE` or fill the path manually in the UI.
 
 ## Floating Prompt Assistant
 
+When a user explicitly asks for Danbooru/Gelbooru/booru tag prompts or guidance, the assistant automatically loads the built-in [Danbooru tags agent reference](docs/DANBOORU_TAGS_AGENT.md). It provides a visible-facts tagging contract, naming rules, high-impact blacklist tags, review checklist, and live tag-group navigation without consuming context in unrelated chats. The agent can query the public Danbooru API for canonical tags and live wiki definitions using read-only tools; ordinary natural-language prompts stay direct and do not require database lookups.
+
 The `LLM 助手` button opens a floating chat window. On first run it creates five editable Model Profiles:
 
 - Moyuu Gemini: `gemini-native` + `remote-http`

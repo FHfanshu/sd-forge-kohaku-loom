@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 
@@ -48,6 +49,13 @@ Use this guide only for Anima image checkpoints.
 """
 
 
+_DANBOORU_TAGS_GUIDE_PATH = Path(__file__).resolve().parents[1] / "docs" / "DANBOORU_TAGS_AGENT.md"
+
+
+def _read_danbooru_tags_guide() -> str:
+    return _DANBOORU_TAGS_GUIDE_PATH.read_text(encoding="utf-8")
+
+
 PROMPT_SKILLS = {
     "anima_dit": {
         "name": "anima_dit",
@@ -55,7 +63,14 @@ PROMPT_SKILLS = {
         "guide": ANIMA_DIT_GUIDE,
         "source": "https://huggingface.co/circlestone-labs/Anima",
         "reviewed": "2026-07-11",
-    }
+    },
+    "danbooru_tags": {
+        "name": "danbooru_tags",
+        "title": "Danbooru tags agent reference",
+        "guide": _read_danbooru_tags_guide(),
+        "source": "https://danbooru.donmai.us/wiki_pages/tag_groups",
+        "reviewed": "2026-07-12",
+    },
 }
 
 

@@ -51,3 +51,9 @@ test("assistant config projects only the explicitly selected profile", () => {
     assert.equal(JSON.stringify(teacher).includes("active-secret"), false);
     assert.equal(teacher.stream, false);
 });
+
+test("positive prompt guard detects no-phrase exclusions", () => {
+    const tools = loadCore(null);
+    assert.deepEqual(tools.positivePromptNoPhrases("portrait, no hat, no background"), ["no hat", "no background"]);
+    assert.deepEqual(tools.positivePromptNoPhrases("portrait, noir lighting"), []);
+});

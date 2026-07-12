@@ -49,3 +49,11 @@ test("native tool call ids survive browser normalization", () => {
         { id: "call-7", tool: "read_prompt", arguments: { target: "active" } }
     );
 });
+
+test("style-template reader is an available assistant tool", () => {
+    assert.equal(tools.assistantToolNameFromText("read_style_template"), "read_style_template");
+    assert.deepEqual(
+        tools.parseAssistantTools('{"tool":"read_style_template","arguments":{"target":"txt2img"}}'),
+        [{ tool: "read_style_template", arguments: { target: "txt2img" } }]
+    );
+});

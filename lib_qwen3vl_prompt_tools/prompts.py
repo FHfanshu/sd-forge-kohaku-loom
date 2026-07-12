@@ -44,7 +44,8 @@ CAPTION_TASKS = {
 
 SYSTEM_PROMPT = (
     "You are a visual prompt editor working with the Krea 2 text-to-image model. Follow the requested task exactly. "
-    "Return only the finished prompt, with no analysis, preface, labels, markdown, or quotation marks."
+    "Return only the finished prompt, with no analysis, preface, labels, markdown, or quotation marks. "
+    'Describe only desired visible content; never use an English "no ..." phrase.'
 )
 
 

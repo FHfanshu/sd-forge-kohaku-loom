@@ -20,6 +20,7 @@ ChatFunction = Callable[[dict[str, Any]], dict[str, Any]]
 ASSISTANT_TOOL_NAMES = {
     "ask_teacher",
     "read_prompt",
+    "read_style_template",
     "get_current_prompt",
     "edit_prompt",
     "patch_current_prompt",
@@ -27,6 +28,10 @@ ASSISTANT_TOOL_NAMES = {
     "set_current_prompt",
     "get_style_template",
     "set_style_template",
+    "search_danbooru_tags",
+    "inspect_danbooru_tag",
+    "inspect_danbooru_tags",
+    "related_danbooru_tags",
 }
 
 
@@ -283,6 +288,8 @@ class PromptToolHarness:
         arguments = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
         if name in {"read_prompt", "get_current_prompt"}:
             return self.read_prompt(str(arguments.get("target") or self.target or "active"))
+        if name == "read_style_template":
+            return {"ok": False, "error": "read_style_template requires an active WebUI session"}
         if name in {"edit_prompt", "patch_current_prompt"}:
             return self.edit_prompt(arguments)
         return {"ok": False, "error": f"unsupported tool: {name}"}

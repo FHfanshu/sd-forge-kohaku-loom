@@ -81,6 +81,8 @@ Rules:
 - For group scenes, state the exact count first, then describe spatial positions such as left, center, right, foreground, background, behind, beside, facing camera, looking at each other, interaction, and relative scale.
 - Keep characters visually distinguishable. Assign clear traits per position instead of blending attributes.
 - Preserve the user's core idea, but improve clarity, composition, style terms, and model-friendly wording.
+- Use Danbooru rules and live lookup only when the user requests a Danbooru/Gelbooru/booru tag list or tag-style prompt. For ordinary natural-language prompts, be direct and clear; do not spend turns validating each phrase against Danbooru.
+- Positive prompts must never use an English "no ..." phrase (for example, "no hat" or "no background"). Describe only desired visible content in the positive prompt; put exclusions in the negative prompt instead.
 - If reference-image observations are present, use them as factual visual context and reusable style guidance. Do not mention that an image was analyzed in the final prompt.
 - You are paired with a stronger Gemini teacher. If you are uncertain about composition, ambiguous user intent, difficult image interpretation, sensitive placeholder handling, or the exact edit plan, proactively call ask_teacher with sanitized context before finalizing. Do not guess when teacher consultation would materially improve the result.
 - When revising an existing prompt, return the improved prompt only unless the user asks for explanation.
@@ -92,12 +94,14 @@ Available UI tools:
 - Some prompt text may contain SAFE_SLOT_### placeholders. Treat them as opaque exact text: preserve them in SEARCH/REPLACE blocks, never expand or reinterpret them.
 - To consult the remote Gemini teacher after local redaction, use ask_teacher with a sanitized question and relevant context. Use it proactively when confidence is low. Never send raw sensitive text; preserve SAFE_SLOT_### placeholders exactly.
 - To read the current prompt, reply with exactly: {"tool":"read_prompt","arguments":{"target":"active"}}
+- To inspect the active WebUI style template or determine whether character/style text comes from selected Styles or Forge's positive template, call read_style_template with the relevant target. Do not infer template contents from read_prompt alone.
 - To edit the prompt, use edit_prompt with base_hash and a diff. Preferred diff format is a SEARCH/REPLACE block with markers named SEARCH, separator line =======, and ending marker REPLACE.
 - target can be "active", "txt2img", or "img2img".
-- read_prompt returns prompt, prompt_hash, style_selector, selected_styles, forge_positive_template, and style_template when available.
+- read_prompt returns prompt, prompt_hash, and current UI context. It also includes a style summary for convenience.
+- read_style_template returns the complete selected Styles details, including every positive/negative template, plus Forge's positive template and a combined style_template value.
 - read_prompt also returns positive_prompt, negative_prompt, their hashes, a context_hash, the current Forge preset/checkpoint, and loaded prompt skills.
 - edit_prompt also accepts patches with operations "replace", "replace_all", "replace_n", "insert_after", "insert_before", "append", "prepend", and "delete". Use exact text from read_prompt. For replace/insert, find text must be unique unless allow_multiple is true. If you cannot make a precise diff, pass the complete clean new prompt as "prompt" with the latest base_hash.
-- edit_prompt accepts field "positive" or "negative"; the default is "positive" for backward compatibility. Use the matching hash returned by read_prompt.
+- edit_prompt accepts field "positive" or "negative"; the default is "positive" for backward compatibility. Use the matching hash returned by read_prompt. Never place "no ..." phrases in field "positive"; use field "negative" for exclusions.
 - You must call read_prompt before edit_prompt. edit_prompt must include the base_hash returned by the latest read_prompt for the same concrete target.
 - Never use whole-prompt replacement tools. For an empty prompt, use edit_prompt with operation "append" and the base_hash from read_prompt.
 - Use tools when the user asks to inspect, rewrite, replace, append to, or send a prompt/template. Do not invent current UI text if you need to see it; call read_prompt first.
@@ -105,6 +109,7 @@ Available UI tools:
 - Diff syntax is only a tool argument format. The actual prompt text written into WebUI must never contain git diff markers, patch headers, SEARCH/REPLACE markers, conflict markers, or fenced diff blocks.
 - After a tool result is provided, continue with the requested concise final answer.
 - Use search_resources to discover installed wildcard, Style, or LoRA resources. Use inspect_resource before relying on full contents or metadata. Search alone never changes the UI.
+- For canonical Danbooru/Gelbooru tags, batch related concepts in one search_danbooru_tags call using `queries`; it returns autocomplete and prefix candidates for each. Use related_danbooru_tags to expand one verified seed, then inspect_danbooru_tags for several selected tags at once. Their `name` and `prompt_tag` fields are Anima-ready space-separated output; `canonical_name` is a lookup key only and must never be copied into a prompt. These tools are read-only and only search Danbooru; never claim they create or edit tags.
 - Only call apply_resource when the user explicitly asks to apply/add/use a resource. Call read_prompt first and pass its latest context_hash. Wildcards remain __name__, LoRAs remain <lora:alias:weight>, and Styles remain native WebUI selections.
 - Only call initialize_prompt when the user explicitly asks to initialize an empty generation prompt. It fills empty positive/negative fields and never overwrites existing content.
 - Anima-specific guidance is injected automatically when the active Forge preset or checkpoint is Anima. Preserve wildcards, dynamic choices, and LoRA tags exactly.
@@ -240,6 +245,20 @@ ASSISTANT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "read_style_template",
+            "description": "Read all active WebUI style-template sources for txt2img/img2img. Returns the selected Style names and their positive/negative templates, Forge's positive template, and a combined style_template. Use this to inspect style or character settings before explaining them.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "enum": ["active", "txt2img", "img2img"]},
+                },
+                "required": ["target"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_resources",
             "description": "Search installed Forge wildcard, Style, or LoRA resources without changing the UI.",
             "parameters": {
@@ -304,6 +323,68 @@ ASSISTANT_TOOLS = [
                     "negative_prompt": {"type": "string"},
                 },
                 "required": ["target", "context_hash", "positive_prompt", "negative_prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_danbooru_tags",
+            "description": "Search Danbooru's live public tag database for canonical names, categories, usage counts, and deprecation status. Returned name and prompt_tag fields use Anima-ready spaces; canonical_name is lookup-only. Use before asserting unfamiliar, ambiguous, or qualified booru tags. Read-only; never creates a tag.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Tag name or prefix to search, such as 'blue hair' or 'black_rock_shooter'."},
+                    "queries": {"type": "array", "description": "Batch of up to 12 tag concepts. Use this for a scene instead of one search call per concept.", "items": {"type": "string"}, "maxItems": 12},
+                    "category": {"type": "string", "enum": ["general", "artist", "copyright", "character", "meta"], "description": "Optional category filter."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 30},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "inspect_danbooru_tag",
+            "description": "Fetch one exact canonical Danbooru tag and its live wiki definition. Call search_danbooru_tags first when the spelling is uncertain. Read-only; never creates or modifies a tag.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Exact tag selected from search_danbooru_tags. Both its prompt-ready name and canonical_name are accepted."},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "inspect_danbooru_tags",
+            "description": "Inspect up to 12 selected Danbooru tags in parallel. Returns category, usage, and deprecation information; request wiki only when definitions are genuinely needed. Read-only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 12},
+                    "include_wiki": {"type": "boolean", "description": "Fetch each selected tag's wiki definition. Use sparingly for ambiguous terms."},
+                },
+                "required": ["names"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "related_danbooru_tags",
+            "description": "Get live co-occurring tags and wiki-linked suggestions for one verified Danbooru tag. Use as candidate ideas only; add a suggestion only when it matches the requested or visible content. Read-only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Verified seed tag, in prompt-ready or canonical form."},
+                    "category": {"type": "string", "enum": ["general", "artist", "copyright", "character", "meta"]},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 30},
+                },
+                "required": ["name"],
             },
         },
     },

@@ -2,16 +2,15 @@
     const tools = window.q3vlPromptTools;
     if (!tools) return;
     const { assistantConfig, assistantPanel, assistantState, compactAssistantMessages, compactToolResult, ensureAutomaticPromptSkills, executeAssistantTool, resourceToolResultLabel, tr, analyzeAssistantAttachmentWithGemini, assistantUsesGeminiVisionDelegate, updateAssistantStreamingMessage } = tools;
-
     function t(key, fallback) {
         if (typeof tr !== "function") return fallback;
         const value = tr(key);
         return value && value !== key ? value : fallback;
     }
-
     const ASSISTANT_TOOL_NAMES = [
         "ask_teacher",
         "read_prompt",
+        "read_style_template",
         "get_current_prompt",
         "edit_prompt",
         "patch_current_prompt",
@@ -22,16 +21,24 @@
         "search_resources",
         "inspect_resource",
         "apply_resource",
-        "initialize_prompt"
+        "initialize_prompt",
+        "search_danbooru_tags",
+        "inspect_danbooru_tag",
+        "inspect_danbooru_tags",
+        "related_danbooru_tags"
     ];
     const ASSISTANT_REPEATABLE_READ_TOOLS = new Set([
         "read_prompt",
+        "read_style_template",
         "get_current_prompt",
         "get_style_template",
         "search_resources",
-        "inspect_resource"
+        "inspect_resource",
+        "search_danbooru_tags",
+        "inspect_danbooru_tag",
+        "inspect_danbooru_tags",
+        "related_danbooru_tags"
     ]);
-
     function assistantRepeatedToolAction(name, count) {
         if (count < 4) return "execute";
         if (count === 4) return "converge";
@@ -56,7 +63,6 @@
         }
         return typeof value === "object" && !Array.isArray(value) ? value : {};
     }
-
     function parseAssistantLooseObject(value) {
         const raw = String(value || "").trim();
         if (!raw.startsWith("{") || !raw.endsWith("}")) return null;
@@ -67,7 +73,6 @@
             return null;
         }
     }
-
     function parseAssistantFunctionText(value) {
         const raw = String(value || "").trim();
         const match = raw.match(/^(?:call\s*:\s*)?([A-Za-z_][\w]*)\s*([\s\S]*)$/);
@@ -547,7 +552,6 @@
         }
         return await response.json();
     }
-
     function setAssistantAttachment(attachment) {
         assistantState.attachment = attachment;
         renderAssistantAttachment();
@@ -657,7 +661,6 @@
             body: JSON.stringify({ run_id: run.id })
         }).catch(function () { });
     }
-
     async function readPromptAssistantStream(response, onProgress, run) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -765,11 +768,9 @@
         const adviceOnly = /(怎么改|如何改|怎么写|如何写|哪里.*改|修改建议|改进建议|优化建议|写作建议|建议.*(修改|优化|改写|调整|编写)|should.*(change|edit|rewrite|write)|how.*(change|edit|rewrite|write))/i;
         return editVerb.test(value) && !adviceOnly.test(value) && (currentPromptRef.test(value) || directEdit.test(value));
     }
-
     function assistantToolMutatesPrompt(name) {
         return ["edit_prompt", "patch_current_prompt", "multi_patch_current_prompt", "apply_resource", "initialize_prompt"].includes(String(name || ""));
     }
-
     function assistantUserRequestedResourceMutation(text) {
         const value = String(text || "").replace(/\s+/g, " ").trim().toLowerCase();
         const action = /(应用|套用|加入|添加|插入|写入|使用|初始化|生成首版|填充|apply|add|insert|use|initiali[sz]e|fill)/i;
@@ -851,7 +852,7 @@
                 assistantState.messages.push({ role: "user", content: effectiveText });
             }
             if (typeof ensureAutomaticPromptSkills === "function") {
-                const loadedSkills = await ensureAutomaticPromptSkills(run);
+                const loadedSkills = await ensureAutomaticPromptSkills(run, effectiveText);
                 if (loadedSkills.length) addAssistantMessage("tool", `已自动加载指南 · ${loadedSkills.join(" · ")}`);
             }
             while (true) {

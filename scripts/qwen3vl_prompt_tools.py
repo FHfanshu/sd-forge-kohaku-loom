@@ -7,6 +7,7 @@ import gradio as gr
 
 from lib_qwen3vl_prompt_tools.generation import caption, enhance
 from lib_qwen3vl_prompt_tools.forge_resources import inspect_resource, search_resources
+from lib_qwen3vl_prompt_tools.danbooru import inspect_danbooru_tag, inspect_danbooru_tags, related_danbooru_tags, search_danbooru_tags
 from lib_qwen3vl_prompt_tools.i18n import tr, translation_bundle
 from lib_qwen3vl_prompt_tools.prompt_skills import load_prompt_skill
 from lib_qwen3vl_prompt_tools.assistant_sessions import (
@@ -278,6 +279,42 @@ def _assistant_api(_: gr.Blocks, app):
             raise HTTPException(status_code=400, detail=str(error)) from error
         except Exception as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
+
+    @app.get("/qwen3vl-prompt-tools/danbooru/tags/search")
+    async def qwen3vl_danbooru_tag_search(query: str, category: str = "", limit: int = 12):
+        try:
+            return search_danbooru_tags(query, category, limit)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.get("/qwen3vl-prompt-tools/danbooru/tags/inspect")
+    async def qwen3vl_danbooru_tag_inspect(name: str):
+        try:
+            return inspect_danbooru_tag(name)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.get("/qwen3vl-prompt-tools/danbooru/tags/inspect-batch")
+    async def qwen3vl_danbooru_tag_inspect_batch(names: str, include_wiki: bool = False):
+        try:
+            return inspect_danbooru_tags([name for name in names.split(",") if name.strip()], include_wiki)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.get("/qwen3vl-prompt-tools/danbooru/tags/related")
+    async def qwen3vl_danbooru_tag_related(name: str, category: str = "", limit: int = 12):
+        try:
+            return related_danbooru_tags(name, category, limit)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
 
     @app.get("/qwen3vl-prompt-tools/prompt-skills/{name}")
     async def qwen3vl_prompt_skill(name: str):

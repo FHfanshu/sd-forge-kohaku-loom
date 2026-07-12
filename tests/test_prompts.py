@@ -17,6 +17,7 @@ class PromptToolsTests(unittest.TestCase):
     def test_enhance_template_has_generation_boundary(self):
         prompt = build_enhance_chat("a blue fox", "expand")
         self.assertIn("a blue fox", prompt)
+        self.assertIn('never use an English "no ..." phrase', prompt)
         self.assertTrue(prompt.endswith("<think>\n\n</think>\n\n"))
         self.assertNotIn("<|image_pad|>", prompt)
 

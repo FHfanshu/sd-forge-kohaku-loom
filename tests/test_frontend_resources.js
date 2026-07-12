@@ -13,6 +13,7 @@ global.window = {
         promptFieldRootForTarget: () => ({ target: "txt2img", root: null }),
         q3vlApp: () => ({ querySelector: () => null, querySelectorAll: () => [] }),
         readPromptTool: async () => ({}),
+        positivePromptNoPhrases: () => [],
         setNativeValueIfAvailable: () => true,
         setTextboxValue: () => true,
         styleSelectorValue: () => "",
@@ -31,6 +32,17 @@ test("appendFragment is idempotent", () => {
 
 test("Anima auto-detection uses the active Forge model", () => {
     assert.equal(tools.automaticPromptSkillName(), "anima_dit");
+});
+
+test("Danbooru tools are registered for agent execution", () => {
+    assert.ok(tools.RESOURCE_TOOLS.has("search_danbooru_tags"));
+    assert.ok(tools.RESOURCE_TOOLS.has("inspect_danbooru_tag"));
+    assert.ok(tools.RESOURCE_TOOLS.has("inspect_danbooru_tags"));
+    assert.ok(tools.RESOURCE_TOOLS.has("related_danbooru_tags"));
+});
+
+test("tag requests load Danbooru rules alongside the active model guide", () => {
+    assert.deepEqual(tools.automaticPromptSkillNames("create a Danbooru tag prompt"), ["anima_dit", "danbooru_tags"]);
 });
 
 test("message compaction keeps the first user goal and recent messages", () => {
