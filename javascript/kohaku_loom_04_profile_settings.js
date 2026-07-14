@@ -1,7 +1,6 @@
 (function () {
     const tools = window.kohakuLoom = window.kohakuLoom || {};
     let selectedProfileId = "";
-    let activeEditorTab = "overview";
     let settingsReturnFocus = null;
 
     function t(key, fallback) {
@@ -271,8 +270,6 @@
     function createEditor(panel, state, profile) {
         const editor = document.createElement("div");
         editor.className = "loom-profile-editor";
-        const availableTabs = profileWorkspaceTabs(profile);
-        if (!availableTabs.includes(activeEditorTab)) activeEditorTab = "overview";
 
         const summary = document.createElement("header");
         summary.className = "loom-profile-summary";
@@ -286,62 +283,80 @@
         const model = document.createElement("p");
         model.textContent = profile.model_id;
         summaryCopy.append(eyebrow, name, model);
-        const summaryMeta = document.createElement("div");
-        summaryMeta.className = "loom-profile-summary-meta";
-        [[profile.enabled ? "online" : "offline", profile.enabled ? t("profiles.enabled", "Enabled") : t("profiles.disabled", "Disabled")], ["protocol", protocolAbbreviation(profile.protocol)], ["runtime", runtimeLabel(profile)]].forEach(function (item) {
-            const badge = document.createElement("span");
-            badge.dataset.kind = item[0];
-            badge.textContent = item[1];
-            summaryMeta.appendChild(badge);
-        });
-        profileRoleLabels(state, profile).forEach(function (role) {
-            const badge = document.createElement("span");
-            badge.dataset.kind = role;
-            badge.textContent = t(`profiles.role.${role}`, role);
-            summaryMeta.appendChild(badge);
-        });
-        summary.append(summaryCopy, summaryMeta);
+        const current = document.createElement("span");
+        current.className = "loom-profile-current-state";
+        current.dataset.active = String(profile.id === state.active_profile_id);
+        current.textContent = profile.id === state.active_profile_id ? t("profiles.current", "Current model") : t("profiles.available", "Available model");
+        summary.append(summaryCopy, current);
 
-        const tabs = document.createElement("div");
-        tabs.className = "loom-profile-tabs";
-        tabs.setAttribute("role", "tablist");
-        tabs.setAttribute("aria-label", t("profiles.workspace", "Profile workspace"));
-        const panels = document.createElement("div");
-        panels.className = "loom-profile-tab-panels";
-        const tabLabels = {
-            overview: ["profiles.tab.overview", "Overview"],
-            connection: ["profiles.tab.connection", "Connection"],
-            generation: ["profiles.tab.generation", "Generation"],
-            local: ["profiles.tab.local", "Local runtime"]
-        };
-        const tabButtons = [];
-        function addTab(id, content) {
-            const tab = button(t(tabLabels[id][0], tabLabels[id][1]), "loom-profile-tab");
-            const panelId = `loom_profile_tab_${id}`;
-            tab.id = `loom_profile_tab_button_${id}`;
-            tab.setAttribute("role", "tab");
-            tab.setAttribute("aria-controls", panelId);
-            tab.dataset.profileTab = id;
-            content.id = panelId;
-            content.classList.add("loom-profile-tab-panel");
-            content.setAttribute("role", "tabpanel");
-            content.setAttribute("aria-labelledby", tab.id);
-            const activate = function () {
-                activeEditorTab = id;
-                tabButtons.forEach(function (item) {
-                    const selected = item.button === tab;
-                    item.button.setAttribute("aria-selected", String(selected));
-                    item.button.tabIndex = selected ? 0 : -1;
-                    item.panel.hidden = !selected;
-                });
-            };
-            tab.addEventListener("click", activate);
-            tabButtons.push({ button: tab, panel: content, activate: activate });
-            tabs.appendChild(tab);
-            panels.appendChild(content);
+        const quick = section(t("profiles.quick.title", "Connect this model"), "loom-profile-quick", t("profiles.quick.hint", "Add your API key, test the connection, and start using it."));
+        if (profile.runtime === "remote-http") {
+            const keyField = createInputField(panel, profile, { path: "api_key", key: "profiles.api_key", label: "API key", type: "password" });
+            keyField.classList.add("loom-profile-key-field");
+            quick.appendChild(keyField);
+        } else {
+            const localReady = document.createElement("div");
+            localReady.className = "loom-profile-local-ready";
+            const localTitle = document.createElement("strong");
+            localTitle.textContent = t("profiles.quick.local", "Local model - no API key needed");
+            const localHint = document.createElement("span");
+            localHint.textContent = profile.runtime === "llama-once" ? profile.model_path : profile.endpoint;
+            localReady.append(localTitle, localHint);
+            quick.appendChild(localReady);
+        }
+        const quickActions = document.createElement("div");
+        quickActions.className = "loom-profile-quick-actions";
+        const testButton = button(t("profiles.test", "Test connection"), "loom-profile-primary");
+        testButton.disabled = !profile.enabled;
+        testButton.addEventListener("click", function () { testModelProfileConnection(profile.id, panel, testButton); });
+        const activateButton = button(profile.id === state.active_profile_id ? t("profiles.current", "Current model") : t("profiles.use_model", "Use this model"), "loom-profile-use");
+        activateButton.disabled = profile.id === state.active_profile_id || !profile.enabled;
+        activateButton.addEventListener("click", function () {
+            try {
+                tools.profileStore.setActive(profile.id);
+                dispatchProfileChange(tools.profileStore.load());
+                renderModelProfileSettings();
+            } catch (_error) {
+                updateStatus(panel, t("profiles.active.disabled", "Enable this profile before making it active."), "error");
+            }
+        });
+        quickActions.append(testButton, activateButton);
+        quick.appendChild(quickActions);
+
+        if (profile.runtime === "remote-http" && typeof tools.syncProfileFromModelsDev === "function") {
+            const catalogRow = document.createElement("div");
+            catalogRow.className = "loom-profile-catalog-row";
+            const syncButton = button(t("profiles.models_dev.sync", "Get parameters from models.dev"), "loom-profile-secondary");
+            const source = document.createElement("span");
+            source.className = "loom-profile-catalog-status";
+            source.textContent = profile.model_info?.source === "models.dev"
+                ? `${profile.model_info.provider_id}/${profile.model_info.matched_model_id}` : t("profiles.models_dev.hint", "Sync model capabilities and limits");
+            syncButton.addEventListener("click", async function () {
+                syncButton.disabled = true;
+                updateStatus(panel, t("profiles.models_dev.loading", "Querying models.dev..."), "pending");
+                try {
+                    const result = await tools.syncProfileFromModelsDev(profile);
+                    if (!persistPatch(panel, profile, result.patch)) throw new Error("profile update failed");
+                    updateStatus(panel, t("profiles.models_dev.success", "Updated model parameters from models.dev."), "success");
+                    renderModelProfileSettings();
+                } catch (_error) {
+                    updateStatus(panel, t("profiles.models_dev.error", "No exact model match found on models.dev."), "error");
+                    syncButton.disabled = false;
+                }
+            });
+            catalogRow.append(syncButton, source);
+            quick.appendChild(catalogRow);
         }
 
-        const overviewPanel = document.createElement("div");
+        const advanced = document.createElement("details");
+        advanced.className = "loom-profile-advanced";
+        const advancedSummary = document.createElement("summary");
+        advancedSummary.textContent = t("profiles.advanced", "Advanced settings");
+        const advancedBody = document.createElement("div");
+        advancedBody.className = "loom-profile-advanced-body";
+        const roleSelectors = panel.querySelector(".loom-profile-role-selectors");
+        if (roleSelectors) advancedBody.appendChild(roleSelectors);
+
         const basic = section(t("profiles.section.basic", "Basic information"), "", t("profiles.section.basic.hint", "Identity, protocol, and availability for this model."));
         const basicGrid = document.createElement("div");
         basicGrid.className = "loom-profile-grid";
@@ -354,31 +369,6 @@
         ].forEach(function (config) { basicGrid.appendChild(createInputField(panel, profile, config)); });
         basicGrid.appendChild(createSwitchField(panel, profile, "enabled", "profiles.enabled", "Enabled"));
         basic.appendChild(basicGrid);
-        if (profile.runtime === "remote-http" && typeof tools.syncProfileFromModelsDev === "function") {
-            const catalogRow = document.createElement("div");
-            catalogRow.className = "loom-profile-catalog-row";
-            const syncButton = button(t("profiles.models_dev.sync", "从 models.dev 获取参数"), "loom-profile-secondary");
-            const source = document.createElement("span");
-            source.className = "loom-profile-catalog-status";
-            source.textContent = profile.model_info?.source === "models.dev"
-                ? `${profile.model_info.provider_id}/${profile.model_info.matched_model_id}` : t("profiles.models_dev.hint", "同步能力、输出上限与推理档位");
-            syncButton.addEventListener("click", async function () {
-                syncButton.disabled = true;
-                updateStatus(panel, t("profiles.models_dev.loading", "正在查询 models.dev..."), "pending");
-                try {
-                    const result = await tools.syncProfileFromModelsDev(profile);
-                    const updated = persistPatch(panel, profile, result.patch);
-                    if (!updated) throw new Error("profile update failed");
-                    updateStatus(panel, t("profiles.models_dev.success", "已从 models.dev 更新模型参数。"), "success");
-                    renderModelProfileSettings();
-                } catch (_error) {
-                    updateStatus(panel, t("profiles.models_dev.error", "models.dev 未找到完全匹配的模型。"), "error");
-                    syncButton.disabled = false;
-                }
-            });
-            catalogRow.append(syncButton, source);
-            basic.appendChild(catalogRow);
-        }
 
         const capabilities = section(t("profiles.section.capabilities", "Capabilities"), "", t("profiles.section.capabilities.hint", "Declare what the model can accept and return."));
         const switchGrid = document.createElement("div");
@@ -387,9 +377,6 @@
             switchGrid.appendChild(createSwitchField(panel, profile, `capabilities.${item[0]}`, `profiles.capability.${item[0]}`, item[1]));
         });
         capabilities.appendChild(switchGrid);
-        overviewPanel.append(basic, capabilities);
-
-        const connectionPanel = document.createElement("div");
         const connection = section(t("profiles.section.connection", "Connection"), "", t("profiles.section.connection.hint", "Credentials and endpoints used to reach this model."));
         const connectionGrid = document.createElement("div");
         connectionGrid.className = "loom-profile-grid";
@@ -397,19 +384,14 @@
         endpoint.dataset.profileVisible = "endpoint";
         const fallbacks = createInputField(panel, profile, { path: "fallback_endpoints", key: "profiles.fallback_endpoints", label: "Fallback endpoints", type: "textarea", rows: 3 });
         fallbacks.dataset.profileVisible = "fallback_endpoints";
-        const apiKey = createInputField(panel, profile, { path: "api_key", key: "profiles.api_key", label: "API key", type: "password" });
-        apiKey.dataset.profileVisible = "api_key";
-        connectionGrid.append(endpoint, fallbacks, apiKey);
-        const testRow = document.createElement("div");
-        testRow.className = "loom-profile-test-row";
-        const testButton = button(t("profiles.test", "Test connection"), "loom-profile-primary");
-        testButton.disabled = !profile.enabled;
-        testButton.addEventListener("click", function () { testModelProfileConnection(profile.id, panel, testButton); });
-        testRow.appendChild(testButton);
-        connection.append(connectionGrid, testRow);
-        connectionPanel.appendChild(connection);
+        connectionGrid.append(endpoint, fallbacks);
+        if (profile.runtime !== "remote-http") {
+            const apiKey = createInputField(panel, profile, { path: "api_key", key: "profiles.api_key", label: "API key", type: "password" });
+            apiKey.dataset.profileVisible = "api_key";
+            connectionGrid.appendChild(apiKey);
+        }
+        connection.appendChild(connectionGrid);
 
-        const generationPanel = document.createElement("div");
         const generation = section(t("profiles.section.generation", "Generation"), "", t("profiles.section.generation.hint", "Default sampling, reasoning, and privacy behavior."));
         const generationGrid = document.createElement("div");
         generationGrid.className = "loom-profile-grid";
@@ -428,9 +410,7 @@
         });
         generationGrid.appendChild(createSwitchField(panel, profile, "parameters.sanitize_sensitive", "profiles.sanitize_sensitive", "Sanitize sensitive content"));
         generation.appendChild(generationGrid);
-        generationPanel.appendChild(generation);
 
-        const localPanel = document.createElement("div");
         const local = section(t("profiles.section.local", "Local runtime"), "loom-profile-local", t("profiles.section.local.hint", "llama.cpp paths and hardware allocation for this model."));
         local.dataset.profileVisible = "local";
         const localGrid = document.createElement("div");
@@ -450,24 +430,11 @@
         thinking.dataset.profileVisible = "thinking";
         localGrid.appendChild(thinking);
         local.appendChild(localGrid);
-        localPanel.appendChild(local);
-
-        addTab("overview", overviewPanel);
-        addTab("connection", connectionPanel);
-        addTab("generation", generationPanel);
-        if (availableTabs.includes("local")) addTab("local", localPanel);
-        const selectedTab = tabButtons.find(function (item) { return item.button.dataset.profileTab === activeEditorTab; }) || tabButtons[0];
-        selectedTab.activate();
-        tabs.addEventListener("keydown", function (event) {
-            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-            const current = Math.max(0, tabButtons.findIndex(function (item) { return item.button === document.activeElement; }));
-            const next = event.key === "Home" ? 0 : event.key === "End" ? tabButtons.length - 1 : event.key === "ArrowRight" ? (current + 1) % tabButtons.length : (current - 1 + tabButtons.length) % tabButtons.length;
-            event.preventDefault();
-            tabButtons[next].activate();
-            tabButtons[next].button.focus();
-        });
-
-        editor.append(summary, tabs, panels);
+        advancedBody.append(basic, connection, capabilities, generation, local);
+        const profileActions = panel.querySelector(".loom-profile-actions");
+        if (profileActions) advancedBody.appendChild(profileActions);
+        advanced.append(advancedSummary, advancedBody);
+        editor.append(summary, quick, advanced);
         editor.querySelector('[data-profile-path="protocol"]').addEventListener("change", function () { renderModelProfileSettings(); });
         editor.querySelector('[data-profile-path="runtime"]').addEventListener("change", function () { renderModelProfileSettings(); });
         return editor;
@@ -493,21 +460,8 @@
             name.textContent = profile.display_name;
             const meta = document.createElement("span");
             meta.className = "loom-profile-list-meta";
-            const protocol = profile.protocol === "gemini-native"
-                ? t("profiles.protocol.abbr.gemini", protocolAbbreviation(profile.protocol))
-                : t("profiles.protocol.abbr.openai", protocolAbbreviation(profile.protocol));
-            meta.textContent = `${protocol} · ${runtimeLabel(profile)}`;
-            const roles = document.createElement("span");
-            roles.className = "loom-profile-list-roles";
-            profileRoleLabels(state, profile).forEach(function (role) {
-                const roleBadge = document.createElement("span");
-                roleBadge.dataset.role = role;
-                roleBadge.textContent = t(`profiles.role.${role}.short`, role.slice(0, 1).toUpperCase());
-                roleBadge.title = t(`profiles.role.${role}`, role);
-                roleBadge.setAttribute("aria-label", t(`profiles.role.${role}`, role));
-                roles.appendChild(roleBadge);
-            });
-            item.append(marker, name, meta, roles);
+            meta.textContent = profile.model_id;
+            item.append(marker, name, meta);
             item.addEventListener("click", function () { selectedProfileId = profile.id; renderModelProfileSettings(); });
             list.appendChild(item);
         });
@@ -738,8 +692,12 @@
                 return;
             }
             if (event.key !== "Tab" || !panel.classList.contains("loom-config-open")) return;
-            const focusable = Array.from(panel.querySelectorAll("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)"))
-                .filter(function (element) { return !element.closest("[hidden]"); });
+            const focusable = Array.from(panel.querySelectorAll("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary"))
+                .filter(function (element) {
+                    if (element.closest("[hidden]")) return false;
+                    const closedDetails = element.closest("details:not([open])");
+                    return !closedDetails || element.tagName === "SUMMARY";
+                });
             if (!focusable.length) return;
             const first = focusable[0];
             const last = focusable[focusable.length - 1];
@@ -762,7 +720,9 @@
         renderModelProfileSettings();
         panel.classList.add("loom-config-open");
         document.getElementById("loom_assistant_settings_backdrop")?.classList.add("loom-config-open");
-        window.requestAnimationFrame(function () { panel.querySelector(".loom-profile-list-item[aria-selected='true']")?.focus(); });
+        window.requestAnimationFrame(function () {
+            (panel.querySelector(".loom-profile-key-field input") || panel.querySelector(".loom-profile-list-item[aria-selected='true']"))?.focus();
+        });
         return panel;
     }
 

@@ -205,7 +205,7 @@
         }
     };
     Object.assign(messages["zh-CN"], {
-        "profiles.title": "模型配置档案", "profiles.list": "模型配置档案", "profiles.close": "关闭", "profiles.assistant_runtime": "助手运行时",
+        "profiles.title": "连接模型", "profiles.list": "模型列表", "profiles.close": "关闭", "profiles.assistant_runtime": "助手运行时",
         "profiles.status.autosave": "修改会自动保存", "profiles.status.saved": "已保存", "profiles.status.invalid": "请检查该配置项。",
         "profiles.section.basic": "基本信息", "profiles.section.connection": "连接配置", "profiles.section.capabilities": "能力配置", "profiles.section.generation": "生成参数", "profiles.section.local": "本地运行",
         "profiles.id": "配置 ID", "profiles.display_name": "显示名称", "profiles.model_id": "模型 ID", "profiles.enabled": "已启用", "profiles.disabled": "已禁用", "profiles.active": "当前主模型",
@@ -220,13 +220,14 @@
         "profiles.add": "新增", "profiles.duplicate": "复制", "profiles.delete": "删除", "profiles.set_active": "设为主模型", "profiles.restore": "恢复默认配置", "profiles.new_name": "新模型配置", "profiles.new_model_id": "model-id",
         "profiles.delete.confirm": "确定删除这个模型配置吗？", "profiles.delete.last_enabled": "至少需要保留一个已启用的模型配置。", "profiles.active.disabled": "请先启用该配置，再设为主模型。", "profiles.restore.confirm": "确定用默认配置替换全部模型档案吗？",
         "profiles.test": "测试连接", "profiles.test.testing": "正在测试连接...", "profiles.test.ping": "Ping。只回复 OK。", "profiles.test.success": "连接成功。", "profiles.test.error": "连接失败，请检查模型配置。",
-        "profiles.fleet": "模型队列", "profiles.selected": "当前模型", "profiles.workspace": "模型配置工作台", "profiles.tab.overview": "概览", "profiles.tab.connection": "连接", "profiles.tab.generation": "生成", "profiles.tab.local": "本地运行",
+        "profiles.fleet": "模型", "profiles.selected": "当前模型", "profiles.workspace": "模型配置工作台", "profiles.tab.overview": "概览", "profiles.tab.connection": "连接", "profiles.tab.generation": "生成", "profiles.tab.local": "本地运行",
         "profiles.route.runtime.hint": "执行助手会话与工具调用", "profiles.route.teacher.hint": "远程请求前在本地处理敏感上下文", "profiles.route.session.hint": "在本地生成会话标题与摘要",
         "profiles.role.active": "主模型", "profiles.role.teacher": "教师模型", "profiles.role.session": "会话模型", "profiles.role.active.short": "主", "profiles.role.teacher.short": "教", "profiles.role.session.short": "会",
-        "profiles.section.basic.hint": "设置模型身份、协议、运行方式与可用状态。", "profiles.section.capabilities.hint": "声明模型支持的输入与响应能力。", "profiles.section.connection.hint": "配置访问此模型所需的端点与凭据。", "profiles.section.generation.hint": "设置默认采样、推理与隐私处理策略。", "profiles.section.local.hint": "配置 llama.cpp 路径与硬件资源分配。"
+        "profiles.section.basic.hint": "设置模型身份、协议、运行方式与可用状态。", "profiles.section.capabilities.hint": "声明模型支持的输入与响应能力。", "profiles.section.connection.hint": "配置访问此模型所需的端点与凭据。", "profiles.section.generation.hint": "设置默认采样、推理与隐私处理策略。", "profiles.section.local.hint": "配置 llama.cpp 路径与硬件资源分配。",
+        "profiles.quick.title": "连接这个模型", "profiles.quick.hint": "填写 API Key，测试连接，然后就可以开始使用。", "profiles.quick.local": "本地模型无需 API Key", "profiles.advanced": "高级设置", "profiles.current": "当前模型", "profiles.available": "可用模型", "profiles.use_model": "使用这个模型"
     });
     Object.assign(messages.en, {
-        "profiles.title": "Model profiles", "profiles.list": "Model profiles", "profiles.close": "Close", "profiles.assistant_runtime": "Assistant runtime",
+        "profiles.title": "Connect a model", "profiles.list": "Models", "profiles.close": "Close", "profiles.assistant_runtime": "Assistant runtime",
         "profiles.status.autosave": "Changes save automatically", "profiles.status.saved": "Saved", "profiles.status.invalid": "Check this value and try again.",
         "profiles.section.basic": "Basic information", "profiles.section.connection": "Connection", "profiles.section.capabilities": "Capabilities", "profiles.section.generation": "Generation parameters", "profiles.section.local": "Local runtime",
         "profiles.id": "Profile ID", "profiles.display_name": "Display name", "profiles.model_id": "Model ID", "profiles.enabled": "Enabled", "profiles.disabled": "Disabled", "profiles.active": "Active model",
@@ -241,10 +242,11 @@
         "profiles.add": "Add", "profiles.duplicate": "Duplicate", "profiles.delete": "Delete", "profiles.set_active": "Set active", "profiles.restore": "Restore defaults", "profiles.new_name": "New model profile", "profiles.new_model_id": "model-id",
         "profiles.delete.confirm": "Delete this model profile?", "profiles.delete.last_enabled": "At least one enabled model profile is required.", "profiles.active.disabled": "Enable this profile before making it active.", "profiles.restore.confirm": "Replace all profiles with the defaults?",
         "profiles.test": "Test connection", "profiles.test.testing": "Testing connection...", "profiles.test.ping": "Ping. Reply with OK.", "profiles.test.success": "Connection successful.", "profiles.test.error": "Connection failed. Check the model profile.",
-        "profiles.fleet": "Model fleet", "profiles.selected": "Selected model", "profiles.workspace": "Profile workspace", "profiles.tab.overview": "Overview", "profiles.tab.connection": "Connection", "profiles.tab.generation": "Generation", "profiles.tab.local": "Local runtime",
+        "profiles.fleet": "Models", "profiles.selected": "Selected model", "profiles.workspace": "Profile workspace", "profiles.tab.overview": "Overview", "profiles.tab.connection": "Connection", "profiles.tab.generation": "Generation", "profiles.tab.local": "Local runtime",
         "profiles.route.runtime.hint": "Executes assistant sessions and tool calls", "profiles.route.teacher.hint": "Sanitizes sensitive context before remote requests", "profiles.route.session.hint": "Names and summarizes saved sessions locally",
         "profiles.role.active": "Active model", "profiles.role.teacher": "Teacher model", "profiles.role.session": "Session model", "profiles.role.active.short": "A", "profiles.role.teacher.short": "T", "profiles.role.session.short": "S",
-        "profiles.section.basic.hint": "Set this model's identity, protocol, runtime, and availability.", "profiles.section.capabilities.hint": "Declare the inputs and responses this model supports.", "profiles.section.connection.hint": "Configure the endpoints and credentials used to reach this model.", "profiles.section.generation.hint": "Set default sampling, reasoning, and privacy behavior.", "profiles.section.local.hint": "Configure llama.cpp paths and hardware allocation."
+        "profiles.section.basic.hint": "Set this model's identity, protocol, runtime, and availability.", "profiles.section.capabilities.hint": "Declare the inputs and responses this model supports.", "profiles.section.connection.hint": "Configure the endpoints and credentials used to reach this model.", "profiles.section.generation.hint": "Set default sampling, reasoning, and privacy behavior.", "profiles.section.local.hint": "Configure llama.cpp paths and hardware allocation.",
+        "profiles.quick.title": "Connect this model", "profiles.quick.hint": "Add your API key, test the connection, and start using it.", "profiles.quick.local": "Local model - no API key needed", "profiles.advanced": "Advanced settings", "profiles.current": "Current model", "profiles.available": "Available model", "profiles.use_model": "Use this model"
     });
     let activeLocale = DEFAULT_LOCALE;
 
