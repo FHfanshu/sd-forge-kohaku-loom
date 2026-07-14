@@ -57,9 +57,14 @@ def _openai_request_body(payload: dict[str, Any], model: str, *, stream: bool = 
         body["tools"] = ASSISTANT_TOOLS
         body["tool_choice"] = "auto"
     is_deepseek = payload.get("_legacy_backend") == "deepseek" or urllib.parse.urlparse(str(payload.get("endpoint") or "")).netloc.lower() == "api.deepseek.com"
-    if payload.get("reasoning_enabled") is not False and is_deepseek:
-        body["reasoning_effort"] = str(payload.get("reasoning_effort") or "low")
-        body["extra_body"] = {"thinking": {"type": "enabled"}}
+    if is_deepseek:
+        effort = str(payload.get("reasoning_effort") or "high").strip().lower()
+        reasoning_enabled = payload.get("reasoning_enabled") is not False and effort != "none"
+        body["extra_body"] = {"thinking": {"type": "enabled" if reasoning_enabled else "disabled"}}
+        if reasoning_enabled:
+            body["reasoning_effort"] = "max" if effort in {"xhigh", "max"} else "high"
+            body.pop("temperature", None)
+            body.pop("top_p", None)
     return body
 
 

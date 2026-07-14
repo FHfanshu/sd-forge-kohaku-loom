@@ -45,6 +45,28 @@ test("tag requests load Danbooru rules alongside the active model guide", () => 
     assert.deepEqual(tools.automaticPromptSkillNames("create a Danbooru tag prompt"), ["anima_dit", "danbooru_tags"]);
 });
 
+test("tag requests are recognized for mandatory Danbooru preflight", () => {
+    assert.equal(tools.isDanbooruTagRequest("给我一个 Danbooru 标签提示词"), true);
+    assert.equal(tools.isDanbooruTagRequest("write a direct natural language prompt"), false);
+});
+
+test("batch Danbooru search forwards all queries", async () => {
+    const originalFetch = global.fetch;
+    let requested;
+    global.fetch = async (url) => {
+        requested = url;
+        return { ok: true, json: async () => ({ ok: true, items: [] }) };
+    };
+    try {
+        await tools.searchDanbooruTagsTool({ queries: ["blue hair", "long hair"] });
+    } finally {
+        global.fetch = originalFetch;
+    }
+    const url = new URL(requested, window.location.origin);
+    assert.deepEqual(JSON.parse(url.searchParams.get("queries")), ["blue hair", "long hair"]);
+    assert.equal(url.searchParams.get("query"), null);
+});
+
 test("message compaction keeps the first user goal and recent messages", () => {
     const messages = [{ role: "user", content: "original goal" }];
     for (let index = 0; index < 30; index += 1) messages.push({ role: "user", content: `Tool result for x: ${"x".repeat(4000)}` });

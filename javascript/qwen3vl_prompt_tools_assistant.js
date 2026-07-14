@@ -1,7 +1,7 @@
 (function () {
     const tools = window.q3vlPromptTools;
     if (!tools) return;
-    const { assistantConfig, assistantPanel, assistantState, compactAssistantMessages, compactToolResult, ensureAutomaticPromptSkills, executeAssistantTool, resourceToolResultLabel, tr, analyzeAssistantAttachmentWithGemini, assistantUsesGeminiVisionDelegate, updateAssistantStreamingMessage } = tools;
+    const { assistantConfig, assistantPanel, assistantState, compactAssistantMessages, compactToolResult, ensureAutomaticPromptSkills, executeAssistantTool, resourceToolResultLabel, tr, analyzeAssistantAttachmentWithGemini, assistantUsesGeminiVisionDelegate, updateAssistantStreamingMessage, danbooruPreflightMessage, danbooruPreflightState } = tools;
     function t(key, fallback) {
         if (typeof tr !== "function") return fallback;
         const value = tr(key);
@@ -44,12 +44,10 @@
         if (count === 4) return "converge";
         return count >= 6 ? "stop" : "execute";
     }
-
     function assistantToolNameFromText(value) {
         const name = String(value || "").trim();
         return ASSISTANT_TOOL_NAMES.includes(name) ? name : "";
     }
-
     function parseAssistantArguments(value) {
         if (!value) return {};
         if (typeof value === "string") {
@@ -82,7 +80,6 @@
         const rest = match[2].trim();
         return [{ tool: tool, arguments: rest ? parseAssistantArguments(rest) : {} }];
     }
-
     function normalizeAssistantToolCall(call, inferredName) {
         if (!call || typeof call !== "object" || Array.isArray(call)) return null;
         const fn = call.function && typeof call.function === "object" ? call.function : null;
@@ -95,7 +92,6 @@
         if (call.id) normalized.id = String(call.id);
         return normalized;
     }
-
     function collectAssistantToolCalls(parsed, inferredName) {
         if (!parsed) return [];
         if (Array.isArray(parsed)) {
@@ -111,7 +107,6 @@
         const normalized = normalizeAssistantToolCall(parsed, inferredName);
         return normalized ? [normalized] : [];
     }
-
     function tryParseAssistantToolCalls(raw, inferredName) {
         try {
             return collectAssistantToolCalls(JSON.parse(String(raw || "").trim()), inferredName);
@@ -122,7 +117,6 @@
             return parseAssistantFunctionText(value);
         }
     }
-
     function balancedJsonSegments(text, openChar, closeChar) {
         const value = String(text || "");
         const segments = [];
@@ -161,7 +155,6 @@
         }
         return segments;
     }
-
     function inferAssistantToolNameBefore(text, index) {
         const prefix = String(text || "").slice(Math.max(0, index - 180), index);
         let best = "";
@@ -172,7 +165,6 @@
         }
         return best;
     }
-
     function pushUniqueAssistantToolCalls(target, calls, seen) {
         for (const call of calls) {
             if (!call || !call.tool) continue;
@@ -182,29 +174,24 @@
             target.push(call);
         }
     }
-
     function parseAssistantTools(text) {
         let raw = String(text || "").trim();
         const result = [];
         const seen = new Set();
         raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
         pushUniqueAssistantToolCalls(result, tryParseAssistantToolCalls(raw), seen);
-
         const fenced = String(text || "").matchAll(/```(?:json|tool|function)?\s*([\s\S]*?)```/gi);
         for (const match of fenced) {
             pushUniqueAssistantToolCalls(result, tryParseAssistantToolCalls(match[1]), seen);
         }
-
         const blocks = String(text || "").matchAll(/<tool_call[^>]*>([\s\S]*?)<\/tool_call>/gi);
         for (const match of blocks) {
             pushUniqueAssistantToolCalls(result, tryParseAssistantToolCalls(match[1]), seen);
         }
-
         const pipeBlocks = String(text || "").matchAll(/<\|tool_call\|?>([\s\S]*?)<tool_call\|>/gi);
         for (const match of pipeBlocks) {
             pushUniqueAssistantToolCalls(result, tryParseAssistantToolCalls(match[1]), seen);
         }
-
         for (const segment of balancedJsonSegments(text, "{", "}")) {
             const inferredName = inferAssistantToolNameBefore(text, segment.start);
             pushUniqueAssistantToolCalls(result, tryParseAssistantToolCalls(segment.text, inferredName), seen);
@@ -214,12 +201,10 @@
         }
         return result;
     }
-
     function parseAssistantTool(text) {
         const calls = parseAssistantTools(text);
         return calls.length ? calls[0] : null;
     }
-
     function safeMarkdownHref(href) {
         const raw = String(href || "").trim();
         if (!raw) return "";
@@ -230,7 +215,6 @@
         } catch (_error) { }
         return "";
     }
-
     function appendInlineMarkdown(parent, text) {
         const value = String(text || "");
         let index = 0;
@@ -302,7 +286,6 @@
             appendText(Math.min.apply(Math, nextSpecials));
         }
     }
-
     function appendInlineMarkdownWithBreaks(parent, text) {
         String(text || "").split("\n").forEach(function (line, index) {
             if (index > 0) parent.appendChild(document.createElement("br"));
@@ -449,7 +432,6 @@
         log.scrollTop = log.scrollHeight;
         return item;
     }
-
     function updateAssistantMessage(item, role, text) {
         if (!item) return;
         if (role === "assistant" || role === "tool") {
@@ -487,34 +469,35 @@
             media.appendChild(name);
             item.appendChild(media);
         }
-        const rewindBtn = document.createElement("button");
-        rewindBtn.type = "button";
-        rewindBtn.className = "q3vl-assistant-rewind";
-        rewindBtn.title = t("assistant.rewind", "编辑并重新发送");
-        rewindBtn.setAttribute("aria-label", t("assistant.rewind", "编辑并重新发送"));
-        rewindBtn.textContent = t("assistant.edit", "编辑");
-        item.appendChild(rewindBtn);
-        rewindBtn.addEventListener("click", function () {
-            assistantState.messages.splice(rewindIndex);
-            let node = item.nextElementSibling;
-            while (node) {
-                const next = node.nextElementSibling;
-                node.remove();
-                node = next;
-            }
-            item.remove();
-            const input = assistantPanel()?.querySelector("#q3vl_assistant_input");
-            if (input && (inputText || text)) {
-                input.value = inputText || text;
-                input.dispatchEvent(new Event("input", { bubbles: true }));
-                input.focus();
-            }
-            if (attachment) setAssistantAttachment(attachment);
-        });
+        if (!assistantState.durableSessions) {
+            const rewindBtn = document.createElement("button");
+            rewindBtn.type = "button";
+            rewindBtn.className = "q3vl-assistant-rewind";
+            rewindBtn.title = t("assistant.rewind", "编辑并重新发送");
+            rewindBtn.setAttribute("aria-label", t("assistant.rewind", "编辑并重新发送"));
+            rewindBtn.textContent = t("assistant.edit", "编辑");
+            item.appendChild(rewindBtn);
+            rewindBtn.addEventListener("click", function () {
+                assistantState.messages.splice(rewindIndex);
+                let node = item.nextElementSibling;
+                while (node) {
+                    const next = node.nextElementSibling;
+                    node.remove();
+                    node = next;
+                }
+                item.remove();
+                const input = assistantPanel()?.querySelector("#q3vl_assistant_input");
+                if (input && (inputText || text)) {
+                    input.value = inputText || text;
+                    input.dispatchEvent(new Event("input", { bubbles: true }));
+                    input.focus();
+                }
+                if (attachment) tools.setAssistantAttachments?.([attachment]);
+            });
+        }
         log.appendChild(item);
         log.scrollTop = log.scrollHeight;
     }
-
     function truncateAssistantText(text, limit) {
         const value = String(text || "").trim();
         return value.length > limit ? `${value.slice(0, limit)}...` : value;
@@ -552,62 +535,6 @@
         }
         return await response.json();
     }
-    function setAssistantAttachment(attachment) {
-        assistantState.attachment = attachment;
-        renderAssistantAttachment();
-    }
-
-    function renderAssistantAttachment() {
-        const panel = assistantPanel();
-        const holder = panel?.querySelector("#q3vl_assistant_attachment");
-        if (!holder) return;
-        holder.textContent = "";
-        holder.classList.toggle("q3vl-assistant-attachment-empty", !assistantState.attachment);
-        if (!assistantState.attachment) return;
-        const image = document.createElement("img");
-        image.src = assistantState.attachment.dataUrl;
-        image.alt = assistantState.attachment.name || "reference image";
-        const meta = document.createElement("div");
-        meta.className = "q3vl-assistant-attachment-meta";
-        const title = document.createElement("strong");
-        title.textContent = assistantState.attachment.name || "reference image";
-        const hint = document.createElement("span");
-        hint.textContent = "本地多模态模型先分析/脱敏，再给 Gemini 教师";
-        meta.appendChild(title);
-        meta.appendChild(hint);
-        const remove = document.createElement("button");
-        remove.type = "button";
-        remove.className = "q3vl-assistant-chip-button";
-        remove.textContent = "移除";
-        remove.addEventListener("click", function () { setAssistantAttachment(null); });
-        holder.appendChild(image);
-        holder.appendChild(meta);
-        holder.appendChild(remove);
-    }
-
-    function readAssistantImageFile(file) {
-        return new Promise(function (resolve, reject) {
-            if (!file) {
-                reject(new Error("no file selected"));
-                return;
-            }
-            if (!String(file.type || "").startsWith("image/")) {
-                reject(new Error("请选择图片文件。"));
-                return;
-            }
-            if (file.size > 24 * 1024 * 1024) {
-                reject(new Error("图片太大，请选择 24 MB 以下的文件。"));
-                return;
-            }
-            const reader = new FileReader();
-            reader.onload = function () {
-                resolve({ name: file.name, dataUrl: String(reader.result || "") });
-            };
-            reader.onerror = function () { reject(new Error("读取图片失败。")); };
-            reader.readAsDataURL(file);
-        });
-    }
-
     function formatAssistantTokenStatus(usage) {
         const input = Number(usage && usage.input_tokens) || 0;
         const output = Number(usage && usage.output_tokens) || 0;
@@ -675,6 +602,7 @@
             if (event.usage && typeof onProgress === "function") onProgress(event.usage);
             if (event.type === "delta") result.text += event.text || "";
             if (event.type === "reasoning_delta") result.reasoning += event.text || "";
+            if (event.type === "checkpoint") result.checkpoint = event;
             if (["delta", "reasoning_delta"].includes(event.type)) {
                 if (typeof onProgress === "function") onProgress(event.usage || result.usage, { text: result.text, reasoning: result.reasoning });
                 return;
@@ -813,6 +741,7 @@
         let userMessageSent = false;
         let promptEdited = false;
         let missingEditCorrectionSent = false;
+        const danbooruPreflight = typeof danbooruPreflightState === "function" ? danbooruPreflightState(effectiveText) : { required: false, completed: true };
         if (effectiveText || attachment) {
             addAssistantUserMessage(displayText === undefined ? effectiveText : displayText, attachment, effectiveText);
         }
@@ -885,6 +814,16 @@
                         addAssistantMessage("error", "Gemini 返回了空内容，未检测到文本或工具调用。请重试；如果反复出现，降低 thinking/提高 Max tokens 或检查模型安全拦截。 ");
                         return;
                     }
+                    if (!danbooruPreflight.completed) {
+                        assistantState.messages.push({ role: "assistant", content: text || "No Danbooru search returned." });
+                        if (!danbooruPreflight.correctionSent) {
+                            danbooruPreflight.correctionSent = true;
+                            assistantState.messages.push({ role: "user", content: typeof danbooruPreflightMessage === "function" ? danbooruPreflightMessage() : "Call search_danbooru_tags before answering." });
+                            continue;
+                        }
+                        addAssistantMessage("error", "助手未完成 Danbooru 候选检索，已阻止输出 tag prompt。请重试。");
+                        return;
+                    }
                     if (mustMutateUi && !promptEdited) {
                         assistantState.messages.push({ role: "assistant", content: text || "No tool call returned." });
                         if (!missingEditCorrectionSent) {
@@ -924,8 +863,14 @@
                     run.lastTool = signature;
                     const repeatedAction = assistantRepeatedToolAction(toolName, run.repeatedTool);
                     if (repeatedAction === "stop") throw new Error(`模型连续重复调用工具 ${toolName}，已停止以避免无进展循环。`);
-                    const toolResult = await executeAssistantTool(tool, run.controller.signal);
+                    let toolResult;
+                    if (!danbooruPreflight.completed && toolName !== "search_danbooru_tags") {
+                        toolResult = { ok: false, error: "Danbooru tag preflight requires search_danbooru_tags before this tool" };
+                    } else {
+                        toolResult = await executeAssistantTool(tool, run.controller.signal);
+                    }
                     assertAssistantRunActive(run);
+                    if (toolName === "search_danbooru_tags" && toolResult.ok) danbooruPreflight.completed = true;
                     if (assistantToolMutatesPrompt(toolName) && toolResult.ok) promptEdited = true;
                     addAssistantMessage("tool", assistantToolResultLabel(toolName, toolResult));
                     const serialized = typeof compactToolResult === "function" ? compactToolResult(toolResult, 64000) : JSON.stringify(toolResult);
@@ -980,11 +925,7 @@
         addAssistantMessage,
         updateAssistantMessage,
         addAssistantUserMessage,
-        truncateAssistantText, renderAssistantMarkdown, assistantToolResultLabel,
-        analyzeAssistantAttachment,
-        setAssistantAttachment,
-        renderAssistantAttachment,
-        readAssistantImageFile,
+        truncateAssistantText, assistantToolResultLabel, analyzeAssistantAttachment,
         cancelAssistantRun,
         formatAssistantTokenStatus,
         readPromptAssistantStream,

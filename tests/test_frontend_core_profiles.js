@@ -39,7 +39,7 @@ test("assistant config projects only the explicitly selected profile", () => {
         }
     };
     const store = {
-        load() { return { active_profile_id: "active", teacher_profile_id: "teacher", profiles }; },
+        load() { return { active_profile_id: "active", teacher_profile_id: "teacher", session_profile_id: "", profiles }; },
         requestProjection(id) { return JSON.parse(JSON.stringify(projections[id])); }
     };
     const tools = loadCore(store);
@@ -52,8 +52,32 @@ test("assistant config projects only the explicitly selected profile", () => {
     assert.equal(teacher.stream, false);
 });
 
+test("assistant config projects the configured local session metadata profile", () => {
+    const profiles = [
+        { id: "active", enabled: true, display_name: "Active", runtime: "remote-http" },
+        { id: "metadata", enabled: true, display_name: "Metadata", runtime: "llama-endpoint" }
+    ];
+    const store = {
+        load() { return { active_profile_id: "active", teacher_profile_id: "active", session_profile_id: "metadata", profiles }; },
+        requestProjection(id) { return { profile_id: id, protocol: "openai-chat-completions", runtime: id === "metadata" ? "llama-endpoint" : "remote-http", endpoint: "http://localhost/v1", model: `${id}-model`, capabilities: {}, parameters: {} }; }
+    };
+    const config = loadCore(store).assistantConfig();
+    assert.equal(config.session_profile_id, "metadata");
+    assert.equal(config.session_profile.profile_id, "metadata");
+    assert.equal(config.session_profile.runtime, "llama-endpoint");
+});
+
 test("positive prompt guard detects no-phrase exclusions", () => {
     const tools = loadCore(null);
     assert.deepEqual(tools.positivePromptNoPhrases("portrait, no hat, no background"), ["no hat", "no background"]);
     assert.deepEqual(tools.positivePromptNoPhrases("portrait, noir lighting"), []);
+});
+
+test("replace_n scans the original prompt and cannot replace its own output", () => {
+    const tools = loadCore(null);
+    assert.deepEqual(
+        tools.applyPromptPatchText("a a", { operation: "replace_n", find: "a", replace: "aa", count: 2 }),
+        { ok: true, text: "aa aa", changed: 2 }
+    );
+    assert.equal(tools.applyPromptPatchText("a", { operation: "replace_n", find: "a", replace: "aa", count: 1000000000 }).ok, false);
 });

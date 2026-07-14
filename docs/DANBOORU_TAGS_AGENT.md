@@ -12,6 +12,8 @@ Sources retrieved 2026-07-12:
 
 Use this reference only when the user explicitly asks for Danbooru, Gelbooru, booru tags, tag normalization, tag review, tag-style prompts, or tag-wiki guidance. Do not force tag syntax into an ordinary natural-language prompt unless requested. Natural-language prompts do not need a Danbooru lookup; keep them direct and visually clear.
 
+Tag requests have a mandatory preflight gate: before writing a final tag prompt or editing the WebUI, extract 2-12 short English visual concepts from the user's request and make one `search_danbooru_tags` call with `queries`. This applies to Chinese requests and unfamiliar terminology. Use the resulting candidates to form the prompt; do not bypass the search because a term seems familiar.
+
 For tag output:
 
 1. Describe visible facts only. Do not tag facts known from canon, filenames, metadata, or prior context unless they are visible or the user explicitly asks for catalog metadata.

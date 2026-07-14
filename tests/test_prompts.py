@@ -7,7 +7,7 @@ from lib_qwen3vl_prompt_tools.assistant import _prompt_assistant_chat_once, ask_
 from lib_qwen3vl_prompt_tools.assistant_common import _assistant_request_messages
 from lib_qwen3vl_prompt_tools.constants import DEFAULT_ASSISTANT_BACKEND, DEFAULT_ASSISTANT_MODEL
 from lib_qwen3vl_prompt_tools.generic import _PromptSanitizer, _restore_gemini_result
-from lib_qwen3vl_prompt_tools.assistant_gemini import _assistant_use_gemini_native, _gemini_request_body, _gemini_sdk_contents, _prompt_assistant_chat_gemini
+from lib_qwen3vl_prompt_tools.assistant_gemini import _assistant_use_gemini_native, _gemini_request_body, _gemini_sdk_contents, _gemini_tools, _prompt_assistant_chat_gemini
 from lib_qwen3vl_prompt_tools.assistant_teacher import qwen_teacher_enabled
 from lib_qwen3vl_prompt_tools.images import prepare_image
 from lib_qwen3vl_prompt_tools.prompts import build_caption_chat, build_enhance_chat, clean_generation
@@ -84,6 +84,13 @@ class PromptToolsTests(unittest.TestCase):
         self.assertNotIn("toolConfig", body)
         self.assertIn("Tools are disabled", body["systemInstruction"]["parts"][0]["text"])
         self.assertEqual({"thinkingLevel": "LOW"}, body["generationConfig"]["thinkingConfig"])
+
+    def test_gemini_danbooru_search_schema_is_relay_compatible(self):
+        declarations = _gemini_tools()[0]["functionDeclarations"]
+        search = next(item for item in declarations if item["name"] == "search_danbooru_tags")
+        self.assertEqual(["queries"], search["parameters"]["required"])
+        self.assertNotIn("anyOf", search["parameters"])
+        self.assertNotIn("query", search["parameters"]["properties"])
 
     def test_gemini_redacted_output_keeps_safe_slots(self):
         from lib_qwen3vl_prompt_tools.assistant_gemini import _redact_gemini_result

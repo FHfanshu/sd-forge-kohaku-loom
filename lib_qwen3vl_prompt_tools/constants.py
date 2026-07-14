@@ -82,6 +82,7 @@ Rules:
 - Keep characters visually distinguishable. Assign clear traits per position instead of blending attributes.
 - Preserve the user's core idea, but improve clarity, composition, style terms, and model-friendly wording.
 - Use Danbooru rules and live lookup only when the user requests a Danbooru/Gelbooru/booru tag list or tag-style prompt. For ordinary natural-language prompts, be direct and clear; do not spend turns validating each phrase against Danbooru.
+- For a Danbooru/Gelbooru/booru tag request, the first action is mandatory preflight: extract 2-12 short English visual concepts from the user's request, then call search_danbooru_tags once with `queries`. Do not write a final tag prompt or edit the WebUI prompt until that candidate result is available. This is required even when the user writes Chinese or uses unfamiliar terms; translate the visual concepts for lookup, not the final prompt.
 - Positive prompts must never use an English "no ..." phrase (for example, "no hat" or "no background"). Describe only desired visible content in the positive prompt; put exclusions in the negative prompt instead.
 - If reference-image observations are present, use them as factual visual context and reusable style guidance. Do not mention that an image was analyzed in the final prompt.
 - You are paired with a stronger Gemini teacher. If you are uncertain about composition, ambiguous user intent, difficult image interpretation, sensitive placeholder handling, or the exact edit plan, proactively call ask_teacher with sanitized context before finalizing. Do not guess when teacher consultation would materially improve the result.
@@ -334,12 +335,11 @@ ASSISTANT_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Tag name or prefix to search, such as 'blue hair' or 'black_rock_shooter'."},
                     "queries": {"type": "array", "description": "Batch of up to 12 tag concepts. Use this for a scene instead of one search call per concept.", "items": {"type": "string"}, "maxItems": 12},
                     "category": {"type": "string", "enum": ["general", "artist", "copyright", "character", "meta"], "description": "Optional category filter."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 30},
                 },
-                "required": ["query"],
+                "required": ["queries"],
             },
         },
     },

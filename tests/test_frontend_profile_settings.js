@@ -59,7 +59,8 @@ test("profile setting visibility follows runtime and capabilities", () => {
         local: false,
         mmproj_path: false,
         thinking: false,
-        reasoning_effort: true
+        reasoning_effort: true,
+        temperature: true
     });
     assert.deepEqual(tools.profileSettingsVisibility({
         runtime: "llama-once",
@@ -71,7 +72,8 @@ test("profile setting visibility follows runtime and capabilities", () => {
         local: true,
         mmproj_path: false,
         thinking: false,
-        reasoning_effort: false
+        reasoning_effort: false,
+        temperature: true
     });
     const endpoint = tools.profileSettingsVisibility({
         runtime: "llama-endpoint",

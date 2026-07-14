@@ -34,6 +34,7 @@ test("defaults contain exactly the five canonical profiles", () => {
     assert.equal(state.version, 2);
     assert.equal(state.active_profile_id, "moyuu-gemini");
     assert.equal(state.teacher_profile_id, "moyuu-gemini");
+    assert.equal(state.session_profile_id, "local-qwen-once");
     assert.deepEqual(state.profiles.map((profile) => profile.id), [
         "moyuu-gemini", "grok", "deepseek", "local-llama-endpoint", "local-qwen-once"
     ]);
@@ -89,7 +90,7 @@ test("serialization persists only canonical profile fields", () => {
     const profile = JSON.parse(tools.serializeProfileState(state)).profiles[0];
     assert.deepEqual(Object.keys(profile), [
         "id", "display_name", "enabled", "protocol", "runtime", "endpoint", "fallback_endpoints", "model_id",
-        "api_key", "capabilities", "parameters", "model_path", "mmproj_path", "llama_server_path", "n_ctx",
+        "api_key", "capabilities", "parameters", "model_info", "model_path", "mmproj_path", "llama_server_path", "n_ctx",
         "n_gpu_layers", "thinking"
     ]);
     assert.equal(Object.hasOwn(profile, "name"), false);
@@ -298,10 +299,13 @@ test("refresh persistence retains profile selection and independent keys", () =>
     tools.profileStore.update("deepseek", { api_key: "key-b" });
     tools.profileStore.setActive("deepseek");
     tools.profileStore.setTeacher("local-qwen-once");
+    tools.profileStore.setSession("local-llama-endpoint");
 
     tools = loadModule(storage);
     assert.equal(tools.profileStore.current().id, "deepseek");
     assert.equal(tools.profileStore.current().api_key, "key-b");
     assert.equal(tools.profileStore.teacher().id, "local-qwen-once");
+    assert.equal(tools.profileStore.session().id, "local-llama-endpoint");
+    assert.throws(() => tools.profileStore.setSession("deepseek"), /non-local profile/);
     assert.equal(tools.profileStore.load().profiles.find((profile) => profile.id === "moyuu-gemini").api_key, "key-a");
 });

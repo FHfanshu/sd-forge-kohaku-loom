@@ -80,6 +80,8 @@ def resolve_vision_model_pair(preset: str, model_path: str, mmproj_path: str, ne
     preset = preset if preset in VISION_MODEL_PRESETS or preset == VISION_MODEL_PRESET_CUSTOM else DEFAULT_VISION_MODEL_PRESET
     model = model_path.strip().strip('"')
     mmproj = mmproj_path.strip().strip('"')
+    if _is_remote_windows_path(model) or _is_remote_windows_path(mmproj):
+        raise RuntimeError("拒绝远程或设备模型路径。")
     model_exists = bool(model) and Path(model).exists()
     mmproj_exists = bool(mmproj) and Path(mmproj).exists()
 
@@ -110,6 +112,8 @@ def resolve_vision_model_pair(preset: str, model_path: str, mmproj_path: str, ne
 def ensure_local_gguf_pair(model_path: str, mmproj_path: str, need_mmproj: bool) -> tuple[str, str]:
     model = model_path.strip().strip('"')
     mmproj = mmproj_path.strip().strip('"')
+    if _is_remote_windows_path(model) or _is_remote_windows_path(mmproj):
+        raise RuntimeError("拒绝远程或设备模型路径。")
     model_exists = bool(model) and Path(model).exists()
     mmproj_exists = bool(mmproj) and Path(mmproj).exists()
     if model_exists and (mmproj_exists or not need_mmproj):
@@ -132,7 +136,7 @@ def ensure_local_gguf_pair(model_path: str, mmproj_path: str, need_mmproj: bool)
 
 def find_default_llama_server() -> str:
     env_path = os.environ.get("LLAMA_SERVER_EXE", "").strip().strip('"')
-    if env_path and Path(env_path).exists():
+    if env_path and not _is_remote_windows_path(env_path) and Path(env_path).is_file():
         return env_path
     bundled = _llama_cpp_bin_dir() / "llama-server.exe"
     if bundled.exists():
@@ -145,10 +149,39 @@ def find_default_llama_server() -> str:
     return found or ""
 
 
+def _is_remote_windows_path(path: str) -> bool:
+    cleaned = str(path or "").strip().replace("/", "\\")
+    return cleaned.startswith("\\\\")
+
+
+def _trusted_llama_server_paths() -> set[Path]:
+    candidates = [
+        os.environ.get("LLAMA_SERVER_EXE", "").strip().strip('"'),
+        str(_llama_cpp_bin_dir() / "llama-server.exe"),
+        *DEFAULT_LLAMA_SERVER_CANDIDATES,
+        shutil.which("llama-server.exe") or shutil.which("llama-server") or "",
+    ]
+    trusted: set[Path] = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if _is_remote_windows_path(candidate):
+            continue
+        path = Path(candidate)
+        if path.is_file():
+            trusted.add(path.resolve())
+    return trusted
+
+
 def resolve_llama_server(path: str) -> str:
     cleaned = path.strip().strip('"')
-    if cleaned and Path(cleaned).exists():
-        return cleaned
+    if cleaned:
+        if _is_remote_windows_path(cleaned):
+            raise RuntimeError("拒绝远程或设备 llama-server 路径。")
+        requested = Path(cleaned)
+        if not requested.is_file() or requested.resolve() not in _trusted_llama_server_paths():
+            raise RuntimeError("拒绝请求中未受信任的 llama-server 路径；请通过 LLAMA_SERVER_EXE 配置服务端可执行文件。")
+        return str(requested.resolve())
     found = find_default_llama_server()
     if found:
         return found

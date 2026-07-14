@@ -24,7 +24,8 @@
             local: local,
             mmproj_path: local && Boolean(capabilities.vision),
             thinking: local && Boolean(capabilities.reasoning),
-            reasoning_effort: Boolean(capabilities.reasoning)
+            reasoning_effort: Boolean(capabilities.reasoning),
+            temperature: value.model_info?.temperature_supported !== false
         };
     }
 
@@ -35,6 +36,21 @@
             disable_tools: true,
             teacher_mode: "regex",
             qwen_teacher_enabled: false
+        });
+    }
+
+    function reasoningOptions(profile) {
+        const labels = {
+            none: ["profiles.reasoning.none", "关闭"], minimal: ["profiles.reasoning.minimal", "最小"],
+            low: ["profiles.reasoning.low", "低"], medium: ["profiles.reasoning.medium", "中"],
+            high: ["profiles.reasoning.high", "高"], xhigh: ["profiles.reasoning.xhigh", "极高"], max: ["profiles.reasoning.max", "最大"]
+        };
+        const info = profile?.model_info || {};
+        let values = Array.isArray(info.reasoning_efforts) && info.reasoning_efforts.length ? info.reasoning_efforts.slice() : ["low", "high", "max"];
+        if (info.reasoning_toggle && !values.includes("none")) values.unshift("none");
+        if (info.source !== "models.dev" && !values.includes(profile?.parameters?.reasoning_effort)) values.push(profile?.parameters?.reasoning_effort || "low");
+        return values.filter(function (value, index) { return labels[value] && values.indexOf(value) === index; }).map(function (value) {
+            return [value, labels[value][0], labels[value][1]];
         });
     }
 
@@ -224,6 +240,31 @@
         ].forEach(function (config) { basicGrid.appendChild(createInputField(panel, profile, config)); });
         basicGrid.appendChild(createSwitchField(panel, profile, "enabled", "profiles.enabled", "Enabled"));
         basic.appendChild(basicGrid);
+        if (profile.runtime === "remote-http" && typeof tools.syncProfileFromModelsDev === "function") {
+            const catalogRow = document.createElement("div");
+            catalogRow.className = "q3vl-profile-catalog-row";
+            const syncButton = button(t("profiles.models_dev.sync", "从 models.dev 获取参数"), "q3vl-profile-secondary");
+            const source = document.createElement("span");
+            source.className = "q3vl-profile-catalog-status";
+            source.textContent = profile.model_info?.source === "models.dev"
+                ? `${profile.model_info.provider_id}/${profile.model_info.matched_model_id}` : t("profiles.models_dev.hint", "同步能力、输出上限与推理档位");
+            syncButton.addEventListener("click", async function () {
+                syncButton.disabled = true;
+                updateStatus(panel, t("profiles.models_dev.loading", "正在查询 models.dev..."), "pending");
+                try {
+                    const result = await tools.syncProfileFromModelsDev(profile);
+                    const updated = persistPatch(panel, profile, result.patch);
+                    if (!updated) throw new Error("profile update failed");
+                    updateStatus(panel, t("profiles.models_dev.success", "已从 models.dev 更新模型参数。"), "success");
+                    renderModelProfileSettings();
+                } catch (_error) {
+                    updateStatus(panel, t("profiles.models_dev.error", "models.dev 未找到完全匹配的模型。"), "error");
+                    syncButton.disabled = false;
+                }
+            });
+            catalogRow.append(syncButton, source);
+            basic.appendChild(catalogRow);
+        }
 
         const connection = section(t("profiles.section.connection", "Connection"));
         const connectionGrid = document.createElement("div");
@@ -257,13 +298,14 @@
         [
             { path: "parameters.temperature", key: "profiles.temperature", label: "Temperature", type: "number", min: "0", max: "2", step: "0.05" },
             { path: "parameters.top_p", key: "profiles.top_p", label: "Top P", type: "number", min: "0", max: "1", step: "0.05" },
-            { path: "parameters.max_tokens", key: "profiles.max_tokens", label: "Max tokens", type: "number", min: "1", max: "1048576", step: "1" },
-            { path: "parameters.reasoning_effort", key: "profiles.reasoning_effort", label: "Reasoning effort", type: "select", options: [["low", "profiles.reasoning.low", "Low"], ["high", "profiles.reasoning.high", "High"], ["max", "profiles.reasoning.max", "Max"]] },
+            { path: "parameters.max_tokens", key: "profiles.max_tokens", label: "Max tokens", type: "number", min: "1", max: String(profile.model_info?.output_limit || 1048576), step: "1" },
+            { path: "parameters.reasoning_effort", key: "profiles.reasoning_effort", label: "Reasoning effort", type: "select", options: reasoningOptions(profile) },
             { path: "parameters.timeout", key: "profiles.timeout", label: "Timeout (seconds)", type: "number", min: "1", max: "3600", step: "1" },
             { path: "parameters.teacher_mode", key: "profiles.teacher_mode", label: "Teacher mode", type: "select", options: [["qwen-redact", "profiles.teacher_mode.qwen", "Qwen redaction"], ["regex", "profiles.teacher_mode.regex", "Placeholder redaction"]] }
         ].forEach(function (config) {
             const field = createInputField(panel, profile, config);
             if (config.path === "parameters.reasoning_effort") field.dataset.profileVisible = "reasoning_effort";
+            if (config.path === "parameters.temperature") field.dataset.profileVisible = "temperature";
             generationGrid.appendChild(field);
         });
         generationGrid.appendChild(createSwitchField(panel, profile, "parameters.sanitize_sensitive", "profiles.sanitize_sensitive", "Sanitize sensitive content"));
@@ -338,6 +380,13 @@
             teacher.appendChild(option(item.id, item.display_name));
         });
         teacher.value = state.teacher_profile_id;
+        const session = panel.querySelector("#q3vl_session_profile");
+        session.replaceChildren();
+        state.profiles.filter(function (item) { return item.enabled && ["llama-endpoint", "llama-once"].includes(item.runtime); }).forEach(function (item) {
+            session.appendChild(option(item.id, item.display_name));
+        });
+        session.value = state.session_profile_id;
+        session.disabled = !session.options.length;
         const editorHost = panel.querySelector("#q3vl_profile_editor_host");
         editorHost.replaceChildren(createEditor(panel, state, profile));
         applyProfileVisibility(panel, profile);
@@ -402,6 +451,20 @@
             dispatchProfileChange(tools.profileStore.load());
         });
         teacherLabel.appendChild(teacher);
+        const sessionLabel = document.createElement("label");
+        sessionLabel.className = "q3vl-profile-teacher";
+        sessionLabel.appendChild(fieldLabel("profiles.session_profile", "Session title and summary"));
+        const session = document.createElement("select");
+        session.id = "q3vl_session_profile";
+        session.addEventListener("change", function () {
+            tools.profileStore.setSession(session.value);
+            updateStatus(panel, t("profiles.status.saved", "Saved"), "success");
+            dispatchProfileChange(tools.profileStore.load());
+        });
+        sessionLabel.appendChild(session);
+        const roleSelectors = document.createElement("div");
+        roleSelectors.className = "q3vl-profile-role-selectors";
+        roleSelectors.append(teacherLabel, sessionLabel);
         const close = button("×", "q3vl-profile-close");
         close.title = t("profiles.close", "Close");
         close.setAttribute("aria-label", t("profiles.close", "Close"));
@@ -409,7 +472,7 @@
             panel.classList.remove("q3vl-config-open");
             settingsReturnFocus?.focus();
         });
-        header.append(titleGroup, teacherLabel, close);
+        header.append(titleGroup, roleSelectors, close);
 
         const body = document.createElement("div");
         body.className = "q3vl-profile-layout";
@@ -514,7 +577,6 @@
         const panel = setupModelProfileSettingsWindow();
         if (!panel) return null;
         settingsReturnFocus = document.activeElement;
-        document.getElementById("q3vl_assistant_panel")?.classList.remove("q3vl-assistant-open");
         renderModelProfileSettings();
         panel.classList.add("q3vl-config-open");
         window.requestAnimationFrame(function () { panel.querySelector(".q3vl-profile-list-item[aria-selected='true']")?.focus(); });
@@ -524,6 +586,7 @@
     Object.assign(tools, {
         profileProtocolAbbreviation: protocolAbbreviation,
         profileSettingsVisibility: profileSettingsVisibility,
+        profileReasoningOptions: reasoningOptions,
         buildModelProfileTestPayload: buildModelProfileTestPayload,
         setupModelProfileSettingsWindow: setupModelProfileSettingsWindow,
         openModelProfileSettings: openModelProfileSettings,

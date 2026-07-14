@@ -12,9 +12,9 @@
         assistantConfig,
         runAssistantLoop,
         cancelAssistantRun,
-        setAssistantAttachment,
-        renderAssistantAttachment,
-        readAssistantImageFile,
+        setAssistantAttachments,
+        renderAssistantAttachments,
+        readAssistantImageFiles,
         addAssistantMessage,
         profileStore,
         openModelProfileSettings,
@@ -36,7 +36,7 @@
         stop: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
         model: '<path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6zM18.5 16l.8 2.7 2.7.8-2.7.8-.8 2.7-.8-2.7-2.7-.8 2.7-.8z"/>',
         chevron: '<path d="m8 10 4 4 4-4"/>',
-        reasoning: '<rect class="q3vl-effort-low" x="4" y="14" width="3" height="6" rx="1"/><rect class="q3vl-effort-high" x="10.5" y="9" width="3" height="11" rx="1"/><rect class="q3vl-effort-max" x="17" y="4" width="3" height="16" rx="1"/>'
+        reasoning: '<path d="M9.5 4A2.5 2.5 0 0 1 12 6.5v11a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.98-3.12 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.68A2.5 2.5 0 0 1 9.5 4Z"/><path d="M14.5 4A2.5 2.5 0 0 0 12 6.5v11a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.98-3.12 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.68A2.5 2.5 0 0 0 14.5 4Z"/><path d="M7 9.5h2M15 9.5h2M7.5 14h1.5M15 14h1.5"/>'
     };
 
     function assistantIcon(name) {
@@ -71,11 +71,15 @@
                 return option;
             }));
         }
+        if (typeof tools.syncAssistantReasoningControl === "function") {
+            tools.syncAssistantReasoningControl();
+            return;
+        }
         const effort = active?.parameters?.reasoning_effort || "low";
         const effortButton = document.querySelector("#q3vl_assistant_reasoning");
         if (effortButton) {
             effortButton.dataset.q3vlEffort = effort;
-            const effortLabel = effort === "max" ? t("settings.reasoning_max", "最大") : effort === "high" ? t("settings.reasoning_high", "高") : t("settings.reasoning_low", "低");
+            const effortLabel = effort === "none" ? t("settings.reasoning_none", "关闭") : effort === "max" ? t("settings.reasoning_max", "最大") : effort === "high" ? t("settings.reasoning_high", "高") : t("settings.reasoning_low", "低");
             const text = effortButton.querySelector("span");
             if (text) text.textContent = effort;
             effortButton.title = `${t("settings.reasoning_effort", "推理强度")}: ${effortLabel}`;
@@ -83,9 +87,9 @@
         }
     }
 
-    function acceptAssistantImageFile(file) {
-        return readAssistantImageFile(file)
-            .then(setAssistantAttachment)
+    function acceptAssistantImageFiles(files) {
+        return readAssistantImageFiles(files)
+            .then(function (attachments) { tools.appendAssistantAttachments(attachments); })
             .catch(function (error) { addAssistantMessage("error", String(error.message || error)); });
     }
 
@@ -114,15 +118,15 @@
         panel.setAttribute("aria-label", t("assistant.title", "LLM 提示词助手"));
         panel.innerHTML = `
             <div class="q3vl-assistant-head"><div class="q3vl-assistant-brand"><div><strong>${t("assistant.title", "LLM 提示词助手")}</strong></div></div><div class="q3vl-assistant-head-buttons"><button type="button" id="q3vl_assistant_sessions" class="q3vl-assistant-icon-button" title="会话历史" aria-label="会话历史">☰</button><button type="button" id="q3vl_assistant_new_session" class="q3vl-assistant-icon-button" title="新建会话" aria-label="新建会话">＋</button><button type="button" id="q3vl_assistant_settings_open" class="q3vl-assistant-icon-button" title="${t("assistant.settings", "设置")}" aria-label="${t("assistant.settings", "设置")}">⚙</button><button type="button" id="q3vl_assistant_close" class="q3vl-assistant-close" title="${t("assistant.close", "关闭")}" aria-label="${t("assistant.close", "关闭")}">×</button></div></div>
-            <div id="q3vl_assistant_messages" role="log" aria-live="polite"><div class="q3vl-assistant-empty"><strong>${t("assistant.empty.title", "从当前提示词开始")}</strong><div class="q3vl-assistant-quick-actions"><button type="button" data-q3vl-assistant-prompt="Read the current prompt and style template, then analyze its subject, composition, camera, lighting, and spatial relationships. Do not edit it.">${t("assistant.quick.analyze", "分析结构")}</button><button type="button" data-q3vl-assistant-prompt="Read the current prompt, then improve its composition and spatial relationships. Apply the changes directly with edit_prompt.">${t("assistant.quick.compose", "强化构图")}</button><button type="button" data-q3vl-assistant-prompt="Read the current prompt, remove redundancy and ambiguity while preserving its intent. Apply the refined prompt directly with edit_prompt.">${t("assistant.quick.refine", "精炼表达")}</button></div></div></div>
+            <div id="q3vl_assistant_messages" role="log" aria-live="polite"><div class="q3vl-assistant-empty"><div class="q3vl-assistant-quick-actions"><button type="button" data-q3vl-assistant-prompt="Read the current prompt and style template, then analyze its subject, composition, camera, lighting, and spatial relationships. Do not edit it.">${t("assistant.quick.analyze", "分析结构")}</button><button type="button" data-q3vl-assistant-prompt="Read the current prompt, then improve its composition and spatial relationships. Apply the changes directly with edit_prompt.">${t("assistant.quick.compose", "强化构图")}</button><button type="button" data-q3vl-assistant-prompt="Read the current prompt, remove redundancy and ambiguity while preserving its intent. Apply the refined prompt directly with edit_prompt.">${t("assistant.quick.refine", "精炼表达")}</button></div></div></div>
             <div class="q3vl-assistant-composer">
                 <div id="q3vl_assistant_attachment" class="q3vl-assistant-attachment q3vl-assistant-attachment-empty"></div>
                 <textarea id="q3vl_assistant_input" rows="1" aria-label="${t("assistant.input.placeholder", "描述你想分析、补充或修改的提示词内容...")}" placeholder="${t("assistant.input.placeholder", "描述你想分析、补充或修改的提示词内容...")}"></textarea>
                 <div class="q3vl-assistant-actions">
                     <div class="q3vl-assistant-action-group"><button type="button" id="q3vl_assistant_attach" class="q3vl-assistant-icon-action" title="${t("assistant.attach", "附图")}" aria-label="${t("assistant.attach", "附图")}">${assistantIcon("attach")}</button><button type="button" id="q3vl_assistant_read" class="q3vl-assistant-icon-action" title="${t("assistant.read", "读取")}" aria-label="${t("assistant.read", "读取")}">${assistantIcon("read")}</button><button type="button" id="q3vl_assistant_clear" class="q3vl-assistant-icon-action" title="${t("assistant.clear", "清空")}" aria-label="${t("assistant.clear", "清空")}">${assistantIcon("clear")}</button></div>
-                    <div class="q3vl-assistant-action-group q3vl-assistant-route-controls"><button type="button" id="q3vl_assistant_reasoning" class="q3vl-assistant-compact-control q3vl-assistant-runtime-control">${assistantIcon("reasoning")}<span>low</span></button><div class="q3vl-assistant-model-control">${assistantIcon("model")}<button type="button" id="q3vl_assistant_model" class="q3vl-assistant-runtime-control" aria-haspopup="listbox" aria-expanded="false"><span class="q3vl-assistant-model-name"></span>${assistantIcon("chevron")}</button><div id="q3vl_assistant_model_menu" class="q3vl-assistant-model-menu" role="listbox" aria-label="${t("settings.model", "模型")}" hidden></div></div><button type="button" id="q3vl_assistant_send" class="q3vl-assistant-icon-action q3vl-assistant-primary" title="${t("assistant.send", "发送")}" aria-label="${t("assistant.send", "发送")}"><span class="q3vl-send-icon">${assistantIcon("send")}</span><span class="q3vl-stop-icon">${assistantIcon("stop")}</span></button></div>
+                    <div class="q3vl-assistant-action-group q3vl-assistant-route-controls"><button type="button" id="q3vl_assistant_reasoning" class="q3vl-assistant-compact-control q3vl-assistant-runtime-control">${assistantIcon("reasoning")}<span>low</span></button><div class="q3vl-assistant-model-control">${assistantIcon("model")}<button type="button" id="q3vl_assistant_model" class="q3vl-assistant-runtime-control" aria-haspopup="listbox" aria-expanded="false"><span class="q3vl-assistant-model-name"></span>${assistantIcon("chevron")}</button><div id="q3vl_assistant_model_menu" class="q3vl-assistant-model-menu" role="listbox" aria-label="${t("settings.model", "模型")}" hidden></div></div><button type="button" id="q3vl_assistant_stop" class="q3vl-assistant-icon-action q3vl-assistant-stop" title="${t("assistant.stop", "终止")}" aria-label="${t("assistant.stop", "终止")}" hidden>${assistantIcon("stop")}</button><button type="button" id="q3vl_assistant_send" class="q3vl-assistant-icon-action q3vl-assistant-primary" title="${t("assistant.send", "发送")}" aria-label="${t("assistant.send", "发送")}">${assistantIcon("send")}</button></div>
                 </div>
-                <input id="q3vl_assistant_file" type="file" accept="image/*" hidden>
+                <input id="q3vl_assistant_file" type="file" accept="image/*" multiple hidden>
             </div>
         `;
         document.body.appendChild(panel);
@@ -174,17 +178,8 @@
         if (assistantState.modelMenuOutsideHandler) document.removeEventListener("pointerdown", assistantState.modelMenuOutsideHandler);
         assistantState.modelMenuOutsideHandler = function (event) { if (!panel.querySelector(".q3vl-assistant-model-control").contains(event.target)) toggleModelMenu(false); };
         document.addEventListener("pointerdown", assistantState.modelMenuOutsideHandler);
-        panel.querySelector("#q3vl_assistant_reasoning").addEventListener("click", function (event) {
-            const levels = ["low", "high", "max"];
-            const current = event.currentTarget.dataset.q3vlEffort || "low";
-            const next = levels[(levels.indexOf(current) + 1) % levels.length];
-            const active = profileStore.current();
-            profileStore.update(active.id, { parameters: { reasoning_effort: next } });
-            syncAssistantRouteLabel();
-        });
         launcher.addEventListener("click", function () {
             if (launcher.dataset.q3vlSuppressClick === "1") return;
-            settingsPanel()?.classList.remove("q3vl-config-open");
             const open = panel.classList.toggle("q3vl-assistant-open");
             if (open) window.requestAnimationFrame(function () { panel.querySelector("#q3vl_assistant_input")?.focus(); });
         });
@@ -194,28 +189,27 @@
         makeAssistantLauncherDraggable(launcher, panel);
         makeAssistantDraggable(panel, panel.querySelector(".q3vl-assistant-head"));
         panel.querySelector("#q3vl_assistant_send").addEventListener("click", function () {
-            if (assistantState.running) {
-                (tools.cancelAssistantSessionRun || cancelAssistantRun)();
-                return;
-            }
             toggleModelMenu(false);
             const input = panel.querySelector("#q3vl_assistant_input");
             const text = input.value.trim();
-            const attachment = assistantState.attachment;
-            if (!text && !attachment) return;
+            const attachments = tools.normalizedAssistantAttachments(assistantState.attachments);
+            if (!text && !attachments.length) return;
             input.value = "";
             resizeAssistantInput(input);
-            setAssistantAttachment(null);
-            (tools.runAssistantSessionLoop || runAssistantLoop)(text, attachment);
+            setAssistantAttachments([]);
+            (tools.runAssistantSessionLoop || runAssistantLoop)(text, attachments);
+        });
+        panel.querySelector("#q3vl_assistant_stop").addEventListener("click", function () {
+            (tools.cancelAssistantSessionRun || cancelAssistantRun)();
         });
         const fileInput = panel.querySelector("#q3vl_assistant_file");
         panel.querySelector("#q3vl_assistant_attach").addEventListener("click", function () {
             fileInput.click();
         });
         fileInput.addEventListener("change", function () {
-            const file = fileInput.files && fileInput.files[0];
+            const files = fileInput.files;
             fileInput.value = "";
-            acceptAssistantImageFile(file);
+            acceptAssistantImageFiles(files);
         });
         const assistantInput = panel.querySelector("#q3vl_assistant_input");
         assistantInput.addEventListener("input", function () { resizeAssistantInput(assistantInput); });
@@ -229,10 +223,10 @@
             }
         });
         assistantInput.addEventListener("paste", function (event) {
-            const image = Array.from(event.clipboardData?.files || []).find(function (file) { return String(file.type || "").startsWith("image/"); });
-            if (!image) return;
+            const images = Array.from(event.clipboardData?.files || []).filter(function (file) { return String(file.type || "").startsWith("image/"); });
+            if (!images.length) return;
             event.preventDefault();
-            acceptAssistantImageFile(image);
+            acceptAssistantImageFiles(images);
         });
         const composer = panel.querySelector(".q3vl-assistant-composer");
         composer.addEventListener("dragover", function (event) {
@@ -245,10 +239,10 @@
         });
         composer.addEventListener("drop", function (event) {
             composer.classList.remove("q3vl-assistant-drop-active");
-            const image = Array.from(event.dataTransfer?.files || []).find(function (file) { return String(file.type || "").startsWith("image/"); });
-            if (!image) return;
+            const images = Array.from(event.dataTransfer?.files || []).filter(function (file) { return String(file.type || "").startsWith("image/"); });
+            if (!images.length) return;
             event.preventDefault();
-            acceptAssistantImageFile(image);
+            acceptAssistantImageFiles(images);
         });
         function bindQuickActions(root) {
             root.querySelectorAll("[data-q3vl-assistant-prompt]").forEach(function (button) {
@@ -265,7 +259,7 @@
             if (assistantState.running) return;
             assistantState.messages = [];
             tools.resetAssistantSession?.();
-            setAssistantAttachment(null);
+            setAssistantAttachments([]);
             const messages = panel.querySelector("#q3vl_assistant_messages");
             messages.replaceChildren(emptyStateTemplate?.cloneNode(true) || document.createTextNode(""));
             bindQuickActions(messages);
@@ -274,7 +268,8 @@
             if (event.key === "Escape" && !assistantState.running) panel.classList.remove("q3vl-assistant-open");
         });
         resizeAssistantInput(assistantInput);
-        renderAssistantAttachment();
+        renderAssistantAttachments();
+        tools.setupAssistantReasoningControl?.(panel);
     }
 
     function restoreAssistantLauncherPosition(launcher) {

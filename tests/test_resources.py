@@ -74,6 +74,10 @@ class ResourceCatalogTests(unittest.TestCase):
         self.assertNotIn("load_prompt_skill", tools)
         edit_fields = tools["edit_prompt"]["parameters"]["properties"]["field"]["enum"]
         self.assertEqual(["positive", "negative"], edit_fields)
+        danbooru_search = tools["search_danbooru_tags"]["parameters"]
+        self.assertNotIn("anyOf", danbooru_search)
+        self.assertNotIn("query", danbooru_search["properties"])
+        self.assertEqual(["queries"], danbooru_search["required"])
 
 
 class PromptSkillTests(unittest.TestCase):

@@ -268,8 +268,8 @@ def _validate_parameters(normalized: dict[str, Any], parameters: dict[str, Any])
     for field in ("reasoning_effort", "teacher_mode", "run_id"):
         if field in normalized and normalized[field] is not None and not isinstance(normalized[field], str):
             raise RuntimeError(f"{field} must be a string")
-    if "reasoning_effort" in normalized and normalized["reasoning_effort"].lower() not in {"low", "high", "max"}:
-        raise RuntimeError("reasoning_effort must be one of: low, high, max")
+    if "reasoning_effort" in normalized and normalized["reasoning_effort"].lower() not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
+        raise RuntimeError("reasoning_effort must be one of: none, minimal, low, medium, high, xhigh, max")
 
 
 def _number_range(payload: dict[str, Any], field: str, minimum: float, maximum: float) -> None:

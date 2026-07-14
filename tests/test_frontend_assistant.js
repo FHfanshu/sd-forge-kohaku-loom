@@ -8,6 +8,7 @@ global.window = {
 };
 
 require(path.resolve(__dirname, "../javascript/qwen3vl_prompt_tools_assistant.js"));
+require(path.resolve(__dirname, "../javascript/qwen3vl_prompt_tools_assistant_attachments.js"));
 const tools = window.q3vlPromptTools;
 
 test("repeated tools converge before a high-confidence loop stop", () => {
@@ -56,4 +57,11 @@ test("style-template reader is an available assistant tool", () => {
         tools.parseAssistantTools('{"tool":"read_style_template","arguments":{"target":"txt2img"}}'),
         [{ tool: "read_style_template", arguments: { target: "txt2img" } }]
     );
+});
+
+test("assistant attachments normalize single and multiple images", () => {
+    const first = { name: "one.png", dataUrl: "data:image/png;base64,AA==" };
+    const second = { name: "two.png", dataUrl: "data:image/png;base64,AA==" };
+    assert.deepEqual(tools.normalizedAssistantAttachments(first), [first]);
+    assert.deepEqual(tools.normalizedAssistantAttachments([first, null, second]), [first, second]);
 });

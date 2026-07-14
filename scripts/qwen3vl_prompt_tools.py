@@ -98,16 +98,13 @@ def _run_enhancer(text: str, task: str):
 def _assistant_api(_: gr.Blocks, app):
     from fastapi import Body, Header, HTTPException
     from fastapi.responses import Response, StreamingResponse
-
     sessions = AssistantSessionService(AssistantSessionRepository())
-
     def session_error(error: Exception):
         if isinstance(error, SessionNotFound):
             raise HTTPException(status_code=404, detail=str(error)) from error
         if isinstance(error, (SessionConflict, ValueError)):
             raise HTTPException(status_code=409 if isinstance(error, SessionConflict) else 400, detail=str(error)) from error
         raise error
-
     @app.post("/qwen3vl-prompt-tools/assistant/sessions")
     async def qwen3vl_create_assistant_session(payload: dict = Body(default={})):
         try:
@@ -118,18 +115,16 @@ def _assistant_api(_: gr.Blocks, app):
             )
         except Exception as error:
             session_error(error)
-
     @app.get("/qwen3vl-prompt-tools/assistant/sessions")
-    async def qwen3vl_list_assistant_sessions(include_archived: bool = False, limit: int = 50):
-        return {"sessions": sessions.repository.list_sessions(include_archived, limit)}
-
+    async def qwen3vl_list_assistant_sessions(include_archived: bool = False, limit: int = 50, query: str = ""):
+        result = sessions.repository.search_sessions(query, include_archived, limit) if query.strip() else sessions.repository.list_sessions(include_archived, limit)
+        return {"sessions": result}
     @app.get("/qwen3vl-prompt-tools/assistant/sessions/{session_id}")
-    async def qwen3vl_get_assistant_session(session_id: str, after_sequence: int = 0, limit: int = 500):
+    async def qwen3vl_get_assistant_session(session_id: str, limit: int = 500, before_sequence: int | None = None):
         try:
-            return {"session": sessions.repository.get_session(session_id), "events": sessions.repository.events(session_id, after_sequence, limit)}
+            return {"session": sessions.repository.get_session(session_id), **sessions.repository.event_page(session_id, limit, before_sequence)}
         except Exception as error:
             session_error(error)
-
     @app.patch("/qwen3vl-prompt-tools/assistant/sessions/{session_id}")
     async def qwen3vl_update_assistant_session(session_id: str, payload: dict = Body(...)):
         try:
@@ -141,7 +136,6 @@ def _assistant_api(_: gr.Blocks, app):
             )
         except Exception as error:
             session_error(error)
-
     @app.delete("/qwen3vl-prompt-tools/assistant/sessions/{session_id}")
     async def qwen3vl_delete_assistant_session(session_id: str):
         try:
@@ -149,14 +143,12 @@ def _assistant_api(_: gr.Blocks, app):
             return Response(status_code=204)
         except Exception as error:
             session_error(error)
-
     @app.post("/qwen3vl-prompt-tools/assistant/sessions/{session_id}/runs")
     async def qwen3vl_start_assistant_session_run(session_id: str, payload: dict = Body(...)):
         try:
             return sessions.start(session_id, payload)
         except Exception as error:
             session_error(error)
-
     @app.post("/qwen3vl-prompt-tools/assistant/runs/{run_id}/resume")
     async def qwen3vl_resume_assistant_session_run(run_id: str, payload: dict = Body(default={})):
         try:
@@ -167,7 +159,9 @@ def _assistant_api(_: gr.Blocks, app):
     @app.post("/qwen3vl-prompt-tools/assistant/runs/{run_id}/cancel")
     async def qwen3vl_cancel_assistant_session_run(run_id: str):
         try:
-            return sessions.repository.checkpoint(run_id, "cancelled", "cancelled by user")
+            result = sessions.repository.checkpoint(run_id, "cancelled", "cancelled by user")
+            cancel_local_assistant_run(run_id)
+            return result
         except Exception as error:
             session_error(error)
 
@@ -177,6 +171,16 @@ def _assistant_api(_: gr.Blocks, app):
             return sessions.repository.append_tool_result(run_id, payload)
         except Exception as error:
             session_error(error)
+
+    @app.post("/qwen3vl-prompt-tools/assistant/runs/{run_id}/followups")
+    async def qwen3vl_assistant_session_followup(run_id: str, payload: dict = Body(...)):
+        try: return sessions.repository.queue_followups(run_id, payload.get("messages") if isinstance(payload.get("messages"), list) else [])
+        except Exception as error: session_error(error)
+
+    @app.post("/qwen3vl-prompt-tools/assistant/runs/{run_id}/tool-calls/{tool_call_id}/start")
+    async def qwen3vl_assistant_session_tool_start(run_id: str, tool_call_id: str):
+        try: return sessions.repository.prepare_tool_call(run_id, tool_call_id)
+        except Exception as error: session_error(error)
 
     @app.post("/qwen3vl-prompt-tools/assistant/runs/{run_id}/stream")
     async def qwen3vl_stream_assistant_session_run(run_id: str, payload: dict = Body(...)):
@@ -281,9 +285,12 @@ def _assistant_api(_: gr.Blocks, app):
             raise HTTPException(status_code=500, detail=str(error)) from error
 
     @app.get("/qwen3vl-prompt-tools/danbooru/tags/search")
-    async def qwen3vl_danbooru_tag_search(query: str, category: str = "", limit: int = 12):
+    async def qwen3vl_danbooru_tag_search(query: str = "", queries: str = "", category: str = "", limit: int = 12):
         try:
-            return search_danbooru_tags(query, category, limit)
+            batch = json.loads(queries) if queries else None
+            return search_danbooru_tags(query, category, limit, batch)
+        except json.JSONDecodeError as error:
+            raise HTTPException(status_code=400, detail="queries must be a JSON array") from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         except Exception as error:

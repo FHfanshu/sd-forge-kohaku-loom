@@ -158,12 +158,17 @@ def _assistant_api_key(payload: dict[str, Any], backend: str = "") -> str:
     if legacy_backend in {"local-lmcpp", "local-qwen-once"}:
         return ""
     endpoint_host = urllib.parse.urlparse(str(payload.get("endpoint") or "")).netloc.lower()
-    if legacy_backend == "deepseek" or endpoint_host == "api.deepseek.com":
+    moyuu_hosts = {"moyuu.cc", "hk-api.moyuu.cc"}
+    if endpoint_host == "api.deepseek.com":
         names = ["DEEPSEEK_API_KEY"]
-    elif payload.get("protocol") == GEMINI_NATIVE:
-        names = ["Q3VL_MOYUU_API_KEY", "MOYUU_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]
+    elif endpoint_host == "generativelanguage.googleapis.com" and payload.get("protocol") == GEMINI_NATIVE:
+        names = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+    elif endpoint_host in moyuu_hosts:
+        names = ["Q3VL_MOYUU_API_KEY", "MOYUU_API_KEY"]
+    elif endpoint_host == "api.openai.com" and payload.get("protocol") == OPENAI_CHAT_COMPLETIONS:
+        names = ["OPENAI_API_KEY"]
     else:
-        names = ["OPENAI_API_KEY", "Q3VL_MOYUU_API_KEY", "MOYUU_API_KEY"]
+        names = []
     for name in names:
         value = os.environ.get(name, "").strip()
         if value:

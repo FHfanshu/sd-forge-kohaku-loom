@@ -87,8 +87,10 @@
     }
 
     async function searchDanbooruTagsTool(args, signal) {
+        const queries = Array.isArray(args.queries) ? JSON.stringify(args.queries) : "";
         return await resourceGet("/qwen3vl-prompt-tools/danbooru/tags/search", {
             query: args.query || "",
+            queries: queries,
             category: args.category || "",
             limit: args.limit || 12
         }, signal);
@@ -252,9 +254,21 @@
         return { ok: true, target: guard.target, initialized_fields: initialized, skipped_fields: skipped, context_hash: latest.context_hash };
     }
 
+    function isDanbooruTagRequest(requestText) {
+        return /\bdanbooru\b|\bgelbooru\b|\bbooru\s+tags?\b|\btag\s*(?:prompt|list|syntax)\b|(?:标签|tag).{0,12}(?:提示词|prompt)|danbooru\s*(?:标签|标注|tag)|标签\s*wiki/i.test(String(requestText || ""));
+    }
+
+    function danbooruPreflightState(requestText) {
+        return { required: isDanbooruTagRequest(requestText), completed: !isDanbooruTagRequest(requestText), correctionSent: false };
+    }
+
+    function danbooruPreflightMessage() {
+        return "Danbooru tag preflight is mandatory. Before writing or editing any tag prompt, extract 2-12 short English visual concepts from the original request and call search_danbooru_tags once with its queries array. Use the candidate results before answering.";
+    }
+
     function automaticPromptSkillNames(requestText) {
         const context = `${currentForgePreset()} ${currentCheckpoint()}`.toLowerCase();
-        const isTagRequest = /\bdanbooru\b|\bgelbooru\b|\bbooru\s+tags?\b|\btag\s*(?:prompt|list|syntax)\b|(?:标签|tag).{0,12}(?:提示词|prompt)|danbooru\s*(?:标签|标注|tag)|标签\s*wiki/i.test(String(requestText || ""));
+        const isTagRequest = isDanbooruTagRequest(requestText);
         const names = [];
         if (context.includes("anima")) names.push("anima_dit");
         if (isTagRequest) names.push("danbooru_tags");
@@ -361,6 +375,9 @@
         addStyleSelection,
         applyResourceTool,
         initializePromptTool,
+        isDanbooruTagRequest,
+        danbooruPreflightState,
+        danbooruPreflightMessage,
         automaticPromptSkillNames,
         automaticPromptSkillName,
         ensureAutomaticPromptSkills,

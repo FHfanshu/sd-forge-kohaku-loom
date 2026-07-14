@@ -162,7 +162,7 @@
 
     const assistantState = {
         messages: [],
-        attachment: null,
+        attachments: [],
         promptReads: {},
         promptStyles: null,
         loadedPromptSkills: {},
@@ -194,6 +194,7 @@
         const selected = state.profiles.find(function (profile) { return profile.id === selectedId; });
         const local = state.profiles.find(function (profile) { return profile.enabled && profile.runtime === "llama-once"; });
         const projected = profiles.requestProjection(selectedId);
+        const sessionProfile = state.session_profile_id ? profiles.requestProjection(state.session_profile_id) : null;
         const parameters = projected.parameters || {};
         return Object.assign({}, projected, parameters, {
             display_name: selected?.display_name || projected.model,
@@ -214,7 +215,9 @@
             vision_thinking: Boolean(local?.thinking),
             teacher_temperature: local?.parameters?.temperature ?? 0.25,
             teacher_top_p: local?.parameters?.top_p ?? 0.9,
-            teacher_timeout: local?.parameters?.timeout ?? 180
+            teacher_timeout: local?.parameters?.timeout ?? 180,
+            session_profile_id: state.session_profile_id || "",
+            session_profile: sessionProfile
         });
     }
 
@@ -509,7 +512,7 @@
         const find = String(patch.find ?? patch.old ?? "");
         const replacement = String(patch.replace ?? patch.replacement ?? patch.text ?? "");
         const separator = normalizePatchSeparator(patch.separator ?? "");
-        const count = Number.isFinite(Number(patch.count)) ? Math.max(0, Number(patch.count)) : 1;
+        const count = Number.isFinite(Number(patch.count)) ? Math.max(0, Math.floor(Number(patch.count))) : 1;
 
         if (operation === "append") {
             return { ok: true, text: text ? text + separator + replacement : replacement, changed: text ? 1 : Number(Boolean(replacement)) };
@@ -547,13 +550,19 @@
         if (operation === "replace_n") {
             if (!find) return { ok: false, error: "replace_n requires find text", text: text };
             if (!text.includes(find)) return { ok: false, error: "find text not found", text: text };
+            if (count > 10000) return { ok: false, error: "replace_n count exceeds 10000", text: text };
             let changed = 0;
-            let next = text;
-            while (changed < count && next.includes(find)) {
-                next = next.replace(find, replacement);
+            let cursor = 0;
+            const parts = [];
+            while (changed < count) {
+                const index = text.indexOf(find, cursor);
+                if (index < 0) break;
+                parts.push(text.slice(cursor, index), replacement);
+                cursor = index + find.length;
                 changed += 1;
             }
-            return { ok: true, text: next, changed: changed };
+            parts.push(text.slice(cursor));
+            return { ok: true, text: parts.join(""), changed: changed };
         }
         if (operation === "replace") {
             if (!find) return { ok: false, error: "replace requires find text", text: text };

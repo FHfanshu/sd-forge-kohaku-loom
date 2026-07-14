@@ -146,7 +146,25 @@
 
     function reasoningValue(value, fallback) {
         const normalized = String(value || "").trim().toLowerCase();
-        return ["low", "high", "max"].includes(normalized) ? normalized : fallback;
+        return ["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(normalized) ? normalized : fallback;
+    }
+
+    function normalizeModelInfo(value, fallback) {
+        const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+        const base = fallback && typeof fallback === "object" && !Array.isArray(fallback) ? fallback : {};
+        const allowedEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+        const efforts = Array.isArray(source.reasoning_efforts) ? source.reasoning_efforts : base.reasoning_efforts;
+        return {
+            source: stringValue(source.source, base.source),
+            provider_id: stringValue(source.provider_id, base.provider_id),
+            matched_model_id: stringValue(source.matched_model_id, base.matched_model_id),
+            context_limit: Math.round(finiteNumber(source.context_limit, Number(base.context_limit) || 0, 0, 10485760)),
+            output_limit: Math.round(finiteNumber(source.output_limit, Number(base.output_limit) || 0, 0, 1048576)),
+            temperature_supported: booleanValue(source.temperature_supported, base.temperature_supported !== false),
+            reasoning_toggle: booleanValue(source.reasoning_toggle, Boolean(base.reasoning_toggle)),
+            reasoning_efforts: Array.from(new Set((efforts || []).map(function (item) { return String(item || "").toLowerCase(); }).filter(function (item) { return allowedEfforts.includes(item); }))),
+            synced_at: stringValue(source.synced_at, base.synced_at)
+        };
     }
 
     function isHttpEndpoint(value) {
@@ -210,6 +228,7 @@
                 sanitize_sensitive: booleanValue(parameters.sanitize_sensitive, baseParameters.sanitize_sensitive !== false),
                 teacher_mode: stringValue(parameters.teacher_mode, baseParameters.teacher_mode).trim() || "qwen-redact"
             },
+            model_info: normalizeModelInfo(source.model_info, base.model_info),
             model_path: stringValue(source.model_path, baseLocal.model_path),
             mmproj_path: stringValue(source.mmproj_path, baseLocal.mmproj_path),
             llama_server_path: stringValue(source.llama_server_path, baseLocal.llama_server_path),
@@ -224,6 +243,7 @@
             version: PROFILE_SCHEMA_VERSION,
             active_profile_id: "moyuu-gemini",
             teacher_profile_id: "moyuu-gemini",
+            session_profile_id: "local-qwen-once",
             profiles: deepCloneProfileData(DEFAULT_PROFILES)
         };
     }
@@ -261,7 +281,10 @@
         const activeId = enabledIds.includes(requestedActive) ? requestedActive : enabledIds[0];
         const requestedTeacher = remapGrokId(String(source.teacher_profile_id || ""));
         const teacherId = enabledIds.includes(requestedTeacher) ? requestedTeacher : activeId;
-        return { version: PROFILE_SCHEMA_VERSION, active_profile_id: activeId, teacher_profile_id: teacherId, profiles: profiles };
+        const localIds = profiles.filter(function (profile) { return profile.enabled && ["llama-endpoint", "llama-once"].includes(profile.runtime); }).map(function (profile) { return profile.id; });
+        const requestedSession = String(source.session_profile_id || "local-qwen-once");
+        const sessionId = localIds.includes(requestedSession) ? requestedSession : (localIds.includes("local-qwen-once") ? "local-qwen-once" : (localIds[0] || ""));
+        return { version: PROFILE_SCHEMA_VERSION, active_profile_id: activeId, teacher_profile_id: teacherId, session_profile_id: sessionId, profiles: profiles };
     }
 
     function modelProfileValidationErrors(profile) {
@@ -305,6 +328,10 @@
         if (!enabledIds.length) errors.push("at least one enabled profile is required");
         if (!enabledIds.includes(state.active_profile_id)) errors.push("active profile must be enabled");
         if (!enabledIds.includes(state.teacher_profile_id)) errors.push("teacher profile must be enabled");
+        const sessionProfile = state.profiles.find(function (profile) { return profile.id === state.session_profile_id; });
+        if (state.session_profile_id && (!sessionProfile || !sessionProfile.enabled || !["llama-endpoint", "llama-once"].includes(sessionProfile.runtime))) {
+            errors.push("session profile must be an enabled local llama profile");
+        }
         return errors;
     }
 
@@ -465,6 +492,7 @@
         else if ((route === "secondary" || route === "fallback") && secondaryId) state.active_profile_id = secondaryId;
         else state.active_profile_id = state.profiles[primaryIndex].id;
         state.teacher_profile_id = "moyuu-gemini";
+        state.session_profile_id = "local-qwen-once";
         return normalizeProfileState(state);
     }
 
@@ -523,6 +551,11 @@
             return deepCloneProfileData(state.profiles.find(function (profile) { return profile.id === state.teacher_profile_id; }));
         }
 
+        function session() {
+            const state = load();
+            return deepCloneProfileData(state.profiles.find(function (profile) { return profile.id === state.session_profile_id; }));
+        }
+
         function add(profile) {
             const state = load();
             const source = Object.assign({}, profile || {});
@@ -561,6 +594,7 @@
                 const fallback = state.profiles.find(function (profile) { return profile.enabled; });
                 if (state.active_profile_id === id) state.active_profile_id = fallback.id;
                 if (state.teacher_profile_id === id) state.teacher_profile_id = fallback.id;
+                if (state.session_profile_id === id) state.session_profile_id = state.profiles.find(function (profile) { return profile.enabled && ["llama-endpoint", "llama-once"].includes(profile.runtime); })?.id || "";
             }
             save(state);
             return deepCloneProfileData(updated);
@@ -577,6 +611,7 @@
             const fallback = state.profiles.find(function (item) { return item.enabled; });
             if (state.active_profile_id === id) state.active_profile_id = fallback.id;
             if (state.teacher_profile_id === id) state.teacher_profile_id = fallback.id;
+            if (state.session_profile_id === id) state.session_profile_id = state.profiles.find(function (item) { return item.enabled && ["llama-endpoint", "llama-once"].includes(item.runtime); })?.id || "";
             save(state);
             return deepCloneProfileData(profile);
         }
@@ -595,6 +630,15 @@
             const profile = state.profiles.find(function (item) { return item.id === id && item.enabled; });
             if (!profile) throw new RangeError(`unknown or disabled profile: ${id}`);
             state.teacher_profile_id = id;
+            save(state);
+            return deepCloneProfileData(profile);
+        }
+
+        function setSession(id) {
+            const state = load();
+            const profile = state.profiles.find(function (item) { return item.id === id && item.enabled && ["llama-endpoint", "llama-once"].includes(item.runtime); });
+            if (!profile) throw new RangeError(`unknown, disabled, or non-local profile: ${id}`);
+            state.session_profile_id = id;
             save(state);
             return deepCloneProfileData(profile);
         }
@@ -632,12 +676,14 @@
             save: save,
             current: current,
             teacher: teacher,
+            session: session,
             add: add,
             duplicate: duplicate,
             update: update,
             delete: remove,
             setActive: setActive,
             setTeacher: setTeacher,
+            setSession: setSession,
             restoreDefaults: restoreDefaults,
             requestProjection: requestProjection
         };
@@ -667,12 +713,14 @@
         saveModelProfiles: profileStore ? profileStore.save : null,
         currentModelProfile: profileStore ? profileStore.current : null,
         teacherModelProfile: profileStore ? profileStore.teacher : null,
+        sessionModelProfile: profileStore ? profileStore.session : null,
         addModelProfile: profileStore ? profileStore.add : null,
         duplicateModelProfile: profileStore ? profileStore.duplicate : null,
         updateModelProfile: profileStore ? profileStore.update : null,
         deleteModelProfile: profileStore ? profileStore.delete : null,
         setActiveModelProfile: profileStore ? profileStore.setActive : null,
         setTeacherModelProfile: profileStore ? profileStore.setTeacher : null,
+        setSessionModelProfile: profileStore ? profileStore.setSession : null,
         restoreDefaultModelProfiles: profileStore ? profileStore.restoreDefaults : null,
         projectModelProfileRequest: profileStore ? profileStore.requestProjection : null
     });

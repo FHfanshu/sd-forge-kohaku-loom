@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 from lib_qwen3vl_prompt_tools.assistant import _assistant_api_key, ask_teacher, prompt_assistant_chat, prompt_assistant_stream
-from lib_qwen3vl_prompt_tools.assistant_gemini import _gemini_base_url, _gemini_client, _gemini_response_parts, _gemini_url
+from lib_qwen3vl_prompt_tools.assistant_gemini import _gemini_base_url, _gemini_client, _gemini_request_body, _gemini_response_parts, _gemini_url
 from lib_qwen3vl_prompt_tools.assistant_openai import _openai_chat_url, _openai_result
 from lib_qwen3vl_prompt_tools.assistant_profiles import normalize_assistant_payload, normalize_model_profile
 
@@ -104,10 +104,17 @@ class AssistantProfileTests(unittest.TestCase):
 
     def test_legacy_payload_can_still_use_environment_api_key(self):
         payload = normalize_assistant_payload(
-            {"backend": "openai", "messages": [{"role": "user", "content": "hi"}]}
+            {"backend": "openai", "endpoint": "https://api.openai.com/v1", "messages": [{"role": "user", "content": "hi"}]}
         )
         with patch.dict("os.environ", {"OPENAI_API_KEY": "legacy-secret"}, clear=True):
             self.assertEqual("legacy-secret", _assistant_api_key(payload))
+
+    def test_legacy_payload_does_not_send_environment_key_to_custom_endpoint(self):
+        payload = normalize_assistant_payload(
+            {"backend": "openai", "endpoint": "https://attacker.example/v1", "messages": [{"role": "user", "content": "hi"}]}
+        )
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "legacy-secret"}, clear=True):
+            self.assertEqual("", _assistant_api_key(payload))
 
     def test_legacy_local_endpoint_does_not_inherit_environment_api_key(self):
         payload = normalize_assistant_payload(
@@ -176,7 +183,9 @@ class AssistantProfileTests(unittest.TestCase):
             self.assertEqual("ok", prompt_assistant_chat(payload)["text"])
         body = client.__enter__.return_value.chat.completions.create.call_args.kwargs
         self.assertEqual({"thinking": {"type": "enabled"}}, body["extra_body"])
-        self.assertEqual("low", body["reasoning_effort"])
+        self.assertEqual("high", body["reasoning_effort"])
+        self.assertNotIn("temperature", body)
+        self.assertNotIn("top_p", body)
 
     def test_gemini_fallback_endpoints_are_tried_in_order(self):
         payload = remote_profile(
@@ -231,6 +240,18 @@ class AssistantProfileTests(unittest.TestCase):
         self.assertEqual(1024, request["config"].max_output_tokens)
         self.assertTrue(request["config"].automatic_function_calling.disable)
 
+    def test_gemini_reasoning_effort_uses_native_levels_and_none_disables_it(self):
+        medium, _tokens = _gemini_request_body(
+            {"reasoning_effort": "medium", "disable_tools": True},
+            [{"role": "user", "content": "hello"}],
+        )
+        disabled, _tokens = _gemini_request_body(
+            {"reasoning_effort": "none", "disable_tools": True},
+            [{"role": "user", "content": "hello"}],
+        )
+        self.assertEqual({"thinkingLevel": "MEDIUM"}, medium["generationConfig"]["thinkingConfig"])
+        self.assertNotIn("thinkingConfig", disabled["generationConfig"])
+
     def test_openai_fallback_endpoints_are_tried_in_order(self):
         failed = sdk_client(error=RuntimeError("503 down"))
         success = sdk_client(sdk_value({"choices": [{"message": {"content": "ok"}}]}))
@@ -256,7 +277,7 @@ class AssistantProfileTests(unittest.TestCase):
         with patch("lib_qwen3vl_prompt_tools.assistant_openai._openai_client", return_value=client):
             events = [json.loads(item) for item in prompt_assistant_stream(payload)]
         body = client.__enter__.return_value.chat.completions.create.call_args.kwargs
-        self.assertNotIn("extra_body", body)
+        self.assertEqual({"thinking": {"type": "disabled"}}, body["extra_body"])
         self.assertNotIn("reasoning_effort", body)
         self.assertEqual(["done"], [event["type"] for event in events])
 

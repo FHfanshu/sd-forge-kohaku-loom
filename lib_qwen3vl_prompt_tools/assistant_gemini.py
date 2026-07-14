@@ -272,9 +272,10 @@ def _gemini_request_body(payload: dict[str, Any], messages: list[Any]) -> tuple[
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ],
     }
-    if payload.get("reasoning_enabled") is not False:
+    if payload.get("reasoning_enabled") is not False and str(payload.get("reasoning_effort") or "low").strip().lower() != "none":
         effort = str(payload.get("reasoning_effort") or "low").strip().lower()
-        body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "LOW" if effort == "low" else "HIGH"}
+        level = "MINIMAL" if effort == "minimal" else "LOW" if effort == "low" else "MEDIUM" if effort == "medium" else "HIGH"
+        body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": level}
     if not disable_tools:
         body["tools"] = _gemini_tools()
         body["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
