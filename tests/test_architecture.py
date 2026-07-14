@@ -6,9 +6,9 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "lib_qwen3vl_prompt_tools"
+PACKAGE = ROOT / "kohaku_loom"
 TEXT_SUFFIXES = {".css", ".js", ".json", ".md", ".py", ".txt", ".yaml", ".yml"}
-SKIP_PARTS = {".git", ".pytest_cache", "__pycache__", "bin"}
+SKIP_PARTS = {".git", ".loom", ".pytest_cache", "__pycache__", "bin"}
 
 
 def source_files() -> list[pathlib.Path]:
@@ -24,7 +24,7 @@ def source_files() -> list[pathlib.Path]:
 
 def module_name(path: pathlib.Path) -> str:
     relative = path.relative_to(PACKAGE).with_suffix("")
-    return "lib_qwen3vl_prompt_tools." + ".".join(relative.parts)
+    return "kohaku_loom." + ".".join(relative.parts)
 
 
 def package_imports(path: pathlib.Path, known_modules: set[str]) -> set[str]:
@@ -105,7 +105,7 @@ class ArchitectureTests(unittest.TestCase):
         for path in sorted(PACKAGE.glob("*.py")):
             if path.name == "generic.py":
                 continue
-            deps = package_imports(path, {"lib_qwen3vl_prompt_tools.generic"})
+            deps = package_imports(path, {"kohaku_loom.generic"})
             if deps:
                 offenders.append(str(path.relative_to(ROOT)))
         self.assertEqual([], offenders)

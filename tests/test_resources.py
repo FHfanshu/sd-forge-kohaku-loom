@@ -5,10 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lib_qwen3vl_prompt_tools.constants import ASSISTANT_TOOLS
-from lib_qwen3vl_prompt_tools.danbooru import inspect_danbooru_tag, inspect_danbooru_tags, related_danbooru_tags, search_danbooru_tags
-from lib_qwen3vl_prompt_tools.forge_resources import inspect_resource, search_resources
-from lib_qwen3vl_prompt_tools.prompt_skills import automatic_prompt_skill, load_prompt_skill
+from kohaku_loom.constants import ASSISTANT_TOOLS
+from kohaku_loom.danbooru import inspect_danbooru_tag, inspect_danbooru_tags, related_danbooru_tags, search_danbooru_tags
+from kohaku_loom.forge_resources import inspect_resource, search_resources
+from kohaku_loom.prompt_skills import automatic_prompt_skill, load_prompt_skill
 
 
 class ResourceCatalogTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class ResourceCatalogTests(unittest.TestCase):
             {"kind": "lora", "id": "hero-b", "name": "Hero B", "alias": "Red Knight", "path": "characters/hero-b", "metadata": {}},
             {"kind": "lora", "id": "scene", "name": "Forest", "alias": "Trees", "path": "styles/forest", "metadata": {}},
         ]
-        with patch("lib_qwen3vl_prompt_tools.forge_resources._items", return_value=items):
+        with patch("kohaku_loom.forge_resources._items", return_value=items):
             first = search_resources("lora", "HERO knight", limit=1)
             second = search_resources("lora", "HERO knight", limit=1, cursor=first["next_cursor"])
         self.assertEqual("Hero A", first["items"][0]["name"])
@@ -31,7 +31,7 @@ class ResourceCatalogTests(unittest.TestCase):
             {"kind": "lora", "id": "xiuran", "name": "Xiuran Moqing", "alias": "Dragon-Boy", "path": "characters/xiuran_moqing", "metadata": {}},
             {"kind": "lora", "id": "forest", "name": "Forest Style", "alias": "Trees", "path": "styles/forest", "metadata": {}},
         ]
-        with patch("lib_qwen3vl_prompt_tools.forge_resources._items", return_value=items):
+        with patch("kohaku_loom.forge_resources._items", return_value=items):
             fuzzy = search_resources("lora", "dragon boy")
             typo = search_resources("lora", "xiurann")
             either = search_resources("lora", "xiurann | forest")
@@ -45,8 +45,8 @@ class ResourceCatalogTests(unittest.TestCase):
             path = root / "people" / "artists.txt"
             path.parent.mkdir()
             path.write_text("Alice\nBob\nBlue Artist\n", encoding="utf-8")
-            with patch("lib_qwen3vl_prompt_tools.forge_resources._wildcard_root", return_value=root), patch(
-                "lib_qwen3vl_prompt_tools.forge_resources._wildcard_manager", return_value=None
+            with patch("kohaku_loom.forge_resources._wildcard_root", return_value=root), patch(
+                "kohaku_loom.forge_resources._wildcard_manager", return_value=None
             ):
                 found = search_resources("wildcard", "people", limit=20)
                 inspected = inspect_resource("wildcard", "people/artists", query="b", limit=1)
@@ -61,7 +61,7 @@ class ResourceCatalogTests(unittest.TestCase):
 
     def test_style_inspection_returns_full_templates(self):
         item = {"kind": "style", "id": "moqing", "name": "moqing", "prompt": "positive {prompt}", "negative_prompt": "bad"}
-        with patch("lib_qwen3vl_prompt_tools.forge_resources._items", return_value=[item]):
+        with patch("kohaku_loom.forge_resources._items", return_value=[item]):
             result = inspect_resource("style", "MOQING")
         self.assertEqual("positive {prompt}", result["prompt"])
         self.assertEqual("bad", result["negative_prompt"])
@@ -106,7 +106,7 @@ class DanbooruLookupTests(unittest.TestCase):
     def test_search_normalizes_query_and_category(self):
         payload = [{"id": 1, "name": "blue_hair", "category": 0, "post_count": 42, "is_deprecated": False}]
         autocomplete = [{"tag": payload[0]}]
-        with patch("lib_qwen3vl_prompt_tools.danbooru._request_json", side_effect=[autocomplete, payload, payload]) as request:
+        with patch("kohaku_loom.danbooru._request_json", side_effect=[autocomplete, payload, payload]) as request:
             result = search_danbooru_tags("Blue Hair", "general", 5)
         self.assertEqual("blue hair", result["query"])
         self.assertEqual("blue_hair", result["canonical_query"])
@@ -122,7 +122,7 @@ class DanbooruLookupTests(unittest.TestCase):
     def test_search_batches_queries_and_keeps_candidate_provenance(self):
         blue = {"id": 1, "name": "blue_hair", "category": 0, "post_count": 42, "is_deprecated": False}
         long = {"id": 2, "name": "long_hair", "category": 0, "post_count": 12, "is_deprecated": False}
-        with patch("lib_qwen3vl_prompt_tools.danbooru._request_json", side_effect=[[{"tag": blue}], [blue], [blue], [{"tag": long}], [long], [long]]):
+        with patch("kohaku_loom.danbooru._request_json", side_effect=[[{"tag": blue}], [blue], [blue], [{"tag": long}], [long], [long]]):
             result = search_danbooru_tags(queries=["blue hair", "long hair"], limit=5)
         self.assertEqual(["blue hair", "long hair"], [item["query"] for item in result["results"]])
         self.assertEqual("exact", result["results"][0]["items"][0]["match"])
@@ -130,9 +130,9 @@ class DanbooruLookupTests(unittest.TestCase):
     def test_batch_inspection_and_related_tags_are_bounded(self):
         tag_payload = [{"id": 1, "name": "blue_hair", "category": 0, "post_count": 42, "is_deprecated": False}]
         related_payload = {"related_tags": [{"tag": {"id": 2, "name": "long_hair", "category": 0, "post_count": 12, "is_deprecated": False}, "frequency": 0.5}], "wiki_page_tags": []}
-        with patch("lib_qwen3vl_prompt_tools.danbooru._request_json", return_value=tag_payload):
+        with patch("kohaku_loom.danbooru._request_json", return_value=tag_payload):
             inspected = inspect_danbooru_tags(["blue hair", "blue_hair"])
-        with patch("lib_qwen3vl_prompt_tools.danbooru._request_json", return_value=related_payload):
+        with patch("kohaku_loom.danbooru._request_json", return_value=related_payload):
             related = related_danbooru_tags("blue hair", limit=1)
         self.assertEqual(1, len(inspected["items"]))
         self.assertIsNone(inspected["items"][0].get("wiki"))
@@ -144,7 +144,7 @@ class DanbooruLookupTests(unittest.TestCase):
             {"id": 3, "name": "blue_hairband", "category": 0, "post_count": 1, "is_deprecated": False},
         ]
         wiki_payload = [{"title": "blue_hair", "body": "Blue hair definition", "updated_at": "2026-07-12"}]
-        with patch("lib_qwen3vl_prompt_tools.danbooru._request_json", side_effect=[tag_payload, wiki_payload]):
+        with patch("kohaku_loom.danbooru._request_json", side_effect=[tag_payload, wiki_payload]):
             result = inspect_danbooru_tag("blue hair")
         self.assertTrue(result["ok"])
         self.assertEqual("blue hair", result["name"])

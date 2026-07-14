@@ -10,8 +10,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from lib_qwen3vl_prompt_tools.assistant_sessions import AssistantSessionRepository, AssistantSessionService, SessionConflict
-from lib_qwen3vl_prompt_tools.session_metadata import generate_session_summary, generate_session_title
+from kohaku_loom.assistant_sessions import AssistantSessionRepository, AssistantSessionService, SessionConflict
+from kohaku_loom.session_metadata import generate_session_summary, generate_session_title
 
 
 class AssistantSessionRepositoryTests(unittest.TestCase):
@@ -81,7 +81,7 @@ class AssistantSessionRepositoryTests(unittest.TestCase):
             yield '{"type":"done","text":"ok","tool_calls":[]}\n'
 
         service = AssistantSessionService(self.repository)
-        with mock.patch("lib_qwen3vl_prompt_tools.assistant_sessions.prompt_assistant_stream", stream):
+        with mock.patch("kohaku_loom.assistant_sessions.prompt_assistant_stream", stream):
             list(service.stream(run["run_id"], {"lease_owner": "tab-a", "timeout": 10}))
         self.assertEqual(run["run_id"], captured["run_id"])
 
@@ -147,17 +147,17 @@ class AssistantSessionRepositoryTests(unittest.TestCase):
             },
         }
         deterministic = json.dumps({"version": 1, "covered_through_sequence": 10})
-        with mock.patch("lib_qwen3vl_prompt_tools.session_metadata.prompt_assistant_chat", return_value={"text": "Local title."}) as chat:
+        with mock.patch("kohaku_loom.session_metadata.prompt_assistant_chat", return_value={"text": "Local title."}) as chat:
             self.assertEqual("Local title", generate_session_title(snapshot, "A long user request"))
             payload = chat.call_args.args[0]
             self.assertEqual("local-meta", payload["profile_id"])
             self.assertTrue(payload["disable_tools"])
             self.assertFalse(payload["thinking"])
-        with mock.patch("lib_qwen3vl_prompt_tools.session_metadata.prompt_assistant_chat", return_value={"text": "Keep the copper decision."}):
+        with mock.patch("kohaku_loom.session_metadata.prompt_assistant_chat", return_value={"text": "Keep the copper decision."}):
             summary = json.loads(generate_session_summary(snapshot, deterministic))
             self.assertEqual("Keep the copper decision.", summary["model_summary"])
             self.assertEqual("local-meta", summary["metadata_profile_id"])
-        with mock.patch("lib_qwen3vl_prompt_tools.session_metadata.prompt_assistant_chat", side_effect=RuntimeError("offline")):
+        with mock.patch("kohaku_loom.session_metadata.prompt_assistant_chat", side_effect=RuntimeError("offline")):
             self.assertEqual("A long user request", generate_session_title(snapshot, "A long user request"))
             self.assertEqual(deterministic, generate_session_summary(snapshot, deterministic))
 
@@ -276,7 +276,7 @@ class AssistantSessionRepositoryTests(unittest.TestCase):
             yield '{"type":"done","text":"old final","tool_calls":[]}\n'
 
         service = AssistantSessionService(self.repository)
-        with mock.patch("lib_qwen3vl_prompt_tools.assistant_sessions.prompt_assistant_stream", stream):
+        with mock.patch("kohaku_loom.assistant_sessions.prompt_assistant_stream", stream):
             output = list(service.stream(run["run_id"], {"lease_owner": "tab-a", "timeout": 10}))
         self.assertTrue(any('"next_action": "replan"' in item for item in output))
         self.assertEqual("waiting", self.repository.get_run(run["run_id"])["status"])

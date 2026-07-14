@@ -5,13 +5,13 @@ const test = require("node:test");
 global.window = {
     location: { origin: "http://127.0.0.1:7860" },
     setTimeout,
-    q3vlPromptTools: {
+    kohakuLoom: {
         assistantState: { messages: [], loadedPromptSkills: {}, promptReads: {} },
         currentCheckpoint: () => "Anima-Aesthetic-v1.safetensors",
         currentForgePreset: () => "anima",
         promptContextSnapshot: () => ({ context_hash: "ctx" }),
         promptFieldRootForTarget: () => ({ target: "txt2img", root: null }),
-        q3vlApp: () => ({ querySelector: () => null, querySelectorAll: () => [] }),
+        loomApp: () => ({ querySelector: () => null, querySelectorAll: () => [] }),
         readPromptTool: async () => ({}),
         positivePromptNoPhrases: () => [],
         setNativeValueIfAvailable: () => true,
@@ -22,8 +22,8 @@ global.window = {
     }
 };
 
-require(path.resolve(__dirname, "../javascript/qwen3vl_prompt_tools_02_resources.js"));
-const tools = window.q3vlPromptTools;
+require(path.resolve(__dirname, "../javascript/kohaku_loom_02_resources.js"));
+const tools = window.kohakuLoom;
 
 test("appendFragment is idempotent", () => {
     assert.deepEqual(tools.appendFragment("base", "__artists__"), { value: "base, __artists__", changed: true });
@@ -65,6 +65,11 @@ test("batch Danbooru search forwards all queries", async () => {
     const url = new URL(requested, window.location.origin);
     assert.deepEqual(JSON.parse(url.searchParams.get("queries")), ["blue hair", "long hair"]);
     assert.equal(url.searchParams.get("query"), null);
+});
+
+test("resource mutation guard depends on the latest prompt context, not a second user confirmation", () => {
+    window.kohakuLoom.assistantState.promptReads.txt2img = { context_hash: "ctx" };
+    assert.equal(tools.resourceMutationGuard({ target: "txt2img", context_hash: "ctx" }).ok, true);
 });
 
 test("message compaction keeps the first user goal and recent messages", () => {

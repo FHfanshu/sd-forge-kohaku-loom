@@ -1,15 +1,16 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
 global.window = {
     location: { href: "http://127.0.0.1:7860" },
-    q3vlPromptTools: {}
+    kohakuLoom: {}
 };
 
-require(path.resolve(__dirname, "../javascript/qwen3vl_prompt_tools_assistant.js"));
-require(path.resolve(__dirname, "../javascript/qwen3vl_prompt_tools_assistant_attachments.js"));
-const tools = window.q3vlPromptTools;
+require(path.resolve(__dirname, "../javascript/kohaku_loom_assistant.js"));
+require(path.resolve(__dirname, "../javascript/kohaku_loom_assistant_attachments.js"));
+const tools = window.kohakuLoom;
 
 test("repeated tools converge before a high-confidence loop stop", () => {
     assert.equal(tools.assistantRepeatedToolAction("read_prompt", 1), "execute");
@@ -21,12 +22,6 @@ test("repeated tools converge before a high-confidence loop stop", () => {
 test("retries of mutating tools are not killed immediately", () => {
     assert.equal(tools.assistantRepeatedToolAction("edit_prompt", 2), "execute");
     assert.equal(tools.assistantRepeatedToolAction("apply_resource", 4), "converge");
-});
-
-test("new prompt writing requests require a UI edit", () => {
-    assert.equal(tools.assistantUserRequestedPromptEdit("帮我编写一份海边女孩的提示词"), true);
-    assert.equal(tools.assistantUserRequestedPromptEdit("Generate a portrait prompt for me"), true);
-    assert.equal(tools.assistantUserRequestedPromptEdit("提示词应该怎么写？"), false);
 });
 
 test("profile vision capability controls native image attachments", () => {
@@ -64,4 +59,20 @@ test("assistant attachments normalize single and multiple images", () => {
     const second = { name: "two.png", dataUrl: "data:image/png;base64,AA==" };
     assert.deepEqual(tools.normalizedAssistantAttachments(first), [first]);
     assert.deepEqual(tools.normalizedAssistantAttachments([first, null, second]), [first, second]);
+});
+
+test("user messages have an always-visible edit and resend action", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "../javascript/kohaku_loom_assistant_attachments.js"), "utf8");
+    assert.match(source, /loom-assistant-message-actions/);
+    assert.match(source, /loom-assistant-message-edit/);
+    assert.match(source, /assistant\.rewind/);
+    assert.match(source, /restoreForgeUiState/);
+});
+
+test("assistant responses expose a copy action", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "../javascript/kohaku_loom_assistant.js"), "utf8");
+    const core = fs.readFileSync(path.resolve(__dirname, "../javascript/kohaku_loom.js"), "utf8");
+    assert.match(source, /loom-assistant-message-copy/);
+    assert.match(source, /navigator\.clipboard\.writeText/);
+    assert.match(core, /appendAssistantCopyAction/);
 });

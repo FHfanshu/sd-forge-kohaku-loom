@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from lib_qwen3vl_prompt_tools.i18n import DEFAULT_LOCALE, TRANSLATIONS, normalize_locale, translation_bundle, tr
+from kohaku_loom.i18n import DEFAULT_LOCALE, TRANSLATIONS, forge_locale, normalize_locale, translation_bundle, tr
 
 
 class I18nTests(unittest.TestCase):
@@ -15,6 +15,12 @@ class I18nTests(unittest.TestCase):
         self.assertEqual("en", normalize_locale("en-US"))
         self.assertEqual("zh-CN", normalize_locale("zh_CN"))
         self.assertEqual(DEFAULT_LOCALE, normalize_locale("unknown"))
+
+    def test_forge_default_localization_is_english(self):
+        self.assertEqual("en", forge_locale(None))
+        self.assertEqual("en", forge_locale("None"))
+        self.assertEqual("en", forge_locale(""))
+        self.assertEqual("zh-CN", forge_locale("zh_CN"))
 
     def test_translation_bundle_falls_back_to_selected_locale(self):
         bundle = translation_bundle("en")

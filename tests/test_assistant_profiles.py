@@ -2,10 +2,10 @@ import json
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from lib_qwen3vl_prompt_tools.assistant import _assistant_api_key, ask_teacher, prompt_assistant_chat, prompt_assistant_stream
-from lib_qwen3vl_prompt_tools.assistant_gemini import _gemini_base_url, _gemini_client, _gemini_request_body, _gemini_response_parts, _gemini_url
-from lib_qwen3vl_prompt_tools.assistant_openai import _openai_chat_url, _openai_result
-from lib_qwen3vl_prompt_tools.assistant_profiles import normalize_assistant_payload, normalize_model_profile
+from kohaku_loom.assistant import _assistant_api_key, ask_teacher, prompt_assistant_chat, prompt_assistant_stream
+from kohaku_loom.assistant_gemini import _gemini_base_url, _gemini_client, _gemini_request_body, _gemini_response_parts, _gemini_url
+from kohaku_loom.assistant_openai import _openai_chat_url, _openai_result
+from kohaku_loom.assistant_profiles import normalize_assistant_payload, normalize_model_profile
 
 
 def remote_profile(**overrides):
@@ -83,10 +83,10 @@ class AssistantProfileTests(unittest.TestCase):
             parameters={"timeout": 30},
         )
         with patch(
-            "lib_qwen3vl_prompt_tools.assistant._prompt_assistant_chat_openai",
+            "kohaku_loom.assistant._prompt_assistant_chat_openai",
             return_value={"text": "openai", "tool_calls": []},
         ) as openai_chat, patch(
-            "lib_qwen3vl_prompt_tools.assistant._prompt_assistant_chat_gemini"
+            "kohaku_loom.assistant._prompt_assistant_chat_gemini"
         ) as gemini_chat:
             result = prompt_assistant_chat(payload)
         self.assertEqual("openai", result["text"])
@@ -168,7 +168,7 @@ class AssistantProfileTests(unittest.TestCase):
         )
 
     def test_gemini_sdk_client_configures_relay_endpoint_timeout_and_bearer_auth(self):
-        with patch("lib_qwen3vl_prompt_tools.assistant_gemini.genai.Client") as factory:
+        with patch("kohaku_loom.assistant_gemini.genai.Client") as factory:
             _gemini_client("https://relay.example.com/v1beta", "sk-test", 30)
         options = factory.call_args.kwargs["http_options"]
         self.assertEqual("sk-test", factory.call_args.kwargs["api_key"])
@@ -179,7 +179,7 @@ class AssistantProfileTests(unittest.TestCase):
     def test_explicit_deepseek_profile_keeps_reasoning_options(self):
         client = sdk_client(sdk_value({"choices": [{"message": {"content": "ok"}}]}))
         payload = remote_profile(endpoint="https://api.deepseek.com", model="deepseek-v4-pro")
-        with patch("lib_qwen3vl_prompt_tools.assistant_openai._openai_client", return_value=client):
+        with patch("kohaku_loom.assistant_openai._openai_client", return_value=client):
             self.assertEqual("ok", prompt_assistant_chat(payload)["text"])
         body = client.__enter__.return_value.chat.completions.create.call_args.kwargs
         self.assertEqual({"thinking": {"type": "enabled"}}, body["extra_body"])
@@ -196,7 +196,7 @@ class AssistantProfileTests(unittest.TestCase):
             teacher_mode="regex",
         )
         with patch(
-            "lib_qwen3vl_prompt_tools.assistant_gemini._gemini_post_generate",
+            "kohaku_loom.assistant_gemini._gemini_post_generate",
             side_effect=[RuntimeError("down"), RuntimeError("down"), {"text": "ok", "tool_calls": []}],
         ) as post:
             result = prompt_assistant_chat(payload)
@@ -219,7 +219,7 @@ class AssistantProfileTests(unittest.TestCase):
             teacher_mode="regex",
         )
         client = gemini_sdk_client(stream=broken_stream())
-        with patch("lib_qwen3vl_prompt_tools.assistant_gemini._gemini_client", return_value=client) as factory:
+        with patch("kohaku_loom.assistant_gemini._gemini_client", return_value=client) as factory:
             events = [json.loads(item) for item in prompt_assistant_stream(payload)]
         self.assertEqual(["usage", "delta", "error"], [event["type"] for event in events])
         self.assertEqual(1, factory.call_count)
@@ -228,7 +228,7 @@ class AssistantProfileTests(unittest.TestCase):
         response = sdk_value({"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
         client = gemini_sdk_client(result=response)
         payload = remote_profile(protocol="gemini-native", endpoint="https://relay.example.com/v1beta", api_key="sk-test")
-        with patch("lib_qwen3vl_prompt_tools.assistant_gemini._gemini_client", return_value=client) as factory:
+        with patch("kohaku_loom.assistant_gemini._gemini_client", return_value=client) as factory:
             result = prompt_assistant_chat(payload)
         self.assertEqual("ok", result["text"])
         factory.assert_called_once_with("https://relay.example.com/v1beta", "sk-test", 30)
@@ -256,7 +256,7 @@ class AssistantProfileTests(unittest.TestCase):
         failed = sdk_client(error=RuntimeError("503 down"))
         success = sdk_client(sdk_value({"choices": [{"message": {"content": "ok"}}]}))
         payload = remote_profile(fallback_endpoints=["https://first.example.com/v1", "https://second.example.com/v1"])
-        with patch("lib_qwen3vl_prompt_tools.assistant_openai._openai_client", side_effect=[failed, failed, success]) as factory:
+        with patch("kohaku_loom.assistant_openai._openai_client", side_effect=[failed, failed, success]) as factory:
             result = prompt_assistant_chat(payload)
         self.assertEqual("ok", result["text"])
         self.assertEqual(
@@ -274,7 +274,7 @@ class AssistantProfileTests(unittest.TestCase):
             endpoint="https://api.deepseek.com",
             capabilities={"tools": True, "vision": False, "streaming": False, "reasoning": False},
         )
-        with patch("lib_qwen3vl_prompt_tools.assistant_openai._openai_client", return_value=client):
+        with patch("kohaku_loom.assistant_openai._openai_client", return_value=client):
             events = [json.loads(item) for item in prompt_assistant_stream(payload)]
         body = client.__enter__.return_value.chat.completions.create.call_args.kwargs
         self.assertEqual({"thinking": {"type": "disabled"}}, body["extra_body"])
@@ -298,10 +298,10 @@ class AssistantProfileTests(unittest.TestCase):
             parameters={"n_ctx": 4096, "thinking": True},
         )
         with patch(
-            "lib_qwen3vl_prompt_tools.assistant._prompt_assistant_chat_openai",
+            "kohaku_loom.assistant._prompt_assistant_chat_openai",
             return_value={"text": "endpoint", "tool_calls": []},
         ) as endpoint_chat, patch(
-            "lib_qwen3vl_prompt_tools.assistant._prompt_assistant_chat_local_once",
+            "kohaku_loom.assistant._prompt_assistant_chat_local_once",
             return_value={"text": "once", "tool_calls": []},
         ) as once_chat:
             self.assertEqual("endpoint", prompt_assistant_chat(endpoint_payload)["text"])
@@ -361,7 +361,7 @@ class AssistantProfileTests(unittest.TestCase):
             sdk_value({"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13}}),
         ]
         client = sdk_client(chunks)
-        with patch("lib_qwen3vl_prompt_tools.assistant_openai._openai_client", return_value=client):
+        with patch("kohaku_loom.assistant_openai._openai_client", return_value=client):
             events = [json.loads(item) for item in prompt_assistant_stream(remote_profile())]
         self.assertEqual(["usage", "reasoning_delta", "delta", "delta", "usage", "done"], [item["type"] for item in events])
         self.assertEqual("Think ", events[-1]["reasoning"])
@@ -393,7 +393,7 @@ class AssistantProfileTests(unittest.TestCase):
         failed = sdk_client(error=RuntimeError("503 down"))
         success = sdk_client([sdk_value({"choices": [{"delta": {"content": "ok"}}]})])
         payload = remote_profile(fallback_endpoints=["https://fallback.example.com/v1"])
-        with patch("lib_qwen3vl_prompt_tools.assistant_openai._openai_client", side_effect=[failed, success]) as factory:
+        with patch("kohaku_loom.assistant_openai._openai_client", side_effect=[failed, success]) as factory:
             events = [json.loads(item) for item in prompt_assistant_stream(payload)]
         self.assertEqual("ok", events[-1]["text"])
         self.assertEqual(
@@ -404,7 +404,7 @@ class AssistantProfileTests(unittest.TestCase):
     def test_openai_stream_retries_without_unsupported_usage_option(self):
         rejected = sdk_client(error=RuntimeError("400 unknown parameter stream_options"))
         accepted = sdk_client([sdk_value({"choices": [{"delta": {"content": "ok"}}]})])
-        with patch("lib_qwen3vl_prompt_tools.assistant_openai._openai_client", side_effect=[rejected, accepted]):
+        with patch("kohaku_loom.assistant_openai._openai_client", side_effect=[rejected, accepted]):
             events = [json.loads(item) for item in prompt_assistant_stream(remote_profile())]
         self.assertEqual("ok", events[-1]["text"])
         rejected_body = rejected.__enter__.return_value.chat.completions.create.call_args.kwargs
@@ -421,7 +421,7 @@ class AssistantProfileTests(unittest.TestCase):
             messages=[],
         )
         with patch(
-            "lib_qwen3vl_prompt_tools.assistant._prompt_assistant_chat_openai",
+            "kohaku_loom.assistant._prompt_assistant_chat_openai",
             return_value={"text": "teacher advice", "model": "teacher-model", "endpoint": "https://teacher.example.com/v1"},
         ) as chat:
             result = ask_teacher(

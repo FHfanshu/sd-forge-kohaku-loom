@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const test = require("node:test");
 
-const corePath = path.resolve(__dirname, "../javascript/qwen3vl_prompt_tools.js");
+const corePath = path.resolve(__dirname, "../javascript/kohaku_loom.js");
 
 function loadCore(profileStore) {
     delete require.cache[corePath];
@@ -11,9 +11,9 @@ function loadCore(profileStore) {
         getElementById() { return null; },
         querySelectorAll() { return []; }
     };
-    global.window = { q3vlPromptTools: profileStore ? { profileStore } : {} };
+    global.window = { kohakuLoom: profileStore ? { profileStore } : {} };
     require(corePath);
-    return window.q3vlPromptTools;
+    return window.kohakuLoom;
 }
 
 test("assistant config requires the version 2 profile store", () => {
@@ -65,6 +65,18 @@ test("assistant config projects the configured local session metadata profile", 
     assert.equal(config.session_profile_id, "metadata");
     assert.equal(config.session_profile.profile_id, "metadata");
     assert.equal(config.session_profile.runtime, "llama-endpoint");
+});
+
+test("token status accepts KT and legacy usage field names", () => {
+    const tools = loadCore();
+    assert.equal(
+        tools.formatAssistantTokenStatus({ prompt_tokens: 18, completion_tokens: 7, reasoning_tokens: 3 }),
+        "思考中... ↑ 18 tokens ↓ 7 tokens (thinking 3)"
+    );
+    assert.equal(
+        tools.formatAssistantTokenStatus({ input_tokens: 9, output_tokens: 2, cached_tokens: 4 }),
+        "思考中... ↑ 9 tokens ↓ 2 tokens (cache 4)"
+    );
 });
 
 test("positive prompt guard detects no-phrase exclusions", () => {

@@ -6,3 +6,4 @@ bin/
 *.tmp
 data/
 .playwright-mcp/
+.loom/

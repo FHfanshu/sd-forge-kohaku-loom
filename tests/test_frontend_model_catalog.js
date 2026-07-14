@@ -2,13 +2,13 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const test = require("node:test");
 
-const modulePath = path.resolve(__dirname, "../javascript/qwen3vl_prompt_tools_05_model_catalog.js");
+const modulePath = path.resolve(__dirname, "../javascript/kohaku_loom_05_model_catalog.js");
 
 function loadModule() {
     delete require.cache[modulePath];
-    global.window = { q3vlPromptTools: {} };
+    global.window = { kohakuLoom: {} };
     require(modulePath);
-    return window.q3vlPromptTools;
+    return window.kohakuLoom;
 }
 
 const catalog = {

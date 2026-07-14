@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib_qwen3vl_prompt_tools.assistant_workflow import (  # noqa: E402
+from kohaku_loom.assistant_workflow import (  # noqa: E402
     PromptToolHarness,
     build_prompt_edit_eval_payloads,
     prompt_edit_messages,
@@ -48,7 +48,7 @@ def main() -> int:
     parser.add_argument("--include-remote", action="store_true", help="Include the base remote payload case.")
     parser.add_argument("--remote-model", action="append", default=[], help="Remote model to evaluate. Can be passed multiple times.")
     parser.add_argument("--remote-endpoint", default="https://moyuu.cc", help="Endpoint for --remote-model cases.")
-    parser.add_argument("--remote-api-key-env", default="Q3VL_MOYUU_API_KEY", help="Environment variable that holds the remote API key.")
+    parser.add_argument("--remote-api-key-env", default="KOHAKU_LOOM_MOYUU_API_KEY", help="Environment variable that holds the remote API key.")
     parser.add_argument("--remote-backend", default="", help="Override backend for --remote-model cases, for example openai.")
     parser.add_argument("--include-deepseek", action="store_true", help="Include DeepSeek when DEEPSEEK_API_KEY is available.")
     parser.add_argument("--allow-missing-remote-key", action="store_true", help="Keep remote cases even when the API key env var is missing.")

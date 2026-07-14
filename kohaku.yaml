@@ -1,0 +1,21 @@
+name: kohaku-loom
+version: "0.1.0"
+description: "A single prompt-weaving creature for generative image workflows and Forge Neo."
+author: "FHfanshu"
+repository: "https://github.com/FHfanshu/sd-forge-kohaku-loom"
+
+creatures:
+  - name: loom
+    path: creatures/loom
+    description: "Image-prompt creation, analysis, and optional Forge bridge operations."
+
+skills:
+  - name: danbooru-prompting
+    path: skills/danbooru-prompting
+    description: "Visible-facts Danbooru tagging and prompt construction guidance."
+
+tools:
+  - name: danbooru
+    module: kohaku_loom.kt_tools
+    class: DanbooruTool
+    description: "Search, inspect, and relate canonical Danbooru tags."

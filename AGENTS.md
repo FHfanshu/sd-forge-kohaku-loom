@@ -5,17 +5,17 @@ This extension is loaded inside Forge Neo, so keep changes small and easy to aud
 ## Architecture
 
 - Keep every source/documentation file at or below 1000 lines.
-- Keep `lib_qwen3vl_prompt_tools.generic` as a compatibility facade only.
-- Do not import from `lib_qwen3vl_prompt_tools.generic` inside package modules.
+- Keep `kohaku_loom.generic` as a compatibility facade only.
+- Do not import from `kohaku_loom.generic` inside package modules.
 - Preserve the package dependency direction:
-  `constants/utils/image_payloads/response_text` -> `model_paths/llama_runtime/tagger` -> `text_prompting/assistant_common/assistant_gemini/assistant_local/reference_image` -> `assistant/generic` -> `scripts`.
+  `constants/utils/image_payloads/response_text` -> `model_paths/llama_runtime` -> `assistant_common/assistant_gemini/assistant_local/reference_image` -> `assistant/generic` -> `scripts`.
 - Avoid circular imports. Run `python -m unittest discover -s tests` after changing Python module boundaries.
 
 ## Frontend
 
-- Browser scripts under `javascript/` are loaded by filename order. Keep `qwen3vl_prompt_tools.js` as the core namespace initializer, then layer assistant and boot scripts after it.
-- Shared browser state lives on `window.q3vlPromptTools`.
-- Run `node --check javascript/qwen3vl_prompt_tools*.js` after editing browser scripts when Node is available.
+- Browser scripts under `javascript/` are loaded by filename order. Keep `kohaku_loom.js` as the core namespace initializer, then layer assistant and boot scripts after it.
+- Shared browser state lives on `window.kohakuLoom`.
+- Run `node --check javascript/kohaku_loom*.js` after editing browser scripts when Node is available.
 
 ## Local Models
 

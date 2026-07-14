@@ -2,8 +2,8 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const test = require("node:test");
 
-const profilesPath = path.resolve(__dirname, "../javascript/qwen3vl_prompt_tools_03_profiles.js");
-const settingsPath = path.resolve(__dirname, "../javascript/qwen3vl_prompt_tools_04_profile_settings.js");
+const profilesPath = path.resolve(__dirname, "../javascript/kohaku_loom_03_profiles.js");
+const settingsPath = path.resolve(__dirname, "../javascript/kohaku_loom_04_profile_settings.js");
 
 class MemoryStorage {
     constructor() {
@@ -23,11 +23,11 @@ function loadModules() {
     delete require.cache[profilesPath];
     delete require.cache[settingsPath];
     const storage = new MemoryStorage();
-    global.window = { q3vlPromptTools: {}, localStorage: storage };
+    global.window = { kohakuLoom: {}, localStorage: storage };
     global.localStorage = storage;
     require(profilesPath);
     require(settingsPath);
-    return window.q3vlPromptTools;
+    return window.kohakuLoom;
 }
 
 test("settings module exports its boot integration APIs", () => {
@@ -36,8 +36,25 @@ test("settings module exports its boot integration APIs", () => {
         "setupModelProfileSettingsWindow",
         "openModelProfileSettings",
         "renderModelProfileSettings",
-        "testModelProfileConnection"
+        "testModelProfileConnection",
+        "profileWorkspaceTabs",
+        "profileRoleLabels"
     ].forEach((name) => assert.equal(typeof tools[name], "function", name));
+});
+
+test("workspace tabs expose local controls only for local runtimes", () => {
+    const tools = loadModules();
+    assert.deepEqual(tools.profileWorkspaceTabs({ runtime: "remote-http" }), ["overview", "connection", "generation"]);
+    assert.deepEqual(tools.profileWorkspaceTabs({ runtime: "llama-endpoint" }), ["overview", "connection", "generation", "local"]);
+    assert.deepEqual(tools.profileWorkspaceTabs({ runtime: "llama-once" }), ["overview", "connection", "generation", "local"]);
+});
+
+test("profile roles describe active, teacher, and session routing", () => {
+    const tools = loadModules();
+    const state = { active_profile_id: "main", teacher_profile_id: "main", session_profile_id: "local" };
+    assert.deepEqual(tools.profileRoleLabels(state, { id: "main" }), ["active", "teacher"]);
+    assert.deepEqual(tools.profileRoleLabels(state, { id: "local" }), ["session"]);
+    assert.deepEqual(tools.profileRoleLabels(state, { id: "other" }), []);
 });
 
 test("protocol abbreviations remain compact and deterministic", () => {
@@ -92,7 +109,7 @@ test("connection test payload is minimal, tools-disabled, and keeps only the pro
     const projection = tools.profileStore.requestProjection("moyuu-gemini");
     const payload = tools.buildModelProfileTestPayload(projection, "health ping");
     const serialized = JSON.stringify(payload);
-    assert.equal(payload.api_key, "selected-secret");
+    assert.equal(payload.api_key, undefined);
     assert.equal(serialized.includes("other-secret"), false);
     assert.equal(payload.disable_tools, true);
     assert.equal(payload.stream, false);

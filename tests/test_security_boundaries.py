@@ -4,10 +4,33 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from lib_qwen3vl_prompt_tools import image_payloads, model_paths
+from kohaku_loom import image_payloads, model_paths
 
 
 class SecurityBoundaryTests(unittest.TestCase):
+    def test_browser_has_no_legacy_assistant_controller_route(self):
+        javascript = Path(__file__).resolve().parents[1] / "javascript"
+        source = "\n".join(path.read_text(encoding="utf-8") for path in javascript.glob("kohaku_loom*.js"))
+        for forbidden in (
+            '"/kohaku-loom/assistant"',
+            '"/kohaku-loom/assistant-stream"',
+            '"/kohaku-loom/assistant-cancel"',
+            "runAssistantSessionLoop || runAssistantLoop",
+            "cancelAssistantSessionRun || cancelAssistantRun",
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_forge_script_registers_no_legacy_assistant_controller_route(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "kohaku_loom.py"
+        source = script.read_text(encoding="utf-8")
+        for forbidden in (
+            "/kohaku-loom/assistant",
+            "/kohaku-loom/assistant-stream",
+            "/kohaku-loom/assistant-cancel",
+            "AssistantSessionService",
+        ):
+            self.assertNotIn(forbidden, source)
+
     def test_llama_server_path_must_be_server_configured(self):
         with tempfile.TemporaryDirectory() as directory:
             trusted = Path(directory) / "trusted.exe"

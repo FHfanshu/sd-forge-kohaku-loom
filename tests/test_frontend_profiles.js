@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const test = require("node:test");
 
-const modulePath = path.resolve(__dirname, "../javascript/qwen3vl_prompt_tools_03_profiles.js");
+const modulePath = path.resolve(__dirname, "../javascript/kohaku_loom_03_profiles.js");
 
 class MemoryStorage {
     constructor(initial) {
@@ -22,10 +22,10 @@ class MemoryStorage {
 
 function loadModule(storage) {
     delete require.cache[modulePath];
-    global.window = { q3vlPromptTools: {}, localStorage: storage };
+    global.window = { kohakuLoom: {}, localStorage: storage };
     global.localStorage = storage;
     require(modulePath);
-    return window.q3vlPromptTools;
+    return window.kohakuLoom;
 }
 
 test("defaults contain exactly the five canonical profiles", () => {
@@ -90,7 +90,7 @@ test("serialization persists only canonical profile fields", () => {
     const profile = JSON.parse(tools.serializeProfileState(state)).profiles[0];
     assert.deepEqual(Object.keys(profile), [
         "id", "display_name", "enabled", "protocol", "runtime", "endpoint", "fallback_endpoints", "model_id",
-        "api_key", "capabilities", "parameters", "model_info", "model_path", "mmproj_path", "llama_server_path", "n_ctx",
+        "api_key", "has_api_key", "capabilities", "parameters", "model_info", "model_path", "mmproj_path", "llama_server_path", "n_ctx",
         "n_gpu_layers", "thinking"
     ]);
     assert.equal(Object.hasOwn(profile, "name"), false);
@@ -115,17 +115,30 @@ test("normalization accepts name and model as read aliases", () => {
 test("valid v2 state loads without migration or storage writes", () => {
     const seedTools = loadModule(new MemoryStorage());
     const serialized = seedTools.serializeProfileState(seedTools.createDefaultProfileState());
-    const storage = new MemoryStorage({ q3vl_assistant_profiles_v2: serialized, q3vl_assistant_model: "stale-legacy" });
+    const storage = new MemoryStorage({ loom_assistant_profiles_v2: serialized, loom_assistant_model: "stale-legacy" });
     const tools = loadModule(storage);
     assert.equal(tools.profileStore.load().profiles[0].model_id, "gemini-3.1-pro-high");
     assert.equal(storage.writes.length, 0);
+});
+
+test("old q3vl v2 profile state migrates without deleting the import source", () => {
+    const tools = loadModule();
+    const storage = new MemoryStorage();
+    const state = tools.createDefaultProfileState();
+    state.active_profile_id = "deepseek";
+    storage.setItem("q3vl_assistant_profiles_v2", tools.serializeProfileState(state));
+    const store = tools.createProfileStore(storage);
+
+    assert.equal(store.load().active_profile_id, "deepseek");
+    assert.notEqual(storage.getItem("loom_assistant_profiles_v2"), null);
+    assert.notEqual(storage.getItem("q3vl_assistant_profiles_v2"), null);
 });
 
 test("existing v2 state receives the canonical streaming Grok preset", () => {
     const seedTools = loadModule(new MemoryStorage());
     const state = seedTools.createDefaultProfileState();
     state.profiles = state.profiles.filter((profile) => profile.id !== "grok");
-    const storage = new MemoryStorage({ q3vl_assistant_profiles_v2: JSON.stringify(state) });
+    const storage = new MemoryStorage({ loom_assistant_profiles_v2: JSON.stringify(state) });
     const tools = loadModule(storage);
     const loaded = tools.profileStore.load();
     const grok = loaded.profiles.find((profile) => profile.id === "grok");
@@ -137,10 +150,10 @@ test("existing v2 state receives the canonical streaming Grok preset", () => {
 
 test("invalid existing v2 state does not replay stale legacy settings", () => {
     const storage = new MemoryStorage({
-        q3vl_assistant_profiles_v2: "{broken-json",
-        q3vl_assistant_backend: "openai",
-        q3vl_assistant_model: "stale-legacy",
-        q3vl_assistant_api_key_openai: "stale-secret"
+        loom_assistant_profiles_v2: "{broken-json",
+        loom_assistant_backend: "openai",
+        loom_assistant_model: "stale-legacy",
+        loom_assistant_api_key_openai: "stale-secret"
     });
     const tools = loadModule(storage);
     const state = tools.profileStore.load();
@@ -153,18 +166,18 @@ test("invalid existing v2 state does not replay stale legacy settings", () => {
 
 test("legacy migration preserves current config, keys, local paths, and active route", () => {
     const storage = new MemoryStorage({
-        q3vl_assistant_backend: "openai",
-        q3vl_assistant_endpoint: "https://openai.example/v1",
-        q3vl_assistant_model: "custom-chat",
-        q3vl_assistant_api_key_openai: "openai-secret",
-        q3vl_assistant_api_key_moyuu: "moyuu-secret",
-        q3vl_assistant_api_key_deepseek: "deepseek-secret",
-        q3vl_assistant_chat_model_route: "remote",
-        q3vl_assistant_vision_model_path: "D:\\models\\vision.gguf",
-        q3vl_assistant_vision_mmproj_path: "D:\\models\\mmproj.gguf",
-        q3vl_assistant_llama_server_path: "D:\\llama\\llama-server.exe",
-        q3vl_assistant_n_ctx: "32768",
-        q3vl_assistant_local_n_gpu_layers: "42"
+        loom_assistant_backend: "openai",
+        loom_assistant_endpoint: "https://openai.example/v1",
+        loom_assistant_model: "custom-chat",
+        loom_assistant_api_key_openai: "openai-secret",
+        loom_assistant_api_key_moyuu: "moyuu-secret",
+        loom_assistant_api_key_deepseek: "deepseek-secret",
+        loom_assistant_chat_model_route: "remote",
+        loom_assistant_vision_model_path: "D:\\models\\vision.gguf",
+        loom_assistant_vision_mmproj_path: "D:\\models\\mmproj.gguf",
+        loom_assistant_llama_server_path: "D:\\llama\\llama-server.exe",
+        loom_assistant_n_ctx: "32768",
+        loom_assistant_local_n_gpu_layers: "42"
     });
     const tools = loadModule(storage);
     const state = tools.profileStore.load();
@@ -182,7 +195,7 @@ test("legacy migration preserves current config, keys, local paths, and active r
     assert.equal(local.llama_server_path, "D:\\llama\\llama-server.exe");
     assert.equal(local.n_ctx, 32768);
     assert.equal(local.n_gpu_layers, 42);
-    assert.equal(storage.getItem("q3vl_assistant_api_key_openai"), "openai-secret");
+    assert.equal(storage.getItem("loom_assistant_api_key_openai"), "openai-secret");
     assert.deepEqual(new Set(storage.writes.map(([key]) => key)), new Set([tools.PROFILE_STORAGE_KEY]));
 
     storage.writes.length = 0;
@@ -192,26 +205,26 @@ test("legacy migration preserves current config, keys, local paths, and active r
 });
 
 test("migration storage failure leaves legacy keys and does not install partial state", () => {
-    const storage = new MemoryStorage({ q3vl_assistant_model: "legacy-model" });
+    const storage = new MemoryStorage({ loom_assistant_model: "legacy-model" });
     storage.setItem = function (key) {
         this.writes.push([key]);
         throw new Error("quota exceeded");
     };
     const tools = loadModule(storage);
     assert.throws(() => tools.profileStore.load(), /quota exceeded/);
-    assert.equal(storage.getItem("q3vl_assistant_model"), "legacy-model");
+    assert.equal(storage.getItem("loom_assistant_model"), "legacy-model");
     assert.equal(storage.getItem(tools.PROFILE_STORAGE_KEY), null);
 });
 
 test("legacy secondary Moyuu route preserves its routed API key", () => {
     const storage = new MemoryStorage({
-        q3vl_assistant_backend: "deepseek",
-        q3vl_assistant_secondary_backend: "openai",
-        q3vl_assistant_secondary_endpoint: "https://moyuu.cc",
-        q3vl_assistant_secondary_model: "grok-4.5",
-        q3vl_assistant_api_key_openai: "openai-secret",
-        q3vl_assistant_api_key_moyuu: "moyuu-secret",
-        q3vl_assistant_chat_model_route: "secondary"
+        loom_assistant_backend: "deepseek",
+        loom_assistant_secondary_backend: "openai",
+        loom_assistant_secondary_endpoint: "https://moyuu.cc",
+        loom_assistant_secondary_model: "grok-4.5",
+        loom_assistant_api_key_openai: "openai-secret",
+        loom_assistant_api_key_moyuu: "moyuu-secret",
+        loom_assistant_chat_model_route: "secondary"
     });
     const tools = loadModule(storage);
     const current = tools.profileStore.current();
@@ -234,7 +247,7 @@ test("existing migrated Grok secondary receives the canonical name and ID", () =
         endpoint: "https://moyuu.cc"
     }));
     state.active_profile_id = "legacy-secondary";
-    const storage = new MemoryStorage({ q3vl_assistant_profiles_v2: JSON.stringify(state) });
+    const storage = new MemoryStorage({ loom_assistant_profiles_v2: JSON.stringify(state) });
     const tools = loadModule(storage);
     const loaded = tools.profileStore.load();
     assert.equal(loaded.active_profile_id, "grok");
@@ -282,14 +295,27 @@ test("request projection isolates API keys and deep clones selected data", () =>
     const serialized = JSON.stringify(projection);
     assert.equal(projection.profile_id, "moyuu-gemini");
     assert.equal(projection.model, "gemini-3.1-pro-high");
-    assert.equal(projection.api_key, "moyuu-secret");
+    assert.equal(projection.api_key, undefined);
     assert.equal(serialized.includes("deepseek-secret"), false);
     assert.deepEqual(Object.keys(projection), [
-        "profile_id", "protocol", "runtime", "endpoint", "fallback_endpoints", "model", "api_key", "capabilities", "parameters",
+        "profile_id", "protocol", "runtime", "endpoint", "fallback_endpoints", "model", "capabilities", "parameters",
         "model_path", "mmproj_path", "llama_server_path", "n_ctx", "n_gpu_layers", "thinking"
     ]);
     projection.parameters.temperature = 2;
     assert.equal(tools.profileStore.current().parameters.temperature, 0.35);
+});
+
+test("scrubbing browser keys retains only the encrypted-secret marker", () => {
+    const tools = loadModule();
+    const storage = new MemoryStorage();
+    const store = tools.createProfileStore(storage);
+    store.update("moyuu-gemini", { api_key: "moyuu-secret" });
+
+    const state = store.scrubApiKeys();
+
+    assert.equal(state.profiles[0].api_key, "");
+    assert.equal(state.profiles[0].has_api_key, true);
+    assert.equal(storage.getItem("loom_assistant_profiles_v2").includes("moyuu-secret"), false);
 });
 
 test("refresh persistence retains profile selection and independent keys", () => {

@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from lib_qwen3vl_prompt_tools.assistant_workflow import (
+from kohaku_loom.assistant_workflow import (
     PromptToolHarness,
     assistant_user_requested_prompt_edit,
     build_prompt_edit_eval_payloads,

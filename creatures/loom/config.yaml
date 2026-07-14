@@ -1,0 +1,29 @@
+name: loom
+version: "0.1.0"
+
+controller:
+  tool_format: native
+
+system_prompt_file: prompts/system.md
+skill_mode: dynamic
+skills:
+  - danbooru-prompting
+
+tools:
+  - name: danbooru
+    type: package
+    module: kohaku_loom.kt_tools
+    class: DanbooruTool
+
+input:
+  type: none
+
+output:
+  type: stdout
+  controller_direct: true
+
+compact:
+  enabled: true
+  threshold: 0.8
+  target: 0.5
+  keep_recent_turns: 5
