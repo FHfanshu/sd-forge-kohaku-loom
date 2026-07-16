@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Callable
 
 from kohakuterrarium.modules.tool.base import BaseTool, ExecutionMode, ToolResult
 
@@ -35,6 +35,27 @@ class ForgeBridgeTool(BaseTool):
                 error=str(result.get("error") or f"Forge tool {self.tool_name!r} failed"),
             )
         return ToolResult(output=serialized)
+
+
+class YoloForgeBridgeTool(ForgeBridgeTool):
+    def __init__(
+        self,
+        broker: ForgeToolBroker,
+        timeout: float = 300.0,
+        mode_provider: Callable[[], str] | None = None,
+    ):
+        super().__init__(broker, timeout)
+        self.mode_provider = mode_provider or (lambda: "normal")
+
+    async def _execute(self, args: dict[str, Any], **kwargs: Any) -> ToolResult:
+        if self.mode_provider() != "yolo":
+            return ToolResult(
+                output='{"ok":false,"error":"YOLO mode is required"}',
+                error="yolo_mode_required",
+            )
+        authorized_args = dict(args)
+        authorized_args["_yolo_authorized"] = True
+        return await super()._execute(authorized_args, **kwargs)
 
 
 class ReadPromptTool(ForgeBridgeTool):
@@ -158,6 +179,54 @@ class ResourceTool(ForgeBridgeTool):
     }
 
 
+class ReadTxt2ImgStateTool(YoloForgeBridgeTool):
+    @property
+    def tool_name(self) -> str:
+        return "read_txt2img_state"
+
+    @property
+    def description(self) -> str:
+        return "Read the guarded Forge txt2img prompt and core generation parameters. YOLO mode only."
+
+    parameters = {"type": "object", "properties": {}}
+
+
+class ApplyTxt2ImgPatchTool(YoloForgeBridgeTool):
+    @property
+    def tool_name(self) -> str:
+        return "apply_txt2img_patch"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Atomically apply a hash-guarded patch to approved Forge txt2img parameters. "
+            "Use prompt patch operations instead of replacing whole prompts. YOLO mode only."
+        )
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "state_hash": {"type": "string"},
+            "changes": {
+                "type": "object",
+                "properties": {
+                    "positive_prompt_patches": {"type": "array", "items": {"type": "object"}},
+                    "negative_prompt_patches": {"type": "array", "items": {"type": "object"}},
+                    "seed": {"type": "integer", "minimum": -1, "maximum": 4294967295},
+                    "width": {"type": "integer", "minimum": 64, "maximum": 4096},
+                    "height": {"type": "integer", "minimum": 64, "maximum": 4096},
+                    "steps": {"type": "integer", "minimum": 1, "maximum": 150},
+                    "cfg_scale": {"type": "number", "minimum": 0, "maximum": 30},
+                    "sampler": {"type": "string"},
+                    "scheduler": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "required": ["state_hash", "changes"],
+    }
+
+
 def forge_tools(broker: ForgeToolBroker, timeout: float = 300.0) -> list[BaseTool]:
     return [
         AskTeacherTool(broker, timeout),
@@ -166,4 +235,15 @@ def forge_tools(broker: ForgeToolBroker, timeout: float = 300.0) -> list[BaseToo
         EditPromptTool(broker, timeout),
         InitializePromptTool(broker, timeout),
         ResourceTool(broker, timeout),
+    ]
+
+
+def yolo_forge_tools(
+    broker: ForgeToolBroker,
+    timeout: float = 300.0,
+    mode_provider: Callable[[], str] | None = None,
+) -> list[BaseTool]:
+    return [
+        ReadTxt2ImgStateTool(broker, timeout, mode_provider),
+        ApplyTxt2ImgPatchTool(broker, timeout, mode_provider),
     ]

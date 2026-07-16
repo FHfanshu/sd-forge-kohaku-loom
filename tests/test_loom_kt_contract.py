@@ -16,7 +16,7 @@ try:
     from kohakuterrarium.testing.llm import ScriptEntry, ScriptedLLM
 
     from kohaku_loom.forge_bridge import ForgeToolBroker
-    from kohaku_loom.forge_tools import ReadPromptTool, forge_tools
+    from kohaku_loom.forge_tools import ReadPromptTool, forge_tools, yolo_forge_tools
     from kohaku_loom.profile_store import LoomProfileStore
     from kohaku_loom.runtime_paths import LoomRuntimePaths
     from kohaku_loom.sidecar.runtime import LoomSidecarRuntime
@@ -69,6 +69,35 @@ class KohakuTerrariumContractTests(unittest.IsolatedAsyncioTestCase):
         edit = next(tool for tool in tools if tool.tool_name == "edit_prompt")
         self.assertIn("prompt", edit.parameters["properties"])
         self.assertNotIn("diff", edit.parameters["required"])
+
+    async def test_yolo_tools_are_separate_and_fail_closed_in_normal_mode(self):
+        broker = ForgeToolBroker()
+        mode = "normal"
+        tools = yolo_forge_tools(broker, mode_provider=lambda: mode)
+        self.assertEqual(
+            {"read_txt2img_state", "apply_txt2img_patch"},
+            {tool.tool_name for tool in tools},
+        )
+
+        result = await tools[0]._execute({})
+
+        self.assertEqual("yolo_mode_required", result.error)
+        self.assertEqual([], [event for event in broker.events_after(0) if event["type"] == "tool_request"])
+
+    async def test_yolo_request_keeps_issued_authorization_after_mode_switch(self):
+        broker = ForgeToolBroker()
+        mode = "yolo"
+        tool = yolo_forge_tools(broker, mode_provider=lambda: mode)[0]
+        task = asyncio.create_task(tool._execute({}))
+        request = await self._wait_for_request(broker)
+        mode = "normal"
+
+        self.assertEqual("yolo", request["payload"]["agent_mode"])
+        self.assertNotIn("_yolo_authorized", request["payload"]["arguments"])
+        await broker.reply(request["payload"]["request_id"], {"ok": True, "state_hash": "fnv1a:state"})
+        result = await task
+
+        self.assertIsNone(result.error)
 
     async def test_installed_loom_creature_loads_package_tool_and_skill(self):
         from kohakuterrarium import Terrarium
@@ -159,6 +188,75 @@ output:
         self.assertEqual("accepted", await broker.reply(request_id, {"ok": True}))
         await task
         self.assertEqual("unknown", await broker.reply(request_id, {"ok": True}))
+
+    async def test_only_claimed_forge_tab_can_reply_to_tool_request(self):
+        broker = ForgeToolBroker()
+        claim = await broker.claim_bridge("tab-a")
+        self.assertTrue(claim["owned"])
+        self.assertFalse((await broker.claim_bridge("tab-b"))["owned"])
+        task = asyncio.create_task(broker.request("read_prompt", {}, timeout=10))
+        request = await self._wait_for_request(broker)
+        request_id = request["payload"]["request_id"]
+
+        self.assertEqual("foreign", await broker.reply(request_id, {"ok": True}, "tab-b"))
+        self.assertEqual("accepted", await broker.reply(request_id, {"ok": True}, "tab-a"))
+        await task
+
+    async def test_duplicate_pending_mutation_fingerprint_reuses_browser_request(self):
+        broker = ForgeToolBroker()
+        broker.begin_session("session")
+        arguments = {
+            "target": "txt2img",
+            "field": "positive",
+            "base_hash": "fnv1a:old",
+            "prompt": "subject",
+        }
+        first = asyncio.create_task(broker.request("edit_prompt", arguments, timeout=10))
+        request = await self._wait_for_request(broker)
+        replay = asyncio.create_task(broker.request("edit_prompt", arguments, timeout=10))
+        await asyncio.sleep(0)
+        await broker.reply(request["payload"]["request_id"], {"ok": True, "changed": True})
+        self.assertTrue((await first)["changed"])
+        self.assertTrue((await replay)["changed"])
+        requests = [event for event in broker.events_after(0) if event["type"] == "tool_request"]
+        self.assertEqual(1, len(requests))
+
+    async def test_duplicate_pending_txt2img_patch_reuses_browser_request(self):
+        broker = ForgeToolBroker()
+        broker.begin_session("session")
+        arguments = {"state_hash": "fnv1a:state", "changes": {"steps": 28}}
+        first = asyncio.create_task(broker.request("apply_txt2img_patch", arguments, timeout=10))
+        request = await self._wait_for_request(broker)
+        replay = asyncio.create_task(broker.request("apply_txt2img_patch", arguments, timeout=10))
+        await asyncio.sleep(0)
+        await broker.reply(request["payload"]["request_id"], {"ok": True, "changed": True})
+
+        self.assertTrue((await first)["changed"])
+        self.assertTrue((await replay)["changed"])
+        requests = [event for event in broker.events_after(0) if event["type"] == "tool_request"]
+        self.assertEqual(1, len(requests))
+
+    async def test_completed_mutation_is_revalidated_by_browser(self):
+        broker = ForgeToolBroker()
+        broker.begin_session("session")
+        arguments = {
+            "target": "txt2img",
+            "field": "positive",
+            "base_hash": "fnv1a:old",
+            "prompt": "subject",
+        }
+        first = asyncio.create_task(broker.request("edit_prompt", arguments, timeout=10))
+        request = await self._wait_for_request(broker)
+        await broker.reply(request["payload"]["request_id"], {"ok": True, "changed": True})
+        await first
+
+        replay = asyncio.create_task(broker.request("edit_prompt", arguments, timeout=10))
+        second_request = await self._wait_for_request(broker, expected_count=2)
+        await broker.reply(second_request["payload"]["request_id"], {"ok": False, "error": "stale context"})
+
+        self.assertFalse((await replay)["ok"])
+        requests = [event for event in broker.events_after(0) if event["type"] == "tool_request"]
+        self.assertEqual(2, len(requests))
 
     async def test_sidecar_runtime_persists_and_resumes_one_creature_session(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -256,7 +354,7 @@ output:
         self.assertEqual(["fallback response"], chunks)
         self.assertEqual(3, provider.last_usage["total_tokens"])
 
-    async def test_openai_profile_does_not_fallback_after_partial_content(self):
+    async def test_openai_profile_recovers_after_partial_content(self):
         class PartialProvider:
             last_tool_calls = []
             last_usage = {}
@@ -289,12 +387,38 @@ output:
                 }
             )
         chunks = []
-        with self.assertRaisesRegex(RuntimeError, "stream failed"):
-            async for chunk in provider.chat([{"role": "user", "content": "hello"}]):
-                chunks.append(chunk)
+        async for chunk in provider.chat([{"role": "user", "content": "hello"}]):
+            chunks.append(chunk)
         await provider.close()
 
-        self.assertEqual(["partial"], chunks)
+        self.assertEqual(["partial", "must not run"], chunks)
+
+    async def test_openai_native_tool_round_fails_closed_on_broken_stream(self):
+        class PartialProvider:
+            last_tool_calls = []
+            last_usage = {}
+            last_assistant_extra_fields = {}
+
+            async def chat(self, messages, **kwargs):
+                del messages, kwargs
+                raise RuntimeError("stream failed after hidden tool delta")
+                yield ""
+
+            async def close(self):
+                return None
+
+        with mock.patch.object(ProfileOpenAIProvider, "_provider", return_value=PartialProvider()):
+            provider = ProfileOpenAIProvider({
+                "model": "test-model",
+                "endpoint": "https://primary.example/v1",
+                "api_key": "secret",
+            })
+
+        with self.assertRaisesRegex(RuntimeError, "paused to avoid a duplicate tool call"):
+            _ = [chunk async for chunk in provider.chat(
+                [{"role": "user", "content": "edit prompt"}],
+                tools=[ToolSchema(name="edit_prompt", description="Edit prompt", parameters={"type": "object"})],
+            )]
 
     def test_gemini_native_request_preserves_tool_round(self):
         provider = GeminiNativeProvider(
@@ -335,6 +459,64 @@ output:
         self.assertEqual("read_prompt", body["contents"][2]["parts"][0]["functionResponse"]["name"])
         self.assertEqual("read_prompt", body["tools"][0]["functionDeclarations"][0]["name"])
 
+    async def test_gemini_retry_preserves_partial_native_tool_call(self):
+        class Stream:
+            def __init__(self, responses, error=None):
+                self.responses = responses
+                self.error = error
+
+            def __aiter__(self):
+                self.index = 0
+                return self
+
+            async def __anext__(self):
+                if self.index < len(self.responses):
+                    value = self.responses[self.index]
+                    self.index += 1
+                    return value
+                if self.error:
+                    error, self.error = self.error, None
+                    raise error
+                raise StopAsyncIteration
+
+        class Client:
+            def __init__(self, stream, captured):
+                self.aio = self
+                self.models = self
+                self.stream = stream
+                self.captured = captured
+
+            async def generate_content_stream(self, **kwargs):
+                self.captured.append(kwargs["contents"])
+                return self.stream
+
+            async def aclose(self):
+                return None
+
+        first_data = {
+            "candidates": [{"content": {"parts": [{"functionCall": {"id": "call-1", "name": "read_prompt", "args": {"target": "active"}}}]}}]
+        }
+        captured = []
+        clients = [Client(Stream([first_data], RuntimeError("stream failed")), captured)]
+        provider = GeminiNativeProvider({
+            "model": "gemini-test",
+            "endpoint": "https://primary.example",
+            "fallback_endpoints": ["https://fallback.example"],
+            "api_key": "secret",
+            "timeout": 30,
+        })
+        provider._retry_delay = mock.AsyncMock()
+
+        with mock.patch("kohaku_loom.kt_providers._gemini_client", side_effect=clients):
+            chunks = [chunk async for chunk in provider.chat(
+                [{"role": "user", "content": "Read the prompt"}],
+                tools=[ToolSchema(name="read_prompt", description="Read prompt", parameters={"type": "object"})],
+            )]
+
+        self.assertEqual([], chunks)
+        self.assertEqual(1, len(captured))
+        self.assertEqual("read_prompt", provider.last_tool_calls[0].name)
+
     async def test_llama_once_reuses_provider_within_turn_and_releases_afterward(self):
         class FakeProvider:
             def __init__(self):
@@ -366,11 +548,11 @@ output:
         self.assertEqual(2, fake.closed)
         self.assertIsNone(provider._provider)
 
-    async def _wait_for_request(self, broker: ForgeToolBroker) -> dict:
+    async def _wait_for_request(self, broker: ForgeToolBroker, expected_count: int = 1) -> dict:
         for _ in range(200):
             events = broker.events_after(0)
             requests = [event for event in events if event["type"] == "tool_request"]
-            if requests:
+            if len(requests) >= expected_count:
                 return requests[-1]
             await asyncio.sleep(0.01)
         self.fail("tool request was not published")

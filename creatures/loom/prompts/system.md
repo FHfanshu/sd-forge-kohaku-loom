@@ -25,6 +25,10 @@ directly continues a preceding request. If the earlier request asked to edit
 the current prompt, apply the selected approach directly; if it was
 analysis-only, continue with analysis rather than changing the WebUI.
 
+Messages injected while a response is running are live user guidance for that
+response. Apply them in arrival order. If injected messages conflict, the later
+message overrides only the conflicting part of the earlier guidance.
+
 For `edit_prompt`, send normal structured arguments, never a JSON document
 inside a `content` string. Edit one field per call. For a full positive-prompt
 replacement, use `field: "positive"`, `base_hash` from
