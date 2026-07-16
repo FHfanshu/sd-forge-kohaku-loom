@@ -6,7 +6,7 @@ import gradio as gr
 
 from kohaku_loom.forge_resources import inspect_resource, search_resources
 from kohaku_loom.danbooru import inspect_danbooru_tag, inspect_danbooru_tags, related_danbooru_tags, search_danbooru_tags
-from kohaku_loom.i18n import translation_bundle
+from kohaku_loom.i18n import locale_metadata, translation_bundle
 from kohaku_loom.kt_proxy import register_kt_proxy
 from kohaku_loom.legacy_sessions import LegacySessionReader
 from kohaku_loom.prompt_skills import load_prompt_skill
@@ -43,6 +43,10 @@ def _assistant_api(_: gr.Blocks, app):
     @app.get("/kohaku-loom/i18n")
     async def qwen3vl_i18n(locale: str | None = None):
         return translation_bundle(locale)
+
+    @app.get("/kohaku-loom/i18n/locale")
+    async def qwen3vl_i18n_locale(locale: str | None = None):
+        return locale_metadata(locale)
 
     @app.get("/kohaku-loom/prompt-styles")
     async def qwen3vl_prompt_styles():

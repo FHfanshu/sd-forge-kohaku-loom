@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .assistant_profiles import normalize_model_profile
+from .assistant_profiles import LLAMA_ONCE
 from .dpapi import protect_text, unprotect_text
 from .runtime_paths import LoomRuntimePaths
 
@@ -63,11 +64,17 @@ class LoomProfileStore:
                 secrets[profile_id] = existing_secrets[profile_id]
             public_profiles.append(profile)
         enabled = {profile["profile_id"] for profile in public_profiles}
+        naming_profile_id = self._selected(state, "naming_profile_id", enabled, allow_empty=True)
+        if naming_profile_id:
+            naming_profile = next(profile for profile in public_profiles if profile["profile_id"] == naming_profile_id)
+            if naming_profile.get("runtime") != LLAMA_ONCE:
+                raise ValueError("naming_profile_id must reference an enabled llama-once profile")
         public_state = {
             "version": 1,
             "active_profile_id": self._selected(state, "active_profile_id", enabled),
             "teacher_profile_id": self._selected(state, "teacher_profile_id", enabled),
             "session_profile_id": self._selected(state, "session_profile_id", enabled, allow_empty=True),
+            "naming_profile_id": naming_profile_id,
             "profiles": public_profiles,
         }
         _write_json(self.paths.profiles_file, public_state)

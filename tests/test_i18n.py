@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from kohaku_loom.i18n import DEFAULT_LOCALE, TRANSLATIONS, forge_locale, normalize_locale, translation_bundle, tr
+from kohaku_loom.i18n import DEFAULT_LOCALE, TRANSLATIONS, forge_locale, locale_metadata, normalize_locale, translation_bundle, tr
 
 
 class I18nTests(unittest.TestCase):
@@ -14,6 +14,8 @@ class I18nTests(unittest.TestCase):
     def test_locale_normalization(self):
         self.assertEqual("en", normalize_locale("en-US"))
         self.assertEqual("zh-CN", normalize_locale("zh_CN"))
+        self.assertEqual("zh-CN", normalize_locale("zh-TW"))
+        self.assertEqual("zh-CN", normalize_locale("zh-Hant"))
         self.assertEqual(DEFAULT_LOCALE, normalize_locale("unknown"))
 
     def test_forge_default_localization_is_english(self):
@@ -27,6 +29,15 @@ class I18nTests(unittest.TestCase):
         self.assertEqual("en", bundle["locale"])
         self.assertEqual("LLM Assistant", bundle["messages"]["assistant.launcher"])
         self.assertEqual("LLM 助手", tr("assistant.launcher", "zh-CN"))
+        self.assertRegex(bundle["content_version"], r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(bundle["content_version"], bundle["metadata"]["content_version"])
+
+    def test_python_ui_contract_has_exact_locale_parity_and_metadata_probe_shape(self):
+        self.assertEqual(set(TRANSLATIONS["en"]), set(TRANSLATIONS["zh-CN"]))
+        metadata = locale_metadata("zh_CN")
+        self.assertEqual("zh-CN", metadata["locale"])
+        self.assertEqual(["zh-CN", "en"], metadata["supported_locales"])
+        self.assertEqual(metadata["content_version"], metadata["metadata"]["content_version"])
 
 
 if __name__ == "__main__":

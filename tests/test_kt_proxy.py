@@ -121,6 +121,24 @@ class KohakuTerrariumProxyTests(unittest.TestCase):
         self.assertEqual(409, response.status_code)
         self.assertEqual("A Loom turn is already active", response.json()["detail"])
 
+    def test_patch_message_body_is_forwarded(self):
+        upstream = httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            content=b'{"ok":true}',
+        )
+        app, requests, _ = proxy_app(FakeManager(), [upstream])
+
+        with TestClient(app) as client:
+            response = client.patch(
+                "/kohaku-loom/kt/sessions/session/messages/message",
+                json={"content": "edited"},
+            )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("PATCH", requests[0].method)
+        self.assertEqual(b'{"content":"edited"}', requests[0].content)
+
     def test_sse_is_forwarded_without_reencoding(self):
         chunks = [
             b"id: 1\n",
@@ -175,6 +193,19 @@ class KohakuTerrariumProxyTests(unittest.TestCase):
         self.assertEqual("http://127.0.0.1:43124/runtime", str(requests[1].url))
         self.assertNotIn("first-secret", response.text)
         self.assertNotIn("second-secret", response.text)
+
+    def test_connection_failure_does_not_retry_post(self):
+        request = httpx.Request("POST", "http://127.0.0.1:43123/turns")
+        failure = httpx.ConnectError("connection dropped", request=request)
+        manager = FakeManager()
+        app, requests, _ = proxy_app(manager, [failure])
+
+        with TestClient(app) as client:
+            response = client.post("/kohaku-loom/kt/turns", json={"content": "hello"})
+
+        self.assertEqual(503, response.status_code)
+        self.assertEqual(1, manager.start_calls)
+        self.assertEqual(1, len(requests))
 
     def test_startup_error_is_sanitized(self):
         manager = FakeManager(error=RuntimeError("token=secret port=43123"))

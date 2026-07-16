@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import random
 import subprocess
 from typing import Any, AsyncIterator, Callable
 
@@ -13,6 +14,7 @@ from kohakuterrarium.llm.base import (
     ToolSchema,
 )
 from kohakuterrarium.llm.openai import OpenAIProvider
+from kohakuterrarium.llm.recovery import ErrorClass, classify_openai_error
 
 from .assistant_gemini import (
     _PromptSanitizer,
@@ -31,6 +33,39 @@ from .constants import DEFAULT_LOCAL_CONTEXT_TOKENS, DEFAULT_LOCAL_TEXT_PRESET
 from .llama_runtime import _free_port, _wait_server
 from .model_paths import resolve_llama_server, resolve_vision_model_pair
 from .response_text import reasoning_text
+
+
+_CLOUD_RETRY_DELAYS = [2.0, 5.0, 10.0, 30.0, 60.0]
+_LOCAL_RETRY_DELAYS = [1.0, 2.0, 4.0, 8.0, 16.0]
+
+
+def _retryable_provider_error(error: BaseException) -> bool:
+    if isinstance(error, (TypeError, ValueError, json.JSONDecodeError)):
+        return False
+    return classify_openai_error(error) in {
+        ErrorClass.RATE_LIMIT,
+        ErrorClass.SERVER,
+        ErrorClass.TRANSIENT,
+    }
+
+
+def _continuation_messages(messages: list[dict[str, Any]], partial: str) -> list[dict[str, Any]]:
+    if not partial:
+        return messages
+    excerpt = partial[-12000:]
+    return [
+        *messages,
+        {"role": "assistant", "content": excerpt},
+        {
+            "role": "user",
+            "content": (
+                "[Kohaku Loom runtime recovery] The previous provider stream ended "
+                "after the assistant text above. Continue from the unfinished point. "
+                "Do not repeat text already shown and do not treat this recovery note "
+                "as a new user request."
+            ),
+        },
+    ]
 
 
 def build_profile_provider(profile: dict[str, Any]) -> BaseLLMProvider:
@@ -63,6 +98,33 @@ class StreamObserverMixin:
         if self.last_usage:
             await self._emit_stream_event("usage", {"usage": dict(self.last_usage)})
 
+    async def _retry_delay(self, attempt: int, error: BaseException, delays: list[float]) -> None:
+        retry_after = self._retry_after(error)
+        base = retry_after or delays[min(attempt - 1, len(delays) - 1)]
+        delay = retry_after or max(0.0, base + random.uniform(-base * 0.15, base * 0.15))
+        await self._emit_stream_event(
+            "provider_retry",
+            {
+                "attempt": attempt,
+                "max_retries": len(delays),
+                "delay": delay,
+                "provider": getattr(self, "provider_name", "provider"),
+                "error": str(error),
+            },
+        )
+        await asyncio.sleep(delay)
+
+    @staticmethod
+    def _retry_after(error: BaseException) -> float:
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers is None:
+            return 0.0
+        try:
+            return max(0.0, float(headers.get("retry-after") or 0))
+        except (TypeError, ValueError):
+            return 0.0
+
 
 class ProfileOpenAIProvider(StreamObserverMixin, BaseLLMProvider):
     provider_name = "openai"
@@ -93,6 +155,14 @@ class ProfileOpenAIProvider(StreamObserverMixin, BaseLLMProvider):
             max_tokens=self.config.max_tokens,
             timeout=float(self.profile.get("timeout", 120)),
             extra_body=extra_body,
+            max_retries=0,
+            retry_policy={
+                "max_retries": 0,
+                "base_delay": 2.0,
+                "max_delay": 60.0,
+                "jitter": 0.15,
+                "retry_classes": ["rate_limit", "server", "transient"],
+            },
         )
 
     async def _stream_chat(
@@ -104,26 +174,37 @@ class ProfileOpenAIProvider(StreamObserverMixin, BaseLLMProvider):
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         last_error: Exception | None = None
-        for provider in self._providers:
-            emitted = False
+        partial = ""
+        attempts = 1 + len(_CLOUD_RETRY_DELAYS)
+        for index in range(attempts):
+            provider = self._providers[index % len(self._providers)]
             try:
                 request_kwargs = {"top_p": self.config.top_p, **kwargs}
                 async for chunk in provider.chat(
-                    messages,
+                    _continuation_messages(messages, partial),
                     stream=True,
                     tools=tools,
                     provider_native_tools=provider_native_tools,
                     **request_kwargs,
                 ):
-                    emitted = emitted or bool(chunk)
+                    partial += chunk
                     yield chunk
                 self._copy_result(provider)
                 await self._emit_provider_summary()
                 return
             except Exception as error:
                 last_error = error
-                if emitted:
+                if provider.last_tool_calls:
+                    self._copy_result(provider)
+                    await self._emit_provider_summary()
+                    return
+                if tools or provider_native_tools:
+                    raise RuntimeError(
+                        "Provider stream failed during a native-tool round; the turn was paused to avoid a duplicate tool call"
+                    ) from error
+                if not _retryable_provider_error(error) or index >= attempts - 1:
                     raise
+                await self._retry_delay(index + 1, error, _CLOUD_RETRY_DELAYS)
         if last_error is not None:
             raise last_error
         raise RuntimeError("No OpenAI-compatible endpoint is configured")
@@ -174,19 +255,27 @@ class GeminiNativeProvider(StreamObserverMixin, BaseLLMProvider):
         self._last_assistant_extra_fields = {}
         sanitizer = _PromptSanitizer(bool(self.profile.get("sanitize_sensitive", True)))
         body = self._request_body(sanitizer.sanitize_messages(messages), tools)
-        contents = _gemini_sdk_contents(body)
         config = _gemini_sdk_config(body)
         endpoints = [str(self.profile["endpoint"]), *(self.profile.get("fallback_endpoints") or [])]
         last_error: Exception | None = None
-        for endpoint in endpoints:
+        partial = ""
+        recovered_tool_calls: dict[str, NativeToolCall] = {}
+        for attempt in range(6):
+            endpoint = endpoints[attempt % len(endpoints)]
             client = _gemini_client(endpoint, str(self.profile.get("api_key") or ""), int(self.profile.get("timeout", 120)))
-            emitted = False
             tool_calls: dict[str, NativeToolCall] = {}
             reasoning_parts: list[str] = []
             try:
                 stream = await client.aio.models.generate_content_stream(
                     model=self.config.model,
-                    contents=contents,
+                    contents=_gemini_sdk_contents(
+                        self._request_body(
+                            sanitizer.sanitize_messages(
+                                _continuation_messages(messages, partial)
+                            ),
+                            tools,
+                        )
+                    ),
                     config=config,
                 )
                 async for response in stream:
@@ -209,24 +298,37 @@ class GeminiNativeProvider(StreamObserverMixin, BaseLLMProvider):
                             arguments=json.dumps(sanitizer.restore_obj(arguments), ensure_ascii=False),
                         )
                     if text:
-                        emitted = True
-                        yield sanitizer.restore_text(text)
+                        restored = sanitizer.restore_text(text)
+                        partial += restored
+                        yield restored
                     self._last_usage = self._normalized_usage(data)
                     if self._last_usage:
                         await self._emit_stream_event(
                             "usage",
                             {"usage": dict(self._last_usage)},
                         )
-                self._last_tool_calls = list(tool_calls.values())
+                recovered_tool_calls.update(tool_calls)
+                self._last_tool_calls = list(recovered_tool_calls.values())
                 if reasoning_parts:
                     self._last_assistant_extra_fields = {
                         "reasoning_content": sanitizer.restore_text("".join(reasoning_parts))
                     }
                 return
             except Exception as error:
+                recovered_tool_calls.update(tool_calls)
+                if recovered_tool_calls:
+                    self._last_tool_calls = list(recovered_tool_calls.values())
+                    if reasoning_parts:
+                        self._last_assistant_extra_fields = {
+                            "reasoning_content": sanitizer.restore_text("".join(reasoning_parts))
+                        }
+                    return
                 last_error = error
-                if emitted:
+                error_class = classify_openai_error(error)
+                retryable = error_class in {ErrorClass.RATE_LIMIT, ErrorClass.SERVER, ErrorClass.TRANSIENT}
+                if not retryable or attempt >= 5:
                     raise
+                await self._retry_delay(attempt + 1, error, _CLOUD_RETRY_DELAYS)
             finally:
                 await client.aio.aclose()
         if last_error is not None:
@@ -420,6 +522,14 @@ class LlamaOnceProvider(StreamObserverMixin, BaseLLMProvider):
                         "enable_thinking": bool(self.profile.get("thinking", False))
                     }
                 },
+                max_retries=0,
+                retry_policy={
+                    "max_retries": 0,
+                    "base_delay": 1.0,
+                    "max_delay": 16.0,
+                    "jitter": 0.15,
+                    "retry_classes": ["rate_limit", "server", "transient"],
+                },
             )
             return self._provider
         except BaseException:
@@ -434,18 +544,38 @@ class LlamaOnceProvider(StreamObserverMixin, BaseLLMProvider):
         provider_native_tools: list[Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
-        provider = await self._ensure_provider(messages)
-        request_kwargs = {"top_p": self.config.top_p, **kwargs}
-        async for chunk in provider.chat(
-            messages,
-            stream=True,
-            tools=tools,
-            provider_native_tools=provider_native_tools,
-            **request_kwargs,
-        ):
-            yield chunk
-        self._copy_result(provider)
-        await self._emit_provider_summary()
+        partial = ""
+        for attempt in range(6):
+            try:
+                provider = await self._ensure_provider(
+                    _continuation_messages(messages, partial)
+                )
+                request_kwargs = {"top_p": self.config.top_p, **kwargs}
+                async for chunk in provider.chat(
+                    _continuation_messages(messages, partial),
+                    stream=True,
+                    tools=tools,
+                    provider_native_tools=provider_native_tools,
+                    **request_kwargs,
+                ):
+                    partial += chunk
+                    yield chunk
+                self._copy_result(provider)
+                await self._emit_provider_summary()
+                return
+            except Exception as error:
+                if self._provider is not None and self._provider.last_tool_calls:
+                    self._copy_result(self._provider)
+                    await self._emit_provider_summary()
+                    return
+                if tools or provider_native_tools:
+                    raise RuntimeError(
+                        "Local provider stream failed during a native-tool round; the turn was paused to avoid a duplicate tool call"
+                    ) from error
+                if not _retryable_provider_error(error) or attempt >= 5:
+                    raise
+                await self.end_turn()
+                await self._retry_delay(attempt + 1, error, _LOCAL_RETRY_DELAYS)
 
     async def _complete_chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> ChatResponse:
         provider = await self._ensure_provider(messages)

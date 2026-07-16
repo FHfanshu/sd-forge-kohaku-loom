@@ -30,14 +30,15 @@ class KohakuTerrariumProxy:
 
     async def forward(self, request: Request, sidecar_path: str) -> Response:
         normalized_path = self._normalized_path(sidecar_path)
-        body = await request.body() if request.method == "POST" else b""
-        for attempt in range(2):
+        body = await request.body() if request.method in {"POST", "PUT", "PATCH"} else b""
+        attempts = 2 if request.method in {"GET", "HEAD", "OPTIONS"} else 1
+        for attempt in range(attempts):
             state = await self._ensure_sidecar()
             try:
                 return await self._send(request, normalized_path, body, state)
             except httpx.RequestError as error:
                 await self._invalidate(state)
-                if attempt == 0:
+                if attempt + 1 < attempts:
                     continue
                 raise HTTPException(
                     status_code=503,
@@ -173,6 +174,6 @@ def register_kt_proxy(
     app.add_api_route(
         "/kohaku-loom/kt/{sidecar_path:path}",
         forward,
-        methods=["GET", "POST"],
+        methods=["GET", "POST", "PATCH"],
         name="kohaku-loom-kt-proxy",
     )
