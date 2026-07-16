@@ -176,9 +176,9 @@ class PromptToolsTests(unittest.TestCase):
         self.assertFalse(_assistant_use_gemini_native("openai", "https://moyuu.cc", "grok-4.5"))
         self.assertTrue(_assistant_use_gemini_native("moyuu", "https://moyuu.cc", "gemini-3.5-flash-high"))
 
-    def test_default_remote_route_uses_moyuu_gemini(self):
-        self.assertEqual("moyuu", DEFAULT_ASSISTANT_BACKEND)
-        self.assertEqual("gemini-3.5-flash-preview", DEFAULT_ASSISTANT_MODEL)
+    def test_default_legacy_route_uses_portable_local_endpoint(self):
+        self.assertEqual("local-lmcpp", DEFAULT_ASSISTANT_BACKEND)
+        self.assertEqual("local-model", DEFAULT_ASSISTANT_MODEL)
 
     def test_chat_does_not_retry_with_another_model(self):
         payload = {
