@@ -3,8 +3,6 @@
     if (!tools) return;
     const {
         assistantState,
-        currentCheckpoint,
-        currentForgePreset,
         promptContextSnapshot,
         promptFieldRootForTarget,
         loomApp,
@@ -12,8 +10,7 @@
         positivePromptNoPhrases,
         setNativeValueIfAvailable,
         setTextboxValue,
-        styleSelectorValue,
-        truncateAssistantText
+        styleSelectorValue
     } = tools;
 
     const RESOURCE_TOOLS = new Set([
@@ -251,94 +248,6 @@
         return { ok: true, target: guard.target, initialized_fields: initialized, skipped_fields: skipped, context_hash: latest.context_hash };
     }
 
-    function isDanbooruTagRequest(requestText) {
-        return /\bdanbooru\b|\bgelbooru\b|\bbooru\s+tags?\b|\btag\s*(?:prompt|list|syntax)\b|(?:标签|tag).{0,12}(?:提示词|prompt)|danbooru\s*(?:标签|标注|tag)|标签\s*wiki/i.test(String(requestText || ""));
-    }
-
-    function danbooruPreflightState(requestText) {
-        return { required: isDanbooruTagRequest(requestText), completed: !isDanbooruTagRequest(requestText), correctionSent: false };
-    }
-
-    function danbooruPreflightMessage() {
-        return "Danbooru tag preflight is mandatory. Before writing or editing any tag prompt, extract 2-12 short English visual concepts from the original request and call search_danbooru_tags once with its queries array. Use the candidate results before answering.";
-    }
-
-    function automaticPromptSkillNames(requestText) {
-        const context = `${currentForgePreset()} ${currentCheckpoint()}`.toLowerCase();
-        const isTagRequest = isDanbooruTagRequest(requestText);
-        const names = [];
-        if (context.includes("anima")) names.push("anima_dit");
-        if (isTagRequest) names.push("danbooru_tags");
-        return names;
-    }
-
-    function automaticPromptSkillName(requestText) {
-        return automaticPromptSkillNames(requestText)[0] || "";
-    }
-
-    async function ensureAutomaticPromptSkills(run, requestText) {
-        const loaded = [];
-        for (const name of automaticPromptSkillNames(requestText)) {
-            const skill = await loadPromptSkillTool({ name: name }, run && run.controller ? run.controller.signal : undefined);
-            if (!skill.ok) continue;
-            const marker = `Built-in prompt skill ${name}:`;
-            const alreadySent = assistantState.messages.some(function (message) { return String(message.content || "").startsWith(marker); });
-            if (alreadySent) continue;
-            assistantState.messages.push({ role: "user", content: `${marker}\n${skill.guide}` });
-            loaded.push(name);
-        }
-        return loaded;
-    }
-
-    function compactAssistantMessages(messages, maximum) {
-        const values = Array.isArray(messages) ? messages : [];
-        const limit = maximum || 65536;
-        if (JSON.stringify(values).length <= limit) return values;
-        const firstUser = values.find(function (message) { return message.role === "user" && !String(message.content || "").startsWith("Tool result for "); });
-        const tail = values.slice(-12);
-        const compacted = [];
-        if (firstUser && !tail.includes(firstUser)) compacted.push(firstUser);
-        tail.forEach(function (message) { compacted.push(message); });
-        let contentLimit = Math.max(96, Math.floor(limit / Math.max(1, compacted.length)) - 96);
-        const truncate = function () {
-            return compacted.map(function (message) {
-                const clone = Object.assign({}, message);
-                const content = String(clone.content || "");
-                if (content.length > contentLimit) clone.content = truncateAssistantText(content, contentLimit);
-                return clone;
-            });
-        };
-        let result = truncate();
-        while (JSON.stringify(result).length > limit && contentLimit > 24) {
-            contentLimit = Math.max(24, Math.floor(contentLimit * 0.7));
-            result = truncate();
-        }
-        return result;
-    }
-
-    function compactToolResult(result, limit) {
-        const raw = JSON.stringify(result || {});
-        if (raw.length <= (limit || 12000)) return raw;
-        return JSON.stringify({ ok: result && result.ok, truncated: true, preview: raw.slice(0, limit || 12000) });
-    }
-
-    function resourceToolResultLabel(name, result) {
-        if (!result || !result.ok) return `工具 ${name}: 失败 · ${result && result.error ? result.error : "未知错误"}`;
-        if (name === "search_resources") {
-            const names = (result.items || []).slice(0, 5).map(function (item) { return item.name || item.id; }).join(" · ");
-            return `资源搜索 · ${result.kind} · ${result.query || "全部"}\n${result.items.length}/${result.total}${names ? ` · ${names}` : ""}`;
-        }
-        if (name === "inspect_resource") return `资源详情 · ${result.kind} · ${result.name || result.id}${result.total !== undefined ? ` · ${result.items.length}/${result.total}` : ""}`;
-        if (name === "apply_resource") return `已应用 · ${result.kind} · ${result.id}\n${(result.applied || []).join(" · ") || "已存在，无需重复添加"}`;
-        if (name === "initialize_prompt") return `已初始化 · ${result.target} · ${(result.initialized_fields || []).join(" + ")}`;
-        if (name === "load_prompt_skill") return `已加载指南 · ${result.title || result.name}`;
-        if (name === "search_danbooru_tags") return `Danbooru 标签搜索 · ${result.query}\n${(result.items || []).slice(0, 5).map(function (item) { return item.name; }).join(" · ") || "无结果"}`;
-        if (name === "inspect_danbooru_tag") return `Danbooru 标签详情 · ${result.name}`;
-        if (name === "inspect_danbooru_tags") return `Danbooru 批量标签详情 · ${(result.items || []).length}`;
-        if (name === "related_danbooru_tags") return `Danbooru 关联标签 · ${result.name}\n${(result.related || []).slice(0, 5).map(function (item) { return item.name; }).join(" · ")}`;
-        return "";
-    }
-
     async function executeResourceTool(tool, signal) {
         const name = tool.tool || tool.name;
         if (!RESOURCE_TOOLS.has(name)) return undefined;
@@ -372,15 +281,6 @@
         addStyleSelection,
         applyResourceTool,
         initializePromptTool,
-        isDanbooruTagRequest,
-        danbooruPreflightState,
-        danbooruPreflightMessage,
-        automaticPromptSkillNames,
-        automaticPromptSkillName,
-        ensureAutomaticPromptSkills,
-        compactAssistantMessages,
-        compactToolResult,
-        resourceToolResultLabel,
         executeResourceTool
     });
 })();

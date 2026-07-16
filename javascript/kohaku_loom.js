@@ -14,20 +14,6 @@
         return hasMainTabs && hasPromptBox ? app : null;
     }
 
-    function assistantPanel() {
-        return document.getElementById("loom_assistant_panel");
-    }
-
-    function settingsPanel() {
-        return document.getElementById("loom_assistant_settings_panel");
-    }
-
-    function removeAssistantWindow() {
-        document.querySelectorAll("#loom_assistant_launcher, #loom_assistant_panel, #loom_assistant_settings_panel, #loom_assistant_settings_backdrop").forEach(function (el) {
-            el.remove();
-        });
-    }
-
     function currentForgePreset() {
         const preset = loomApp().querySelector("#forge_ui_preset");
         if (!preset) return "";
@@ -86,23 +72,13 @@
     }
 
     const assistantState = {
-        messages: [],
-        attachments: [],
         promptReads: {},
         promptStyles: null,
         loadedPromptSkills: {},
-        running: null,
-        queue: [],
-        queueVersions: {},
-        sessionUsage: {},
-        sessionTitle: "",
-        sessionHistoryCleanup: null
+        agentMode: "normal",
+        txt2imgStateRead: null
     };
     const assistantBridgeId = globalThis.crypto?.randomUUID?.() || `loom-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
-    function assistantOperationId(kind) {
-        return `${assistantBridgeId}:${kind}:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
-    }
 
     async function claimAssistantToolBridge() {
         const response = await fetch("/kohaku-loom/kt/tools/bridge", {
@@ -111,33 +87,6 @@
             body: JSON.stringify({ bridge_id: assistantBridgeId })
         });
         return response.ok ? response.json() : null;
-    }
-
-    async function startAssistantBridgeLease(run) {
-        const claim = await claimAssistantToolBridge().catch(function () { return null; });
-        run.bridgeTimer = globalThis.setInterval(function () { claimAssistantToolBridge().catch(function () { }); }, 5000);
-        return claim;
-    }
-
-    function stopAssistantBridgeLease(run) {
-        if (run?.bridgeTimer) globalThis.clearInterval(run.bridgeTimer);
-        if (run) run.bridgeTimer = null;
-    }
-
-    const loomVisionPresets = {
-        "Gemma 4 12B": "gemma-4-12b-it",
-        "Qwen3.5 原版 9B": "qwen3.5-9b-vlm",
-        "Qwen3.5 破限版 9B": "hauhau-qwen3.5-9b-uncensored",
-        "自定义": ""
-    };
-
-    function defaultVisionPreset() {
-        return "Qwen3.5 原版 9B";
-    }
-
-    function visionModelForPreset(preset) {
-        if (Object.prototype.hasOwnProperty.call(loomVisionPresets, preset)) return loomVisionPresets[preset];
-        return loomVisionPresets[defaultVisionPreset()] || "local-vlm";
     }
 
     function assistantConfig(routeOverride) {
@@ -176,12 +125,34 @@
     }
 
     function activePromptTarget() {
-        const tabs = loomApp().querySelector("#tabs");
+        const app = loomApp();
+        const tabs = app.querySelector("#tabs");
         const selected = tabs ? Array.from(tabs.querySelectorAll("button")).find(function (button) {
             return button.getAttribute("aria-selected") === "true" || button.classList.contains("selected");
         }) : null;
-        const text = selected ? selected.textContent.toLowerCase() : "";
-        return text.includes("img2img") ? "img2img" : "txt2img";
+        if (selected) {
+            const identity = [
+                selected.id,
+                selected.getAttribute("aria-controls"),
+                selected.getAttribute("data-tab-id"),
+                selected.getAttribute("data-testid"),
+                selected.getAttribute("href")
+            ].filter(Boolean).join(" ").toLowerCase();
+            if (identity.includes("img2img")) return "img2img";
+            if (identity.includes("txt2img")) return "txt2img";
+        }
+        function visible(root) {
+            if (!root || root.hidden || root.getAttribute("aria-hidden") === "true") return false;
+            const style = typeof getComputedStyle === "function" ? getComputedStyle(root) : null;
+            if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+            return typeof root.getClientRects !== "function" || root.getClientRects().length > 0;
+        }
+        const txtRoot = app.querySelector("#txt2img, #txt2img_interface, #txt2img_prompt");
+        const imgRoot = app.querySelector("#img2img, #img2img_interface, #img2img_prompt");
+        const txtVisible = visible(txtRoot);
+        const imgVisible = visible(imgRoot);
+        if (imgVisible && !txtVisible) return "img2img";
+        return "txt2img";
     }
 
     function promptFieldRootForTarget(target, field) {
@@ -840,122 +811,16 @@
         return { ok: false, error: `unknown tool: ${name}` };
     }
 
-    function truncateAssistantText(text, limit) {
-        const value = String(text || "").trim();
-        return value.length > limit ? `${value.slice(0, limit)}...` : value;
-    }
-
-    function updateAssistantStreamingMessage(item, text, reasoning, renderMarkdown, recovery) {
-        if (!item) return;
-        const reasoningWasOpen = item.querySelector?.(".loom-assistant-reasoning")?.open;
-        item.replaceChildren();
-        if (reasoning) {
-            const details = document.createElement("details");
-            details.className = "loom-assistant-reasoning";
-            details.open = reasoningWasOpen === undefined ? !text : reasoningWasOpen;
-            const summary = document.createElement("summary");
-            summary.textContent = "思考过程";
-            const body = document.createElement("div");
-            body.className = "loom-assistant-reasoning-body";
-            body.textContent = reasoning;
-            details.append(summary, body);
-            item.appendChild(details);
-        }
-        if (text) {
-            const body = document.createElement("div");
-            body.className = "loom-assistant-stream-body";
-            renderMarkdown(body, text);
-            item.appendChild(body);
-        }
-        if (text) window.kohakuLoom.appendAssistantCopyAction?.(item, text);
-        if (recovery) {
-            const marker = document.createElement("div");
-            marker.className = "loom-assistant-partial-marker";
-            marker.textContent = recovery;
-            item.appendChild(marker);
-            item.dataset.loomPartial = "1";
-        } else {
-            delete item.dataset.loomPartial;
-        }
-        const log = item.closest("#loom_assistant_messages");
-        if (log) log.scrollTop = log.scrollHeight;
-    }
-
-    function formatAssistantTokenStatus(usage) {
-        const value = usage && usage.usage ? usage.usage : (usage || {});
-        const input = Number(value.input_tokens ?? value.prompt_tokens) || 0;
-        const output = Number(value.output_tokens ?? value.completion_tokens) || 0;
-        const thoughts = Number(value.thought_tokens ?? value.reasoning_tokens) || 0;
-        const cached = Number(value.cached_tokens ?? value.cache_read_input_tokens) || 0;
-        const details = [];
-        if (thoughts > 0) details.push(`thinking ${thoughts}`);
-        if (cached > 0) details.push(`cache ${cached}`);
-        return `思考中... ↑ ${input} tokens ↓ ${output} tokens${details.length ? ` (${details.join(", ")})` : ""}`;
-    }
-
-    function normalizeAssistantUsage(usage) {
-        const value = usage && usage.usage ? usage.usage : (usage || {});
-        const input = Number(value.input_tokens ?? value.prompt_tokens) || 0;
-        const output = Number(value.output_tokens ?? value.completion_tokens) || 0;
-        const cached = Number(value.cached_tokens ?? value.cache_read_input_tokens) || 0;
-        const total = Number(value.total_tokens) || input + output;
-        return { prompt_tokens: input, completion_tokens: output, cached_tokens: cached, total_tokens: total };
-    }
-
-    function formatAssistantSessionUsage(usage) {
-        const value = normalizeAssistantUsage(usage);
-        return value.total_tokens ? `Σ ${value.total_tokens} tokens` : "";
-    }
-
-    function assistantUsesGeminiVisionDelegate(config) {
-        return String(config?.model_id || config?.model || "").toLowerCase().includes("grok");
-    }
-
-    function assistantVisionDelegateProfile() {
-        const profiles = window.kohakuLoom && window.kohakuLoom.profileStore;
-        const teacher = profiles && typeof profiles.teacher === "function" ? profiles.teacher() : null;
-        if (!teacher || teacher.protocol !== "gemini-native" || teacher.capabilities?.vision !== true) {
-            throw new Error("Grok 附图需要选择支持视觉的 Gemini 教师档案。");
-        }
-        return teacher;
-    }
-
-    async function analyzeAssistantAttachmentWithGemini(attachment, userText, run) {
-        const profile = assistantVisionDelegateProfile();
-        let prompt = "Analyze the attached image for a downstream prompt assistant. Return a concise factual visual briefing covering subject count, composition, spatial relationships, clothing, objects, setting, lighting, camera, and reusable style. Replace every sensitive or explicit term with SAFE_SLOT_###. Do not output raw sensitive words, markdown, or tool calls.";
-        if (userText) prompt += "\nUser task context: " + String(userText).slice(0, 800);
-        const result = await window.kohakuLoom.profileChat(profile.id, [{
-            role: "user",
-            content: [
-                { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: attachment.dataUrl, detail: "high" }, meta: { source_type: "attachment", source_name: attachment.name || "reference image" } }
-            ]
-        }], run?.controller.signal);
-        const text = String(result.text || "").trim();
-        if (!text) throw new Error("Gemini 视觉代理没有返回可用摘要。");
-        return { text: text, model: result.model, vision_preset: profile.display_name || profile.model_id || "Gemini", sanitized_slots: result.sanitized_slots || 0 };
-    }
-
     Object.assign(window.kohakuLoom, {
         loomApp,
         loomMainApp,
-        assistantPanel,
-        settingsPanel,
-        removeAssistantWindow,
         currentForgePreset,
         currentCheckpoint,
         textboxValue,
         setTextboxValue,
         switchMainTab,
         assistantState,
-        assistantBridgeId,
-        assistantOperationId,
         claimAssistantToolBridge,
-        startAssistantBridgeLease,
-        stopAssistantBridgeLease,
-        loomVisionPresets,
-        defaultVisionPreset,
-        visionModelForPreset,
         assistantConfig,
         activePromptTarget,
         promptFieldRootForTarget,
@@ -988,13 +853,6 @@
         compactPromptPatchResult,
         editPromptTool,
         askTeacherTool,
-        executeAssistantTool,
-        truncateAssistantText,
-        updateAssistantStreamingMessage,
-        formatAssistantTokenStatus,
-        normalizeAssistantUsage,
-        formatAssistantSessionUsage,
-        analyzeAssistantAttachmentWithGemini,
-        assistantUsesGeminiVisionDelegate
+        executeAssistantTool
     });
 })();

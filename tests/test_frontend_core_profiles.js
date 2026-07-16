@@ -9,6 +9,7 @@ function loadCore(profileStore) {
     global.document = {
         body: {},
         getElementById() { return null; },
+        querySelector() { return null; },
         querySelectorAll() { return []; }
     };
     global.window = { kohakuLoom: profileStore ? { profileStore } : {} };
@@ -67,22 +68,25 @@ test("assistant config projects the configured local session metadata profile", 
     assert.equal(config.session_profile.runtime, "llama-endpoint");
 });
 
-test("token status accepts KT and legacy usage field names", () => {
-    const tools = loadCore();
-    assert.equal(
-        tools.formatAssistantTokenStatus({ prompt_tokens: 18, completion_tokens: 7, reasoning_tokens: 3 }),
-        "思考中... ↑ 18 tokens ↓ 7 tokens (thinking 3)"
-    );
-    assert.equal(
-        tools.formatAssistantTokenStatus({ input_tokens: 9, output_tokens: 2, cached_tokens: 4 }),
-        "思考中... ↑ 9 tokens ↓ 2 tokens (cache 4)"
-    );
-});
-
 test("positive prompt guard detects no-phrase exclusions", () => {
     const tools = loadCore(null);
     assert.deepEqual(tools.positivePromptNoPhrases("portrait, no hat, no background"), ["no hat", "no background"]);
     assert.deepEqual(tools.positivePromptNoPhrases("portrait, noir lighting"), []);
+});
+
+test("active prompt target uses stable tab identity instead of localized text", () => {
+    const tools = loadCore(null);
+    const selected = {
+        id: "",
+        textContent: "图生图",
+        classList: { contains: () => false },
+        getAttribute(name) {
+            return name === "aria-selected" ? "true" : name === "aria-controls" ? "img2img-interface" : null;
+        }
+    };
+    const tabs = { querySelectorAll: () => [selected] };
+    global.document.querySelector = (selector) => selector === "#tabs" ? tabs : null;
+    assert.equal(tools.activePromptTarget(), "img2img");
 });
 
 test("replace_n scans the original prompt and cannot replace its own output", () => {

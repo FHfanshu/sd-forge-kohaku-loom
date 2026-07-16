@@ -6,6 +6,6 @@
   onMount(() => { void useI18nStore.getState().preload(); });
 </script>
 
-<section id="kohaku-loom-svelte-ui" data-legacy-safe="true">
+<section id="kohaku-loom-svelte-ui">
   <Surface />
 </section>

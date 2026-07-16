@@ -11,7 +11,6 @@ export function mountSvelteUi(host: HTMLElement = document.body): ReturnType<typ
   if ((!UI_READY && !import.meta.env.DEV) || app) return app;
   const target = document.createElement("div");
   target.id = "kohaku-loom-svelte-mount";
-  target.dataset.legacySafe = "true";
   host.appendChild(target);
   app = mount(Shell, { target });
   return app;

@@ -9,7 +9,7 @@ from pathlib import Path
 
 @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
 class HostBridgeTests(unittest.TestCase):
-    def test_legacy_core_publishes_versioned_host_api_without_replacing_exports(self):
+    def test_core_publishes_versioned_host_api_without_replacing_exports(self):
         root = Path(__file__).resolve().parents[1]
         source = root / "javascript" / "kohaku_loom.js"
         host_source = root / "javascript" / "kohaku_loom_07_host.js"
@@ -21,17 +21,17 @@ global.document = { body: {}, getElementById: () => null, querySelectorAll: () =
 global.fetch = async () => ({ ok: true, json: async () => ({}) });
 const [sourcePath, hostSourcePath] = process.argv.slice(-2);
 vm.runInThisContext(fs.readFileSync(sourcePath, "utf8"), { filename: sourcePath });
-const legacy = window.kohakuLoom;
-legacy.loomMainApp = () => null;
-legacy.activePromptTarget = () => "txt2img";
-legacy.readPromptTool = async () => ({ ok: true });
-legacy.captureForgeUiState = () => ({ controls: [] });
-legacy.restoreForgeUiState = () => true;
-legacy.executeAssistantTool = async () => ({ ok: true });
-legacy.claimAssistantToolBridge = async () => ({ owned: true });
-legacy.profileStore = Object.fromEntries(["load", "current", "teacher", "session", "add", "duplicate", "update", "delete", "setActive", "setTeacher", "setSession", "setNaming", "restoreDefaults", "requestProjection"].map(name => [name, () => null]));
+const core = window.kohakuLoom;
+core.loomMainApp = () => null;
+core.activePromptTarget = () => "txt2img";
+core.readPromptTool = async () => ({ ok: true });
+core.captureForgeUiState = () => ({ controls: [] });
+core.restoreForgeUiState = () => true;
+core.executeAssistantTool = async () => ({ ok: true });
+core.claimAssistantToolBridge = async () => ({ owned: true });
+core.profileStore = Object.fromEntries(["load", "current", "teacher", "session", "add", "duplicate", "update", "delete", "setActive", "setTeacher", "setSession", "setNaming", "restoreDefaults", "requestProjection"].map(name => [name, () => null]));
 vm.runInThisContext(fs.readFileSync(hostSourcePath, "utf8"), { filename: hostSourcePath });
-const host = legacy.hostApi;
+const host = core.hostApi;
 process.stdout.write(JSON.stringify({
   name: host.name,
   version: host.version,
@@ -39,8 +39,8 @@ process.stdout.write(JSON.stringify({
   capabilities: host.capabilities,
   prompt: host.activePromptTarget(),
   handshake: host.handshake({ client: "kohaku-loom-svelte-ui", apiVersion: 1 }),
-  hasLegacy: typeof legacy.readPromptTool === "function",
-  fakeBridge: Object.hasOwn(legacy, "svelteUiBridge")
+  hasCore: typeof core.readPromptTool === "function",
+  fakeBridge: Object.hasOwn(core, "svelteUiBridge")
 }));
 '''
         completed = subprocess.run(
@@ -57,7 +57,7 @@ process.stdout.write(JSON.stringify({
         self.assertIn("forge-state", result["capabilities"])
         self.assertEqual("txt2img", result["prompt"])
         self.assertTrue(result["handshake"]["ok"])
-        self.assertTrue(result["hasLegacy"])
+        self.assertTrue(result["hasCore"])
         self.assertFalse(result["fakeBridge"])
 
 

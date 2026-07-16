@@ -6,6 +6,7 @@
     const BRIDGE_NAME = "kohaku-loom-svelte-ui";
     const API_VERSION = 1;
     const VERSION = "1.0.0";
+    const KT_BASE = "/kohaku-loom/kt";
     const CAPABILITIES = Object.freeze([
         "forge-availability", "prompt-target", "forge-state", "tool-execution",
         "profile-store", "tool-bridge-lease", "assistant-config", "session-runtime",
@@ -37,12 +38,42 @@
     }
 
     function ktBaseUrl() {
-        return String(tools.KT_ASSISTANT_BASE || "/kohaku-loom/kt");
+        return String(tools.KT_ASSISTANT_BASE || KT_BASE);
     }
 
-    function profileChat(profileId, messages, signal) {
-        if (typeof tools.profileChat !== "function") throw new Error("Profile chat is unavailable");
-        return tools.profileChat(profileId, messages, signal);
+    async function ktJson(path, options) {
+        const response = await fetch(ktBaseUrl() + path, options);
+        if (!response.ok) {
+            let detail = await response.text();
+            try { detail = JSON.parse(detail).detail || detail; } catch (_error) { }
+            throw new Error(String(detail || `HTTP ${response.status}`));
+        }
+        return response.status === 204 ? null : response.json();
+    }
+
+    async function syncProfiles() {
+        if (!tools.profileStore) throw new Error("Model Profile store is unavailable");
+        const imported = await ktJson("/profiles/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(tools.profileStore.load())
+        });
+        if (tools.LEGACY_PROFILE_STORAGE_KEY) localStorage.removeItem(tools.LEGACY_PROFILE_STORAGE_KEY);
+        (tools.LEGACY_ASSISTANT_PROFILE_KEYS || []).filter(function (key) {
+            return String(key).startsWith("q3vl_assistant_");
+        }).forEach(function (key) { localStorage.removeItem(key); });
+        if (typeof tools.profileStore.scrubApiKeys === "function") tools.profileStore.scrubApiKeys();
+        return imported;
+    }
+
+    async function profileChat(profileId, messages, signal) {
+        await syncProfiles();
+        return ktJson(`/profiles/${encodeURIComponent(profileId)}/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: signal,
+            body: JSON.stringify({ messages: messages })
+        });
     }
 
     function listLegacySessions(limit) {
@@ -87,17 +118,20 @@
         profileStore: Object.freeze(profileStore),
         claimToolBridge: function () { return tools.claimAssistantToolBridge(); },
         claimAssistantToolBridge: function () { return tools.claimAssistantToolBridge(); },
+        syncProfiles: syncProfiles,
         profileChat: profileChat,
         listLegacySessions: listLegacySessions,
         getLegacySession: getLegacySession,
         ktBaseUrl: ktBaseUrl(),
         openSettings: function () {
-            if (typeof tools.openModelProfileSettings !== "function") throw new Error("Profile settings are unavailable");
-            return tools.openModelProfileSettings();
+            const ui = window.KohakuLoomSvelteUi;
+            if (!ui || typeof ui.openProfileSettings !== "function") throw new Error("Profile settings are unavailable");
+            return ui.openProfileSettings();
         },
         getLocaleHints: localeHints,
         subscribeLocaleHints: subscribeLocaleHints
     });
 
+    tools.profileChat = profileChat;
     if (!tools.hostApi || tools.hostApi.name !== HOST_API_NAME || tools.hostApi.apiVersion !== API_VERSION) tools.hostApi = hostApi;
 })();
