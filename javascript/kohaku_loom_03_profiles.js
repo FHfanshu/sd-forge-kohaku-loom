@@ -54,7 +54,7 @@
         {
             id: "gemini",
             display_name: "Gemini",
-            enabled: false,
+            enabled: true,
             protocol: "gemini-native",
             runtime: "remote-http",
             endpoint: "https://generativelanguage.googleapis.com",
@@ -237,8 +237,8 @@
     function createDefaultProfileState() {
         return {
             version: PROFILE_SCHEMA_VERSION,
-            active_profile_id: "local-llama-endpoint",
-            teacher_profile_id: "local-llama-endpoint",
+            active_profile_id: "gemini",
+            teacher_profile_id: "gemini",
             session_profile_id: "local-llama-endpoint",
             naming_profile_id: "",
             profiles: deepCloneProfileData(DEFAULT_PROFILES)

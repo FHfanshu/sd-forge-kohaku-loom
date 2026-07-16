@@ -169,7 +169,7 @@ export function normalizeProfile(raw: unknown, fallback?: Partial<Profile>): Pro
 }
 
 const DEFAULT_PROFILE_SEEDS: Array<Partial<Profile>> = [
-  { id: "gemini", displayName: "Gemini", modelId: "gemini-model", enabled: false, protocol: "gemini-native", runtime: "remote-http", endpoint: "https://generativelanguage.googleapis.com", fallbackEndpoints: [], capabilities: { ...DEFAULT_CAPABILITIES }, parameters: { ...DEFAULT_PARAMETERS, temperature: 0.35, timeout: 120 } },
+  { id: "gemini", displayName: "Gemini", modelId: "gemini-model", enabled: true, protocol: "gemini-native", runtime: "remote-http", endpoint: "https://generativelanguage.googleapis.com", fallbackEndpoints: [], capabilities: { ...DEFAULT_CAPABILITIES }, parameters: { ...DEFAULT_PARAMETERS, temperature: 0.35, timeout: 120 } },
   { id: "openai-compatible", displayName: "OpenAI-compatible", modelId: "model", enabled: false, protocol: "openai-chat-completions", runtime: "remote-http", endpoint: "", fallbackEndpoints: [], capabilities: { ...DEFAULT_CAPABILITIES, vision: false }, parameters: { ...DEFAULT_PARAMETERS, temperature: 0.35, timeout: 120 } },
   { id: "deepseek", displayName: "DeepSeek", modelId: "deepseek-model", enabled: false, protocol: "openai-chat-completions", runtime: "remote-http", endpoint: "https://api.deepseek.com", fallbackEndpoints: [], capabilities: { ...DEFAULT_CAPABILITIES, vision: false }, parameters: { ...DEFAULT_PARAMETERS, temperature: 0.35, timeout: 120 } },
   { id: "local-llama-endpoint", displayName: "Local llama endpoint", modelId: DEFAULT_MODEL_ID, runtime: "llama-endpoint", endpoint: DEFAULT_ENDPOINT, parameters: { ...DEFAULT_PARAMETERS } },
@@ -179,8 +179,8 @@ const DEFAULT_PROFILE_SEEDS: Array<Partial<Profile>> = [
 export function createDefaultProfileState(): ProfileState {
   return {
     version: 2,
-    activeProfileId: "local-llama-endpoint",
-    teacherProfileId: "local-llama-endpoint",
+    activeProfileId: "gemini",
+    teacherProfileId: "gemini",
     sessionProfileId: "local-llama-endpoint",
     namingProfileId: "",
     profiles: DEFAULT_PROFILE_SEEDS.map((profile) => normalizeProfile(profile)),

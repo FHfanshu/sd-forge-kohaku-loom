@@ -32,8 +32,8 @@ test("defaults contain exactly the five canonical profiles", () => {
     const tools = loadModule(new MemoryStorage());
     const state = tools.createDefaultProfileState();
     assert.equal(state.version, 2);
-    assert.equal(state.active_profile_id, "local-llama-endpoint");
-    assert.equal(state.teacher_profile_id, "local-llama-endpoint");
+    assert.equal(state.active_profile_id, "gemini");
+    assert.equal(state.teacher_profile_id, "gemini");
     assert.equal(state.session_profile_id, "local-llama-endpoint");
     assert.equal(state.naming_profile_id, "");
     assert.deepEqual(state.profiles.map((profile) => profile.id), [
@@ -65,7 +65,7 @@ test("defaults contain exactly the five canonical profiles", () => {
     assert.equal(state.profiles[4].model_path, "");
     assert.equal(state.profiles[4].mmproj_path, "");
     assert.equal(state.profiles[4].llama_server_path, "");
-    assert.deepEqual(state.profiles.map((profile) => profile.enabled), [false, false, false, true, false]);
+    assert.deepEqual(state.profiles.map((profile) => profile.enabled), [true, false, false, true, false]);
 });
 
 test("serialize and load normalize data without sharing references", () => {
@@ -157,7 +157,7 @@ test("invalid existing v2 state does not replay stale legacy settings", () => {
     });
     const tools = loadModule(storage);
     const state = tools.profileStore.load();
-    assert.equal(state.active_profile_id, "local-llama-endpoint");
+    assert.equal(state.active_profile_id, "gemini");
     assert.equal(state.profiles[0].model_id, "gemini-model");
     assert.equal(JSON.stringify(state).includes("stale-secret"), false);
     assert.equal(storage.getItem(tools.PROFILE_STORAGE_KEY), "{broken-json");
@@ -278,7 +278,7 @@ test("deleting the active profile selects the first enabled fallback", () => {
     tools.profileStore.setActive("deepseek");
     tools.profileStore.delete("deepseek");
     const state = tools.profileStore.load();
-    assert.equal(state.active_profile_id, "local-llama-endpoint");
+    assert.equal(state.active_profile_id, "gemini");
 
     state.profiles.forEach((profile) => { profile.enabled = profile.id === "local-llama-once"; });
     state.profiles.find((profile) => profile.id === "local-llama-once").model_path = "D:\\models\\local.gguf";
