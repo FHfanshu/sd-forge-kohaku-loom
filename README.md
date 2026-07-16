@@ -64,6 +64,10 @@ Forge routes use `/kohaku-loom`. Assistant Profiles, sessions, turns, tool repli
 ```powershell
 python -m unittest discover -s tests
 node --check javascript/kohaku_loom*.js
+cd frontend
+npm run check
+npm test
+npm run build
 ```
 
 For local runtime tests, the expected model and backend can be configured with Model Profiles or `LLAMA_SERVER_EXE`. Downloaded models, llama.cpp binaries, logs, caches, and sidecar state are excluded from Git.

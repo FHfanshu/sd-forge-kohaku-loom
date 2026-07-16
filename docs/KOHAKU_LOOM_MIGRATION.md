@@ -36,10 +36,11 @@ uses the `kl-` prefix with Preflight disabled so Forge remains authoritative for
 the host page. The build emits one CSS-injected IIFE at
 `javascript/kohaku_loom_90_ui.js`.
 
-The generated UI remains behind the explicit `UI_READY` gate during migration.
-`javascript/kohaku_loom_99_boot.js` may mount it only after both the gate and
-Forge's `onUiLoaded` callback allow startup; until cutover, the legacy renderer
-is the only active UI.
+The Svelte UI is the only browser renderer. It remains behind the explicit
+`UI_READY` gate, and `javascript/kohaku_loom_99_boot.js` mounts it only after
+Forge's `onUiLoaded` callback allows startup. The browser files that remain
+outside the generated bundle are host adapters for Forge DOM tools, profiles,
+locale hints, and the sidecar bridge; they do not construct assistant UI.
 
 ## Runtime Boundary
 

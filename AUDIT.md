@@ -1,5 +1,18 @@
 # Audit Log
 
+## 2026-07-16 Svelte UI Cutover
+
+- Svelte 5 is now the only assistant and Model Profiles renderer.
+- Removed the browser-managed assistant loop, legacy session UI, duplicate
+  attachment/reasoning helpers, legacy settings/model-catalog UI, and the
+  accumulated root `style.css`.
+- Retained filename-ordered browser scripts only for the Forge host bridge,
+  prompt/resource tools, profile persistence, locale hints, and generated
+  Svelte boot.
+- Added browser-side image optimization and payload limits, frame-coalesced
+  streaming updates, final-only Markdown rendering, localized tab-safe prompt
+  targeting, and active KT risk-mode synchronization.
+
 ## 2026-07-09 Architecture Split
 
 Goal: split oversized backend and browser files, keep files under 1000 lines, and lock the package DAG against circular imports.
