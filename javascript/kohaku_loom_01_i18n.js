@@ -35,7 +35,7 @@
             "profiles.api_key.show": "Show",
             "profiles.api_key.hide": "Hide",
             "profiles.test": "Test connection",
-            "notifications.bridge_unavailable": "The React host bridge is unavailable.",
+            "notifications.bridge_unavailable": "The Svelte host bridge is unavailable.",
             "notifications.forge_unavailable": "The Forge application is not ready.",
             "notifications.error": "Operation failed",
         },
