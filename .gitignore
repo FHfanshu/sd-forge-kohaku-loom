@@ -7,3 +7,4 @@ bin/
 data/
 .playwright-mcp/
 .loom/
+legacy-session-sample.json
