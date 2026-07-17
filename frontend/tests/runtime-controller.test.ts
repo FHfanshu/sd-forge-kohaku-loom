@@ -139,6 +139,29 @@ describe("runtime session history", () => {
     expect(useRuntimeStore.getState().session?.agent_mode).toBe("yolo");
   });
 
+  it("closes any remote active session before creating a fresh one", async () => {
+    useChatStore.getState().reset();
+    useRuntimeStore.getState().reset();
+    const host = {
+      assistantConfig: vi.fn(() => ({ profile_id: "local" })),
+      syncProfiles: vi.fn(() => Promise.resolve({})),
+    } as never;
+    const request = vi.fn((path: string) => {
+      if (path === "/sessions/close") return Promise.resolve({ ok: true });
+      if (path === "/sessions/open") return Promise.resolve({ session: { session_id: "fresh" } });
+      if (path === "/sessions/fresh") return Promise.resolve({ messages: [] });
+      if (path === "/runtime") return Promise.resolve({ active_session: { session_id: "fresh" } });
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const controller = new LoomRuntimeController(host, { request } as never);
+
+    await controller.newSession();
+
+    expect(request.mock.calls[0]).toEqual(["/sessions/close", { method: "POST" }]);
+    expect(useRuntimeStore.getState().sessionId).toBe("fresh");
+    expect(useChatStore.getState().messages).toEqual([]);
+  });
+
   it("coalesces streaming deltas into one render per animation frame", async () => {
     useChatStore.getState().reset();
     const renders: FrameRequestCallback[] = [];

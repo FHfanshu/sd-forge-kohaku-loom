@@ -9,8 +9,6 @@ import { useRuntimeStore } from "./stores/runtime";
 import { useUiStore } from "./stores/ui";
 import { normalizeProfile, normalizeProfileState } from "./profile-adapter";
 
-const ACTIVE_SESSION_KEY = "loom_kt_active_session";
-
 type RawRecord = Record<string, any>;
 
 interface LoomRun {
@@ -289,7 +287,7 @@ export class LoomRuntimeController {
       // session is opened. Keep the archive in sync even while the chat is
       // idle; the run stream is only active during a turn.
       this.startHistoryEvents();
-      await Promise.all([this.loadHistory(), this.restoreActiveSession()]);
+      await this.loadHistory();
     } catch (error) {
       runtime.setError(errorText(error));
     } finally {
@@ -410,23 +408,6 @@ export class LoomRuntimeController {
     }
   }
 
-  async restoreActiveSession(): Promise<void> {
-    const runtime = await this.client.request<RawRecord>("/runtime");
-    const active = asRecord(runtime.active_session);
-    const stored = typeof localStorage !== "undefined" ? localStorage.getItem(ACTIVE_SESSION_KEY) : null;
-    if (active.session_id) {
-      await this.applySession(String(active.session_id), runtime);
-      return;
-    }
-    if (stored) {
-      try {
-        await this.openSession(stored, true);
-      } catch {
-        localStorage.removeItem(ACTIVE_SESSION_KEY);
-      }
-    }
-  }
-
   async openSession(sessionId = "", resume = Boolean(sessionId)): Promise<RuntimeSession> {
     if (this.activeRun && !this.activeRun.finished) throw new Error("Cannot switch sessions while a turn is active");
     await this.syncProfiles();
@@ -448,9 +429,6 @@ export class LoomRuntimeController {
     useRuntimeStore.getState().setSession(session);
     useUiStore.getState().setRiskMode(session.agent_mode === "yolo" ? "yolo" : "normal");
     useChatStore.getState().reset();
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem(ACTIVE_SESSION_KEY, session.session_id);
-    }
     await this.applySession(session.session_id);
     return session;
   }
@@ -465,7 +443,6 @@ export class LoomRuntimeController {
     const session = { ...asRecord(asRecord(runtime).active_session), session_id: sessionId } as RuntimeSession;
     useRuntimeStore.getState().setSession(session);
     useUiStore.getState().setRiskMode(session.agent_mode === "yolo" ? "yolo" : "normal");
-    if (typeof localStorage !== "undefined") localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
     const conversation = await this.client.request<RawRecord>(`/sessions/${encodeURIComponent(sessionId)}`);
     this.applyConversation(conversation);
     const status = runtime ?? await this.client.request<RawRecord>("/runtime");
@@ -909,8 +886,9 @@ export class LoomRuntimeController {
 
   async newSession(): Promise<void> {
     if (this.activeRun && !this.activeRun.finished) throw new Error("Cannot create a new session while a turn is active");
-    if (useRuntimeStore.getState().sessionId) await this.client.request("/sessions/close", { method: "POST" });
+    await this.client.request("/sessions/close", { method: "POST" });
     useRuntimeStore.getState().reset();
+    useRuntimeStore.getState().setError(null);
     useChatStore.getState().reset();
     await this.openSession("", false);
   }

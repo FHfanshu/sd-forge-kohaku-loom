@@ -69,6 +69,7 @@
   let confirm = $state<"yolo" | null>(null);
   let returnToChatAfterSettings = $state(false);
   let controller = $state<LoomRuntimeController | null>(null);
+  let controllerMount: Promise<void> | null = null;
 
   const visibleMessages = $derived(providedMessages ?? $useChatStore.messages);
   const visibleHistory = $derived(providedHistory ?? (controller ? $useRuntimeStore.history : mockHistory));
@@ -132,6 +133,7 @@
       launcherDragged = false;
       return;
     }
+    void newSession();
     $useUiStore.setShellOpen(true);
     $useUiStore.bringToFront("chat");
     requestAnimationFrame(() => composerInput?.focus());
@@ -145,7 +147,7 @@
   function ensureController(): LoomRuntimeController | null {
     if (controller || Object.keys(actionOverrides).length) return controller;
     controller = createRuntimeController();
-    void controller?.mount();
+    if (controller) controllerMount = controller.mount();
     return controller;
   }
 
@@ -258,8 +260,12 @@
   async function newSession(): Promise<void> {
     notice = null;
     try {
+      const activeController = ensureController();
       if (actionOverrides.newSession) await actionOverrides.newSession();
-      else if (controller) await controller.actions.newSession();
+      else if (activeController) {
+        await controllerMount;
+        await activeController.actions.newSession();
+      }
       else $useChatStore.reset();
       attachments = [];
       draft = "";
@@ -337,6 +343,7 @@
       window.visualViewport?.removeEventListener("resize", refreshViewport);
       window.visualViewport?.removeEventListener("scroll", refreshViewport);
       controller?.destroy();
+      controllerMount = null;
     };
   });
 

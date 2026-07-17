@@ -65,6 +65,18 @@ describe("Svelte chat surface", () => {
     expect(useUiStore.getState().shellOpen).toBe(false);
   });
 
+  it("starts a fresh chat every time the launcher opens", async () => {
+    const user = userEvent.setup();
+    const newSession = vi.fn();
+    render(Surface, { actions: { newSession } });
+
+    await user.click(screen.getByRole("button", { name: "Open Kohaku Loom" }));
+    expect(newSession).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Close Kohaku Loom" }));
+    await user.click(screen.getByRole("button", { name: "Open Kohaku Loom" }));
+    expect(newSession).toHaveBeenCalledTimes(2);
+  });
+
   it("sends through the typed action interface and switches modes", async () => {
     const user = userEvent.setup();
     const sendMessage = vi.fn();
