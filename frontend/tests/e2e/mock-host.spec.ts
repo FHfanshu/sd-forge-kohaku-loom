@@ -261,6 +261,8 @@ test("active turns queue follow-ups and cancel locally", async ({ page }) => {
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible();
   await expect(page.getByText("Mock assistant", { exact: true })).toBeVisible();
+  await expect(page.getByText("Generating response…", { exact: true })).toBeVisible();
+  await capture(page, "assistant-working");
   await input.fill("Queued follow-up");
   await page.getByRole("button", { name: "Queue message" }).click();
   await expect(page.getByLabel("Queued messages")).toContainText("Queued follow-up");
@@ -300,8 +302,6 @@ test.describe("mobile layout", () => {
     expect(modelPicker!.y).toBeGreaterThanOrEqual(0);
     expect(modelPicker!.y + modelPicker!.height).toBeLessThanOrEqual(844);
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("status")).toContainText("Drag the corner to resize");
-
     await page.setViewportSize({ width: 844, height: 390 });
     const landscape = await chat.boundingBox();
     expect(landscape).not.toBeNull();
@@ -314,6 +314,14 @@ test.describe("mobile layout", () => {
     await expect(chat).toHaveCount(0);
     const settings = page.getByRole("dialog", { name: "Model profiles" });
     await expect(settings).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open Kohaku Loom" })).toHaveCount(0);
+    await expect(settings.getByRole("button", { name: "Resize profile window" })).toHaveCount(0);
+    const settingsBox = await settings.boundingBox();
+    expect(settingsBox).not.toBeNull();
+    expect(settingsBox!.x).toBe(0);
+    expect(settingsBox!.y).toBe(0);
+    expect(settingsBox!.width).toBe(844);
+    expect(settingsBox!.height).toBe(390);
     await capture(page, "settings-mobile");
     await settings.getByRole("button", { name: "Close" }).click();
     await expect(page.getByRole("dialog", { name: "Kohaku Loom chat" })).toBeVisible();

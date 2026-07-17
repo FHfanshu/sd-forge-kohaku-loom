@@ -30,6 +30,7 @@ interface LoomRun {
   renderHandle: { kind: "animation"; id: number } | { kind: "timeout"; id: ReturnType<typeof setTimeout> } | null;
   toolResults: Map<string, unknown>;
   toolPromises: Map<string, Promise<unknown>>;
+  activeTools: Map<string, string>;
   pendingTurnEvents: RawRecord[];
   resolve(value: RawRecord): void;
   done: Promise<RawRecord>;
@@ -476,6 +477,7 @@ export class LoomRuntimeController {
     const run = this.createRun(`restore-${String(runtime.active_turn_id)}`, runtime);
     this.activeRun = run;
     const signal = useChatStore.getState().beginRequest(run.requestId);
+    this.syncWorking(run);
     signal.addEventListener("abort", () => run.controller.abort(), { once: true });
     if (run.text || run.reasoning) this.updateStreamingMessage(run);
     void (async () => {
@@ -490,6 +492,7 @@ export class LoomRuntimeController {
       } finally {
         if (!run.finished) this.finishRun(run, { status: run.cancelled ? "interrupted" : "error" });
         useChatStore.getState().finishRequest(run.requestId);
+        this.clearWorking(run);
         if (this.activeRun === run) this.activeRun = null;
       }
     })();
@@ -538,6 +541,7 @@ export class LoomRuntimeController {
       renderHandle: null,
       toolResults: new Map(),
       toolPromises: new Map(),
+      activeTools: new Map(),
       pendingTurnEvents: [],
       resolve,
       done,
@@ -553,6 +557,7 @@ export class LoomRuntimeController {
 
   private updateStreamingMessage(run: LoomRun): void {
     if (run.cancelled) return;
+    this.syncWorking(run);
     this.ensureStreamingMessage(run);
     if (run.renderHandle) return;
     if (typeof globalThis.requestAnimationFrame === "function") {
@@ -575,6 +580,22 @@ export class LoomRuntimeController {
     if (handle.kind === "animation") globalThis.cancelAnimationFrame?.(handle.id);
     else clearTimeout(handle.id);
     run.renderHandle = null;
+  }
+
+  private syncWorking(run: LoomRun): void {
+    const activeRequestId = useChatStore.getState().activeRequestId;
+    if (run.cancelled || run.finished || activeRequestId !== run.requestId) return;
+    const tool = Array.from(run.activeTools.values()).at(-1);
+    if (tool) {
+      useRuntimeStore.getState().setWorking("tool", tool);
+      return;
+    }
+    useRuntimeStore.getState().setWorking(run.text || run.reasoning ? "generating" : "thinking");
+  }
+
+  private clearWorking(run: LoomRun): void {
+    const activeRequestId = useChatStore.getState().activeRequestId;
+    if (!activeRequestId || activeRequestId === run.requestId) useRuntimeStore.getState().setWorking("idle");
   }
 
   private async startStreams(run: LoomRun): Promise<void> {
@@ -676,12 +697,19 @@ export class LoomRuntimeController {
       let result = run.toolResults.get(requestId);
       if (result === undefined) {
         const tool = adaptTool({ tool: payload.tool, arguments: payload.arguments });
+        const name = String(tool.tool ?? "tool");
         const args = asRecord(tool.arguments);
         if (String(payload.agent_mode) === "yolo") args._yolo_authorized = true;
-        result = await this.host.executeTool({ ...tool, arguments: args }, run.controller.signal);
+        run.activeTools.set(requestId, name);
+        this.syncWorking(run);
+        try {
+          result = await this.host.executeTool({ ...tool, arguments: args }, run.controller.signal);
+        } finally {
+          run.activeTools.delete(requestId);
+          this.syncWorking(run);
+        }
         run.toolResults.set(requestId, result);
         const output = asRecord(result);
-        const name = String(tool.tool ?? "tool");
         const detail = output.ok === false ? String(output.error ?? "failed") : typeof result === "string" ? result : JSON.stringify(result);
         useChatStore.getState().upsertMessage({ id: `tool-${requestId}`, role: "tool", content: detail, status: output.ok === false ? "error" : "complete", tool: { name, status: output.ok === false ? "error" : "complete", detail } });
       }
@@ -771,6 +799,7 @@ export class LoomRuntimeController {
     const run = this.createRun(userId);
     this.activeRun = run;
     const signal = useChatStore.getState().beginRequest(userId);
+    this.syncWorking(run);
     signal.addEventListener("abort", () => run.controller.abort(), { once: true });
     try {
       await this.runTurn(input, run, sessionId);
@@ -780,6 +809,7 @@ export class LoomRuntimeController {
       }
     } finally {
       useChatStore.getState().finishRequest(userId);
+      this.clearWorking(run);
       if (this.activeRun === run) this.activeRun = null;
     }
   }

@@ -1,15 +1,17 @@
-import { fireEvent, render, screen, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Surface from "../src/components/Surface.svelte";
 import { mockMessages } from "../src/mock-data";
 import { useChatStore } from "../src/stores/chat";
 import { useProfileStore } from "../src/stores/profiles";
+import { useRuntimeStore } from "../src/stores/runtime";
 import { useUiStore } from "../src/stores/ui";
 
 beforeEach(() => {
   useChatStore.getState().reset();
   useProfileStore.getState().reset();
+  useRuntimeStore.getState().reset();
   useUiStore.getState().reset();
 });
 
@@ -70,19 +72,18 @@ describe("Svelte chat surface", () => {
     await user.type(screen.getByRole("textbox", { name: "Message Kohaku Loom" }), "Refine this prompt");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "Refine this prompt", riskMode: "normal", reasoning: "low" }));
-    await user.click(screen.getByRole("button", { name: "Toggle risk mode" }));
+    await user.click(screen.getByRole("button", { name: "Permission mode: confirmations required" }));
     await user.click(screen.getByRole("button", { name: "Allow direct edits" }));
-    expect(screen.getByRole("button", { name: "Toggle risk mode" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Permission mode: direct edits" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("confirms before clearing a conversation", async () => {
+  it("starts a new chat from the dedicated header action", async () => {
     const user = userEvent.setup();
-    const clearChat = vi.fn();
-    render(Surface, { initialOpen: true, messages: mockMessages, actions: { clearChat } });
-    await user.click(screen.getByRole("button", { name: "Clear chat" }));
-    expect(screen.getByText("Clear this chat?")).toBeInTheDocument();
-    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Clear chat" }));
-    expect(clearChat).toHaveBeenCalledOnce();
+    const newSession = vi.fn();
+    render(Surface, { initialOpen: true, messages: mockMessages, actions: { newSession } });
+    expect(screen.queryByRole("button", { name: "Chat actions" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Start a new chat" }));
+    expect(newSession).toHaveBeenCalledOnce();
   });
 
   it("queues locally while a mocked request is active", async () => {
@@ -92,6 +93,21 @@ describe("Svelte chat surface", () => {
     await fireEvent.input(screen.getByRole("textbox", { name: "Message Kohaku Loom" }), { target: { value: "Follow up" } });
     await user.click(screen.getByRole("button", { name: "Queue message" }));
     expect(screen.getByText("Queue 1")).toBeInTheDocument();
+  });
+
+  it("shows the current assistant working phase", async () => {
+    useChatStore.getState().beginRequest("active");
+    render(Surface, { initialOpen: true, actions: {} });
+
+    expect(screen.getByText("Thinking…")).toBeInTheDocument();
+    useRuntimeStore.getState().setWorking("generating");
+    expect(await screen.findByText("Generating response…")).toBeInTheDocument();
+    useRuntimeStore.getState().setWorking("tool", "edit_prompt");
+    expect(await screen.findByText("Running tool…")).toBeInTheDocument();
+    expect(screen.getByText("edit_prompt")).toBeInTheDocument();
+
+    useChatStore.getState().cancelRequest();
+    await waitFor(() => expect(screen.queryByText("Running tool…")).not.toBeInTheDocument());
   });
 
   it("switches the active model from the composer", async () => {

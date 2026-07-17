@@ -163,6 +163,32 @@ describe("runtime session history", () => {
     vi.unstubAllGlobals();
   });
 
+  it("reports the active tool while it is running", async () => {
+    useChatStore.getState().reset();
+    useRuntimeStore.getState().reset();
+    let release!: (value: unknown) => void;
+    const result = new Promise((resolve) => { release = resolve; });
+    const host = { executeTool: vi.fn(() => result) } as never;
+    const client = { request: vi.fn(() => Promise.resolve({})) } as never;
+    const controller = new LoomRuntimeController(host, client);
+    const internals = controller as unknown as {
+      createRun(requestId: string): unknown;
+      handleToolEvent(run: unknown, event: Record<string, unknown>): Promise<void>;
+    };
+    const run = internals.createRun("tool-run");
+    useChatStore.getState().beginRequest("tool-run");
+    useRuntimeStore.getState().setWorking("thinking");
+
+    const pending = internals.handleToolEvent(run, { type: "tool_request", payload: { request_id: "request-1", tool: "edit_prompt", arguments: {} } });
+    expect(useRuntimeStore.getState()).toMatchObject({ workingPhase: "tool", workingTool: "edit_prompt" });
+    release({ ok: true });
+    await pending;
+
+    expect(useRuntimeStore.getState()).toMatchObject({ workingPhase: "thinking", workingTool: null });
+    useChatStore.getState().cancelRequest();
+    useRuntimeStore.getState().reset();
+  });
+
   it("does not let a stale terminal event finish a newly accepted turn", async () => {
     useChatStore.getState().reset();
     const host = {

@@ -126,12 +126,14 @@ interface PointerWindowOptions {
   layout(): WindowLayout;
   update(layout: WindowLayout): void;
   minimum?: WindowMinimum;
+  disabled?: boolean;
   interacting?(active: boolean): void;
 }
 
 export function pointerWindow(node: HTMLElement, options: PointerWindowOptions) {
   let current = options;
   const down = (event: PointerEvent) => {
+    if (current.disabled) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     if (!node.hasAttribute("data-loom-interaction-handle") && event.target instanceof Element && event.target.closest("button, input, textarea, select, a")) return;
     event.preventDefault();
