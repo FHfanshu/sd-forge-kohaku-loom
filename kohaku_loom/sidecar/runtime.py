@@ -441,7 +441,10 @@ class LoomSidecarRuntime:
         from kohaku_loom.forge_tools import forge_tools
 
         drive_config = DriveRuntimeConfig(enabled=False)
-        tools = forge_tools(self.broker) if forge_bridge else []
+        tools = forge_tools(
+            self.broker,
+            mode_provider=lambda: self.active.agent_mode if self.active else "normal",
+        ) if forge_bridge else []
         if resume:
             engine = await Terrarium.resume(
                 str(path),

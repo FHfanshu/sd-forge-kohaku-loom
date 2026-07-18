@@ -17,6 +17,12 @@ export interface FloatingPosition {
   top: number;
 }
 
+export interface ViewportRecovery {
+  viewport: ViewportRect;
+  stable: ViewportRect;
+  recovering: boolean;
+}
+
 export const WINDOW_MINIMUM: WindowMinimum = { width: 320, height: 360 };
 
 export function readLayoutViewportRect(): ViewportRect {
@@ -34,6 +40,20 @@ export function readViewportRect(preferVisualViewport = true): ViewportRect {
     width: viewport.width,
     height: viewport.height,
   };
+}
+
+export function resolveViewportAfterKeyboard(
+  stable: ViewportRect,
+  live: ViewportRect,
+  textEntryFocused: boolean,
+  recovering: boolean,
+): ViewportRecovery {
+  if (textEntryFocused) return { viewport: live, stable, recovering: true };
+  const sameWidth = Math.abs(live.width - stable.width) < 2;
+  if (recovering && sameWidth && live.height < stable.height) {
+    return { viewport: stable, stable, recovering: true };
+  }
+  return { viewport: live, stable: live, recovering: false };
 }
 
 export function clampWindowLayout(
@@ -187,9 +207,9 @@ export function minimumForViewport(kind: LayoutViewport): WindowMinimum {
   };
 }
 
-export function viewportKind(): LayoutViewport {
+export function viewportKind(viewport = readViewportRect()): LayoutViewport {
   if (typeof window === "undefined") return "desktop";
   const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
-  if (window.innerWidth >= 768 && (!coarsePointer || Math.min(window.innerWidth, window.innerHeight) >= 600)) return "desktop";
-  return window.innerWidth > window.innerHeight ? "mobileLandscape" : "mobilePortrait";
+  if (viewport.width >= 768 && (!coarsePointer || Math.min(viewport.width, viewport.height) >= 600)) return "desktop";
+  return viewport.width > viewport.height ? "mobileLandscape" : "mobilePortrait";
 }

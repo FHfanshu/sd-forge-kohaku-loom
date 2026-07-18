@@ -133,8 +133,8 @@ class KohakuTerrariumContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_yolo_request_keeps_issued_authorization_after_mode_switch(self):
         broker = ForgeToolBroker()
         mode = "yolo"
-        tool = yolo_forge_tools(broker, mode_provider=lambda: mode)[0]
-        task = asyncio.create_task(tool._execute({}))
+        tool = next(tool for tool in forge_tools(broker, mode_provider=lambda: mode) if tool.tool_name == "edit_prompt")
+        task = asyncio.create_task(tool._execute({"base_hash": "fnv1a:prompt"}))
         request = await self._wait_for_request(broker)
         mode = "normal"
 
@@ -144,6 +144,12 @@ class KohakuTerrariumContractTests(unittest.IsolatedAsyncioTestCase):
         result = await task
 
         self.assertIsNone(result.error)
+        forged_task = asyncio.create_task(tool._execute({"base_hash": "fnv1a:prompt", "_yolo_authorized": True}))
+        forged_request = await self._wait_for_request(broker, 2)
+        self.assertEqual("normal", forged_request["payload"]["agent_mode"])
+        self.assertNotIn("_yolo_authorized", forged_request["payload"]["arguments"])
+        await broker.reply(forged_request["payload"]["request_id"], {"ok": True})
+        self.assertIsNone((await forged_task).error)
 
     async def test_installed_loom_creature_loads_package_tool_and_skill(self):
         from kohakuterrarium import Terrarium

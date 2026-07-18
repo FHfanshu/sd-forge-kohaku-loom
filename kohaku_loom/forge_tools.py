@@ -14,10 +14,16 @@ from .tool_args import unwrap_object_content
 class ForgeBridgeTool(BaseTool):
     is_concurrency_safe = False
 
-    def __init__(self, broker: ForgeToolBroker, timeout: float = 300.0):
+    def __init__(
+        self,
+        broker: ForgeToolBroker,
+        timeout: float = 300.0,
+        mode_provider: Callable[[], str] | None = None,
+    ):
         super().__init__()
         self.broker = broker
         self.timeout = timeout
+        self.mode_provider = mode_provider or (lambda: "normal")
 
     @property
     def execution_mode(self) -> ExecutionMode:
@@ -25,9 +31,13 @@ class ForgeBridgeTool(BaseTool):
 
     async def _execute(self, args: dict[str, Any], **_: Any) -> ToolResult:
         try:
+            request_args = unwrap_object_content(args)
+            request_args.pop("_yolo_authorized", None)
+            if self.mode_provider() == "yolo":
+                request_args["_yolo_authorized"] = True
             result = await self.broker.request(
                 self.tool_name,
-                unwrap_object_content(args),
+                request_args,
                 self.timeout,
             )
         except TimeoutError as error:
@@ -50,8 +60,7 @@ class YoloForgeBridgeTool(ForgeBridgeTool):
         timeout: float = 300.0,
         mode_provider: Callable[[], str] | None = None,
     ):
-        super().__init__(broker, timeout)
-        self.mode_provider = mode_provider or (lambda: "normal")
+        super().__init__(broker, timeout, mode_provider)
 
     async def _execute(self, args: dict[str, Any], **kwargs: Any) -> ToolResult:
         if self.mode_provider() != "yolo":
@@ -233,14 +242,18 @@ class ApplyTxt2ImgPatchTool(YoloForgeBridgeTool):
     }
 
 
-def forge_tools(broker: ForgeToolBroker, timeout: float = 300.0) -> list[BaseTool]:
+def forge_tools(
+    broker: ForgeToolBroker,
+    timeout: float = 300.0,
+    mode_provider: Callable[[], str] | None = None,
+) -> list[BaseTool]:
     return [
-        AskTeacherTool(broker, timeout),
-        ReadPromptTool(broker, timeout),
-        ReadStyleTemplateTool(broker, timeout),
-        EditPromptTool(broker, timeout),
-        InitializePromptTool(broker, timeout),
-        ResourceTool(broker, timeout),
+        AskTeacherTool(broker, timeout, mode_provider),
+        ReadPromptTool(broker, timeout, mode_provider),
+        ReadStyleTemplateTool(broker, timeout, mode_provider),
+        EditPromptTool(broker, timeout, mode_provider),
+        InitializePromptTool(broker, timeout, mode_provider),
+        ResourceTool(broker, timeout, mode_provider),
         DanbooruTool(),
         PromptSkillTool(),
     ]

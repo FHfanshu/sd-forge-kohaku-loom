@@ -584,3 +584,43 @@ Goal: split oversized backend and browser files, keep files under 1000 lines, an
   passed 6 tests; all `kohaku_loom*.js` syntax checks and `git diff --check`
   passed. Residual output was limited to npm's existing future `store-dir`
   warning and Git's LF-to-CRLF notices.
+
+## 2026-07-18 Tablet Composer, YOLO Propagation, and Compact Tool Activity
+
+- Visible symptoms: after a tablet virtual keyboard closed, the composer could
+  remain below the actually visible page edge or be squeezed by a long message
+  list; a session displayed as YOLO still opened approval for standard tools
+  such as `edit_prompt`; completed and running tool activity consumed excessive
+  vertical space on touch devices.
+- Root causes: blur recovery switched from the visual viewport to the larger
+  layout viewport, the composer retained the default flex shrink behavior, and
+  coarse-pointer CSS made both redundant tool headings and footers permanent.
+  Separately, only the two YOLO-exclusive tools received the session mode;
+  ordinary Forge bridge tools always reached the browser as normal mode.
+- Changed `frontend/src/window-interactions.ts`, `Surface.svelte`, and
+  `styles.css` to cache the pre-keyboard visual viewport, ignore a stale
+  keyboard-height viewport after blur, classify against the actual visual
+  bounds, and make the composer non-shrinking. Assistant responses now have a
+  compact collapse control. Completed and running tool calls use a Codex-style
+  single-line disclosure row and expand details only on request.
+- Changed `kohaku_loom/forge_tools.py` and `sidecar/runtime.py` so all standard
+  bridge tools snapshot the active session mode at issuance. The hidden YOLO
+  authorization marker is stripped from model arguments before the runtime may
+  add it, so a normal-mode call cannot self-authorize. The mode toggle now waits
+  for sidecar confirmation before changing the visible UI state.
+- Regression coverage: viewport tests distinguish an oversized layout viewport
+  from the stable visual viewport and cover stale keyboard recovery; surface
+  tests cover assistant/tool disclosure state and retained persisted size; the
+  KT contract proves `edit_prompt` bypasses approval in YOLO mode while a
+  model-supplied marker is rejected in normal mode.
+- Verification: `python -m compileall -q kohaku_loom scripts install.py tools`
+  passed; `tools/test_runner.py --max-skips 20` passed 229 tests with 0 skips in
+  the installed KT environment; system-Python branch coverage passed at 72%
+  with the expected 20 KT skips. Under the isolated Node 22.17.0 / pnpm 10.12.4
+  toolchain, Svelte check reported 0 errors and 0 warnings, Vitest passed 134
+  tests with 84.71% statements/lines, 72.35% branches, and 74.23% functions,
+  Playwright passed 6 tests, Vite transformed 4,017 modules, all generated
+  browser scripts passed syntax checks, and the bundle measured 601,608 raw /
+  169,319 gzip bytes. The `.loom` venv does not include `coverage`, so coverage
+  used the system test environment; residual output was limited to the existing
+  Starlette `httpx` deprecation, npm `store-dir`, and Git line-ending warnings.

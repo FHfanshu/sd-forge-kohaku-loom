@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BrainCircuit, CircleStop, Send, Sparkles, Wrench } from "lucide-svelte";
+  import { BrainCircuit, ChevronRight, CircleStop, Send, Sparkles, Wrench } from "lucide-svelte";
   import type { WorkingPhase } from "../stores/runtime";
   import { useI18nStore } from "../stores/i18n";
 
@@ -34,10 +34,7 @@
       : "");
 </script>
 
-<div class:kl-working-has-reasoning={Boolean(reasoningExcerpt)} class="kl-working-indicator kl-working-{phase}" role="status" aria-live="polite">
-  <span class="kl-working-icon" aria-hidden="true">
-    {#if phase === "submitting"}<Send size={15} />{:else if phase === "cancelling"}<CircleStop size={15} />{:else if phase === "tool"}<Wrench size={15} />{:else if phase === "generating"}<Sparkles size={15} />{:else}<BrainCircuit size={15} />{/if}
-  </span>
-  <span class="kl-working-copy"><strong>{label}</strong>{#if detail}<small title={detail}>{detail}</small>{/if}</span>
-  <span class="kl-working-thread" aria-hidden="true"><i></i></span>
-</div>
+<details class:kl-working-has-reasoning={Boolean(reasoningExcerpt)} class="kl-working-indicator kl-working-{phase}" role="status" aria-live="polite">
+  <summary><span class="kl-working-icon" aria-hidden="true">{#if phase === "submitting"}<Send size={14} />{:else if phase === "cancelling"}<CircleStop size={14} />{:else if phase === "tool"}<Wrench size={14} />{:else if phase === "generating"}<Sparkles size={14} />{:else}<BrainCircuit size={14} />{/if}</span><strong><span>{label}</span>{#if phase === "tool" && tool} <code>{tool}</code>{/if}</strong><span class="kl-working-thread" aria-hidden="true"><i></i></span><ChevronRight class="kl-working-chevron" size={14} aria-hidden="true" /></summary>
+  {#if detail}<small class="kl-working-detail" title={detail}>{detail}</small>{/if}
+</details>

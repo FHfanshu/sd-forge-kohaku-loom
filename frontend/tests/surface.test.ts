@@ -62,6 +62,11 @@ describe("Svelte chat surface", () => {
     expect(reasoning).not.toBeNull();
     expect(reasoning?.open).toBe(false);
     expect(reasoning?.querySelector(".kl-reasoning-preview")).toHaveTextContent(mockMessages[2].reasoning!);
+
+    await user.click(screen.getByRole("button", { name: "Collapse response" }));
+    expect(screen.queryByText("middle third is carrying too many competing details")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Expand response" }));
+    expect(screen.getByText("middle third is carrying too many competing details")).toBeInTheDocument();
   });
 
   it("defers Markdown parsing while an assistant message is streaming", () => {
@@ -119,7 +124,7 @@ describe("Svelte chat surface", () => {
 
   it("restores the floating window after a virtual keyboard viewport closes", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
-    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1400 });
     const visualViewport = Object.assign(new EventTarget(), {
       offsetLeft: 0,
       offsetTop: 0,
@@ -128,10 +133,11 @@ describe("Svelte chat surface", () => {
     });
     Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport });
 
+    useUiStore.getState().setLayout("desktop", { left: 24, top: 9999, width: 460, height: 1200 });
     render(Surface, { initialOpen: true, actions: {} });
     const dialog = screen.getByRole("dialog", { name: "Kohaku Loom chat" });
     const composer = screen.getByRole("textbox", { name: "Message Kohaku Loom" });
-    expect(dialog).toHaveStyle({ height: "680px" });
+    expect(dialog).toHaveStyle({ height: "752px" });
 
     composer.focus();
     visualViewport.height = 260;
@@ -139,8 +145,8 @@ describe("Svelte chat surface", () => {
     await waitFor(() => expect(dialog).toHaveStyle({ height: "244px" }));
 
     composer.blur();
-    await waitFor(() => expect(dialog).toHaveStyle({ height: "680px" }));
-    expect(useUiStore.getState().layouts.desktop.height).toBe(680);
+    await waitFor(() => expect(dialog).toHaveStyle({ height: "752px" }));
+    expect(useUiStore.getState().layouts.desktop.height).toBe(1200);
   });
 
   it("waits for explicit session creation before sending", async () => {
@@ -360,7 +366,7 @@ describe("Svelte chat surface", () => {
     expect(await screen.findByText("Generating response…")).toBeInTheDocument();
     expect(screen.getByText("Reasoning: draft rationale")).toBeInTheDocument();
     useRuntimeStore.getState().setWorking("tool", "edit_prompt");
-    expect(await screen.findByText("Running tool…")).toBeInTheDocument();
+    expect((await screen.findByText("Running tool…")).closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText("Tool: edit_prompt")).toBeInTheDocument();
 
     useChatStore.getState().cancelRequest();

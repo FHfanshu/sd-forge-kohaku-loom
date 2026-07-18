@@ -33,7 +33,7 @@
   import { useProfileStore } from "../stores/profiles";
   import { useRuntimeStore } from "../stores/runtime";
   import { useUiStore } from "../stores/ui";
-  import { clampWindowLayout, minimumForViewport, pointerPosition, pointerWindow, readLayoutViewportRect, readViewportRect, viewportKind, type FloatingPosition, type LayoutViewport } from "../window-interactions";
+  import { clampWindowLayout, minimumForViewport, pointerPosition, pointerWindow, readViewportRect, resolveViewportAfterKeyboard, viewportKind, type FloatingPosition, type LayoutViewport } from "../window-interactions";
   import Markdown from "./Markdown.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import ProfileSettings from "./ProfileSettings.svelte";
@@ -62,13 +62,16 @@
   let historySearch = $state("");
   let lightbox = $state<{ attachments: PreparedImageAttachment[]; index: number } | null>(null);
   let copiedId = $state<string | null>(null);
+  let collapsedMessageIds = $state<Set<string>>(new Set());
   let dropActive = $state(false);
   let interacting = $state(false);
   let launcherInteracting = $state(false);
   let launcherDragged = $state(false);
   let mobileHintDismissed = $state(false);
-  let kind = $state<LayoutViewport>(viewportKind());
-  let viewport = $state(readLayoutViewportRect());
+  let stableViewport = readViewportRect();
+  let viewportRecovering = false;
+  let kind = $state<LayoutViewport>(viewportKind(stableViewport));
+  let viewport = $state(stableViewport);
   let fileInput = $state<HTMLInputElement>();
   let composerInput = $state<HTMLTextAreaElement>();
   let replacementInput = $state<HTMLInputElement>();
@@ -124,6 +127,12 @@
     return compact.length > 160 ? `${compact.slice(0, 157)}…` : compact;
   }
 
+  function toggleMessage(messageId: string): void {
+    const next = new Set(collapsedMessageIds);
+    if (next.has(messageId)) next.delete(messageId); else next.add(messageId);
+    collapsedMessageIds = next;
+  }
+
   function runtimeErrorText(value: string): string {
     if (/KT HTTP request failed|HTTP 503|sidecar.*(starting|unavailable)|still starting/i.test(value)) {
       return t("assistant.runtime.retry", "The Loom runtime is starting or unavailable. Open chat history to retry, or check the sidecar configuration in Model profiles.");
@@ -170,9 +179,12 @@
   }
 
   function refreshViewport(): void {
-    const keyboardMayBeOpen = isTextEntryFocused();
-    if (!keyboardMayBeOpen) kind = viewportKind();
-    viewport = keyboardMayBeOpen ? readViewportRect() : readLayoutViewportRect();
+    const focused = isTextEntryFocused();
+    const next = resolveViewportAfterKeyboard(stableViewport, readViewportRect(), focused, viewportRecovering);
+    stableViewport = next.stable;
+    viewportRecovering = next.recovering;
+    viewport = next.viewport;
+    if (!focused) kind = viewportKind(viewport);
   }
 
   async function ensureControllerReady(): Promise<LoomRuntimeController | null> {
@@ -327,19 +339,23 @@
     }
   }
 
-  function toggleRiskMode(): void {
+  async function toggleRiskMode(): Promise<void> {
     if ($useUiStore.riskMode !== "yolo") {
       confirm = "yolo";
       return;
     }
-    $useUiStore.setRiskMode("normal");
-    void action("setRiskMode")("normal");
+    try {
+      await action("setRiskMode")("normal");
+      $useUiStore.setRiskMode("normal");
+    } catch (error) { notice = errorText(error); }
   }
 
-  function enableYolo(): void {
-    $useUiStore.setRiskMode("yolo");
-    void action("setRiskMode")("yolo");
-    confirm = null;
+  async function enableYolo(): Promise<void> {
+    try {
+      await action("setRiskMode")("yolo");
+      $useUiStore.setRiskMode("yolo");
+      confirm = null;
+    } catch (error) { notice = errorText(error); }
   }
 
   function useSuggestion(text: string): void {
@@ -602,6 +618,7 @@
                 </span><span class="kl-message-meta">
                   {#if message.status === "streaming"}<span class="kl-status-marker kl-status-streaming">{t("chat.status.partial", "Generating")}</span>{:else if message.status === "cancelled"}<span class="kl-status-marker kl-status-cancelled"><XCircle size={12} /> {t("chat.status.cancelled", "Cancelled")}</span>{:else if message.status === "error"}<span class="kl-status-marker kl-status-error">{t("chat.status.error", "Error")}</span>{/if}
                   {#if message.usage}<span class="kl-usage"><Clipboard size={11} /> {[message.usage.inputTokens !== undefined ? `${message.usage.inputTokens} in` : "", message.usage.outputTokens !== undefined ? `${message.usage.outputTokens} out` : "", message.usage.latencyMs !== undefined ? `${(message.usage.latencyMs / 1000).toFixed(1)}s` : ""].filter(Boolean).join(" · ")}</span>{/if}
+                  {#if message.role === "assistant"}<button type="button" class="kl-message-collapse" onclick={() => toggleMessage(message.id)} aria-label={collapsedMessageIds.has(message.id) ? t("chat.expand", "Expand response") : t("chat.collapse", "Collapse response")}>{#if collapsedMessageIds.has(message.id)}<ChevronRight size={14} />{:else}<ChevronLeft size={14} />{/if}</button>{/if}
                 </span></div>
                 {#if message.role === "tool"}
                   <details class="kl-tool-card" data-tool-result="true">
@@ -614,8 +631,8 @@
                       {#if message.content}<Markdown content={message.content} streaming={message.status === "streaming"} />{/if}
                     </div>
                   </details>
-                {:else}<Markdown content={message.content} streaming={message.status === "streaming"} />{/if}
-                {#if message.reasoning}
+                {:else if collapsedMessageIds.has(message.id)}<button type="button" class="kl-message-collapsed-preview" onclick={() => toggleMessage(message.id)}>{reasoningPreview(message.content)}</button>{:else}<Markdown content={message.content} streaming={message.status === "streaming"} />{/if}
+                {#if message.reasoning && !collapsedMessageIds.has(message.id)}
                   <details class:kl-reasoning-streaming={message.status === "streaming"} class="kl-reasoning">
                     <summary>
                       <span class="kl-reasoning-label">{t("chat.reasoning_trace", "Reasoning trace")}</span>
@@ -624,7 +641,7 @@
                     <div class="kl-reasoning-content"><Markdown content={message.reasoning} streaming={message.status === "streaming"} /></div>
                   </details>
                 {/if}
-                {#if message.attachments.length}<div class="kl-message-attachments" aria-label={tf("assistant.reference_images", "{count} reference images", { count: message.attachments.length })}>{#each message.attachments as attachment, index (attachment.id)}<button type="button" class="kl-message-attachment" onclick={() => lightbox = { attachments: message.attachments, index }} aria-label={tf("assistant.preview_named", "Preview {name}", { name: attachment.name })}><img src={attachmentPreviewUrl(attachment)} alt={attachment.name} width="58" height="48" loading="lazy" /></button>{/each}</div>{/if}
+                {#if message.attachments.length && !collapsedMessageIds.has(message.id)}<div class="kl-message-attachments" aria-label={tf("assistant.reference_images", "{count} reference images", { count: message.attachments.length })}>{#each message.attachments as attachment, index (attachment.id)}<button type="button" class="kl-message-attachment" onclick={() => lightbox = { attachments: message.attachments, index }} aria-label={tf("assistant.preview_named", "Preview {name}", { name: attachment.name })}><img src={attachmentPreviewUrl(attachment)} alt={attachment.name} width="58" height="48" loading="lazy" /></button>{/each}</div>{/if}
                 <div class="kl-message-footer"><div class="kl-message-actions"><button type="button" class="kl-message-action" onclick={() => void copyMessage(message)}>{#if copiedId === message.id}<Check size={13} /> {t("chat.copied", "Copied")}{:else}<Copy size={13} /> {t("chat.copy", "Copy")}{/if}</button>{#if message.role === "user"}<button type="button" class="kl-message-action" disabled={Boolean($useChatStore.activeRequestId)} onclick={() => beginEdit(message)}><Pencil size={13} /> {t("chat.edit", "Edit")}</button>{/if}{#if message.id === lastAssistantId}<button type="button" class="kl-message-action" onclick={() => void action("regenerate")(message)}><RefreshCw size={13} /> {t("chat.regenerate", "Regenerate")}</button>{/if}</div>
                   {#if (message.role === "assistant" || message.role === "user") && message.branchCount > 1}<div class="kl-branch-pager" aria-label={message.role === "user" ? t("branches.message_versions", "Message versions") : t("branches.assistant_responses", "Assistant response branches")}><button type="button" class="kl-mini-button" disabled={message.branchIndex === 0} onclick={() => void action("changeBranch")(message, message.branchIndex - 1)} aria-label={t("branches.previous", "Previous branch")}><ChevronLeft size={14} /></button><span>{message.branchIndex + 1} / {message.branchCount}</span><button type="button" class="kl-mini-button" disabled={message.branchIndex >= message.branchCount - 1} onclick={() => void action("changeBranch")(message, message.branchIndex + 1)} aria-label={t("branches.next", "Next branch")}><ChevronRight size={14} /></button></div>{/if}
                 </div>

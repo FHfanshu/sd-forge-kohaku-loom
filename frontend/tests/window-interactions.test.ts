@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { clampWindowLayout, minimumForViewport, readLayoutViewportRect, readViewportRect, viewportKind } from "../src/window-interactions";
+import { clampWindowLayout, minimumForViewport, readLayoutViewportRect, readViewportRect, resolveViewportAfterKeyboard, viewportKind } from "../src/window-interactions";
 
 describe("window viewport boundaries", () => {
   it.each([
@@ -55,8 +55,18 @@ describe("window viewport boundaries", () => {
     expect(readLayoutViewportRect()).toEqual({ left: 0, top: 0, width: window.innerWidth, height: window.innerHeight });
   });
 
+  it("restores the last stable visual viewport while a keyboard close resize is stale", () => {
+    const stable = { left: 0, top: 0, width: 1024, height: 768 };
+    const keyboard = { ...stable, height: 260 };
+    expect(resolveViewportAfterKeyboard(stable, keyboard, true, false)).toEqual({ viewport: keyboard, stable, recovering: true });
+    expect(resolveViewportAfterKeyboard(stable, keyboard, false, true)).toEqual({ viewport: stable, stable, recovering: true });
+    const rotated = { left: 0, top: 0, width: 768, height: 1024 };
+    expect(resolveViewportAfterKeyboard(stable, rotated, false, true)).toEqual({ viewport: rotated, stable: rotated, recovering: false });
+  });
+
   it("keeps message copy actions visible on coarse touch pointers", () => {
     const css = readFileSync("src/styles.css", "utf-8");
     expect(css).toMatch(/@media \(hover: none\), \(pointer: coarse\)[\s\S]*?\.kl-message-heading, \.kl-message-footer \{ position: static; opacity: 1; pointer-events: auto; \}/);
+    expect(css).toMatch(/\.kl-message-tool > :is\(\.kl-message-heading, \.kl-message-footer\) \{ display: none; \}/);
   });
 });
