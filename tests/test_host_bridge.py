@@ -192,9 +192,10 @@ const vm = require("vm");
 global.window = { kohakuLoom: {} };
 global.localStorage = { removeItem: () => {} };
 let calls = 0;
-global.fetch = async () => {
+global.fetch = async (_url, options = {}) => {
   calls += 1;
-  if (calls === 1) return { ok: false, status: 503, text: async () => '{"detail":"starting"}' };
+  if (!options.method) return { ok: true, status: 200, json: async () => ({ profiles: [] }) };
+  if (calls === 2) return { ok: false, status: 503, text: async () => '{"detail":"starting"}' };
   return { ok: true, status: 200, json: async () => ({ ok: true }) };
 };
 const [sourcePath, hostSourcePath] = process.argv.slice(-2);
@@ -214,7 +215,125 @@ core.hostApi.syncProfiles().then(() => process.stdout.write(String(calls))).catc
             capture_output=True,
         )
         self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertEqual("2", completed.stdout)
+        self.assertEqual("3", completed.stdout)
+
+    def test_first_profile_sync_restores_sidecar_state_before_browser_defaults_can_overwrite_it(self):
+        root = Path(__file__).resolve().parents[1]
+        host_source = root / "javascript" / "kohaku_loom_07_host.js"
+        script = r'''
+const fs = require("fs");
+const vm = require("vm");
+const calls = [];
+let browserState = { profiles: [{ id: "gemini", has_api_key: false }] };
+global.window = { kohakuLoom: {
+  profileStore: {
+    load: () => browserState,
+    save: (state) => { browserState = state; calls.push("save"); return state; },
+    scrubApiKeys: () => { calls.push("scrub"); return browserState; },
+  },
+} };
+global.localStorage = { removeItem: () => {} };
+global.fetch = async (url, options = {}) => {
+  calls.push(options.method || "GET");
+  if (options.method === "POST") throw new Error("startup must not overwrite persisted profiles");
+  return { ok: true, status: 200, json: async () => ({
+    active_profile_id: "custom",
+    teacher_profile_id: "custom",
+    session_profile_id: "",
+    naming_profile_id: "",
+    profiles: [{ id: "custom", profile_id: "custom", enabled: true, runtime: "remote-http", protocol: "openai-chat-completions", endpoint: "https://example.com/v1", model_id: "model", has_api_key: true }],
+  }) };
+};
+vm.runInThisContext(fs.readFileSync(process.argv.at(-1), "utf8"));
+window.kohakuLoom.hostApi.syncProfiles().then((result) => process.stdout.write(JSON.stringify({ calls, result, browserState }))).catch((error) => {
+  process.stderr.write(String(error));
+  process.exitCode = 1;
+});
+'''
+        completed = subprocess.run(
+            [shutil.which("node"), "-", str(host_source)],
+            input=script,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(["GET", "save", "scrub"], result["calls"])
+        self.assertEqual("custom", result["browserState"]["active_profile_id"])
+        self.assertTrue(result["browserState"]["profiles"][0]["has_api_key"])
+
+    def test_first_profile_sync_imports_a_pending_plaintext_key_instead_of_restoring_old_state(self):
+        root = Path(__file__).resolve().parents[1]
+        host_source = root / "javascript" / "kohaku_loom_07_host.js"
+        script = r'''
+const fs = require("fs");
+const vm = require("vm");
+let request = null;
+const browserState = { profiles: [{ id: "custom", api_key: "new-secret", has_api_key: true }] };
+global.window = { kohakuLoom: { profileStore: { load: () => browserState, scrubApiKeys: () => browserState } } };
+global.localStorage = { removeItem: () => {} };
+global.fetch = async (url, options = {}) => {
+  request = { url, method: options.method || "GET", body: options.body || "" };
+  return { ok: true, status: 200, json: async () => ({ profiles: [{ profile_id: "custom", has_api_key: true }] }) };
+};
+vm.runInThisContext(fs.readFileSync(process.argv.at(-1), "utf8"));
+window.kohakuLoom.hostApi.syncProfiles().then(() => process.stdout.write(JSON.stringify(request))).catch((error) => {
+  process.stderr.write(String(error));
+  process.exitCode = 1;
+});
+'''
+        completed = subprocess.run(
+            [shutil.which("node"), "-", str(host_source)],
+            input=script,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        request = json.loads(completed.stdout)
+        self.assertEqual("POST", request["method"])
+        self.assertTrue(request["url"].endswith("/profiles/import"))
+        self.assertEqual("new-secret", json.loads(request["body"])["profiles"][0]["api_key"])
+
+    def test_profile_restore_does_not_overwrite_a_key_entered_while_sidecar_is_starting(self):
+        root = Path(__file__).resolve().parents[1]
+        host_source = root / "javascript" / "kohaku_loom_07_host.js"
+        script = r'''
+const fs = require("fs");
+const vm = require("vm");
+let browserState = { profiles: [{ id: "custom", api_key: "", has_api_key: false }] };
+let releaseGet;
+const pendingGet = new Promise((resolve) => { releaseGet = resolve; });
+const requests = [];
+global.window = { kohakuLoom: { profileStore: {
+  load: () => browserState,
+  save: (state) => { browserState = state; return state; },
+  scrubApiKeys: () => browserState,
+} } };
+global.localStorage = { removeItem: () => {} };
+global.fetch = async (url, options = {}) => {
+  requests.push({ url, method: options.method || "GET", body: options.body || "" });
+  if (!options.method) return pendingGet;
+  return { ok: true, status: 200, json: async () => ({ profiles: [{ profile_id: "custom", has_api_key: true }] }) };
+};
+vm.runInThisContext(fs.readFileSync(process.argv.at(-1), "utf8"));
+const syncing = window.kohakuLoom.hostApi.syncProfiles();
+browserState = { profiles: [{ id: "custom", api_key: "new-secret", has_api_key: true }] };
+releaseGet({ ok: true, status: 200, json: async () => ({ profiles: [{ profile_id: "custom", has_api_key: false }] }) });
+syncing.then(() => process.stdout.write(JSON.stringify(requests))).catch((error) => {
+  process.stderr.write(String(error));
+  process.exitCode = 1;
+});
+'''
+        completed = subprocess.run(
+            [shutil.which("node"), "-", str(host_source)],
+            input=script,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        requests = json.loads(completed.stdout)
+        self.assertEqual(["GET", "POST"], [request["method"] for request in requests])
+        self.assertEqual("new-secret", json.loads(requests[1]["body"])["profiles"][0]["api_key"])
 
 
 if __name__ == "__main__":

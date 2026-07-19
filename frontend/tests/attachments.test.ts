@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AttachmentError,
   assertAttachmentTotal,
   attachmentByteSize,
   attachmentPreviewUrl,
@@ -7,6 +8,7 @@ import {
   isLocalImageAttachment,
   materializeImageAttachment,
   MAX_SOURCE_IMAGE_BYTES,
+  MAX_TOTAL_ATTACHMENT_BYTES,
   releaseImageAttachment,
 } from "../src/attachments";
 
@@ -76,12 +78,24 @@ describe("reference image preparation", () => {
 
   it("rejects source images above the browser-side safety limit", async () => {
     const file = new File([new Uint8Array(MAX_SOURCE_IMAGE_BYTES + 1)], "huge.png", { type: "image/png" });
-    await expect(createImageAttachment(file, "attachment-2")).rejects.toThrow(/24 MB/);
+    await expect(createImageAttachment(file, "attachment-2")).rejects.toMatchObject({
+      code: "source_too_large",
+      details: { name: "huge.png", limitBytes: MAX_SOURCE_IMAGE_BYTES },
+    });
   });
 
   it("enforces a combined encoded payload budget", () => {
     const large = { id: "large", name: "large.png", dataUrl: "data:image/png;base64,", size: 17 * 1024 * 1024 };
     expect(attachmentByteSize(large)).toBe(17 * 1024 * 1024);
-    expect(() => assertAttachmentTotal([large])).toThrow(/16 MB/);
+    try {
+      assertAttachmentTotal([large]);
+      throw new Error("Expected the attachment total to be rejected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AttachmentError);
+      expect(error).toMatchObject({
+        code: "total_too_large",
+        details: { totalBytes: 17 * 1024 * 1024, limitBytes: MAX_TOTAL_ATTACHMENT_BYTES },
+      });
+    }
   });
 });

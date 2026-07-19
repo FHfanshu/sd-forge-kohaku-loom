@@ -59,6 +59,8 @@ export const chatMessageSchema = z.object({
     name: z.string().min(1),
     status: z.enum(["running", "complete", "error"]).default("complete"),
     detail: z.string().optional(),
+    undoable: z.boolean().optional(),
+    undone: z.boolean().optional(),
   }).optional(),
   attachments: z.array(chatAttachmentSchema).default([]),
   branchIndex: z.number().int().nonnegative().default(0),
@@ -107,7 +109,6 @@ export const windowLayoutSchema = z.object({
 });
 export type WindowLayout = z.infer<typeof windowLayoutSchema>;
 
-export type RiskMode = "normal" | "yolo";
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export const profileProtocolSchema = z.enum(["gemini-native", "openai-chat-completions"]);
@@ -253,7 +254,6 @@ export interface SendMessageInput {
   text: string;
   attachments: WireAttachment[];
   displayAttachments?: ChatAttachment[];
-  riskMode: RiskMode;
   reasoning: ReasoningEffort;
   editOf?: string;
 }
@@ -293,14 +293,7 @@ export interface LegacySessionRecord {
 export interface RuntimeSession {
   session_id: string;
   profile_id?: string;
-  agent_mode?: RiskMode;
   [key: string]: unknown;
-}
-
-export interface PendingToolApproval {
-  requestId: string;
-  name: string;
-  arguments: Record<string, unknown>;
 }
 
 export interface MessageSubmission {
@@ -318,14 +311,12 @@ export interface LoomActionHandlers {
   clearChat(): void;
   copyMessage(message: ChatMessage): void | Promise<void>;
   regenerate(message: ChatMessage): void | Promise<void>;
+  undoToolMutation(message: ChatMessage): void | Promise<void>;
   changeBranch(message: ChatMessage, branchIndex: number): void | Promise<void>;
   removeQueuedMessage(id: string): void | Promise<void>;
   selectHistory(row: HistoryRow): void | Promise<void>;
   newSession(): void | Promise<void>;
   openSettings(): void;
-  setRiskMode(mode: RiskMode): void | Promise<void>;
-  approveTool?(requestId?: string): void;
-  rejectTool?(requestId?: string): void;
   retryQueuedMessage?(id: string): void | Promise<void>;
   editQueuedMessage?(id: string, input: SendMessageInput): void | Promise<void>;
 }

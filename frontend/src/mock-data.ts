@@ -54,12 +54,10 @@ export const noopActions: LoomActionHandlers = {
     if (typeof navigator !== "undefined" && navigator.clipboard) await navigator.clipboard.writeText(message.content);
   },
   regenerate: () => undefined,
+  undoToolMutation: () => undefined,
   changeBranch: () => undefined,
   removeQueuedMessage: () => undefined,
   selectHistory: () => undefined,
   newSession: () => undefined,
   openSettings: () => undefined,
-  setRiskMode: () => undefined,
-  approveTool: () => undefined,
-  rejectTool: () => undefined,
 };

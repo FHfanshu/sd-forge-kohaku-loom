@@ -10,6 +10,23 @@ const materializedAttachments = new WeakMap<object, Promise<WireAttachment>>();
 const previewReferences = new Map<string, number>();
 const releasedPreviews = new Set<string>();
 
+export type AttachmentErrorCode =
+  | "read_failed"
+  | "source_too_large"
+  | "optimized_too_large"
+  | "data_unavailable"
+  | "total_too_large";
+
+export class AttachmentError extends Error {
+  constructor(
+    readonly code: AttachmentErrorCode,
+    readonly details: { name?: string; limitBytes?: number; totalBytes?: number } = {},
+  ) {
+    super(code);
+    this.name = "AttachmentError";
+  }
+}
+
 export interface LocalImageAttachment {
   id: string;
   name: string;
@@ -29,7 +46,7 @@ function readBlobAsDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error("Could not read image data"));
+    reader.onerror = () => reject(new AttachmentError("read_failed"));
     reader.readAsDataURL(blob);
   });
 }
@@ -96,9 +113,9 @@ export function totalAttachmentBytes(attachments: PreparedImageAttachment[]): nu
 
 export async function createImageAttachment(file: File, attachmentId: string): Promise<PreparedImageAttachment> {
   if (!file.type.startsWith("image/")) throw new Error("Only image files can be attached.");
-  if (file.size > MAX_SOURCE_IMAGE_BYTES) throw new Error(`${file.name} is larger than 24 MB.`);
+  if (file.size > MAX_SOURCE_IMAGE_BYTES) throw new AttachmentError("source_too_large", { name: file.name, limitBytes: MAX_SOURCE_IMAGE_BYTES });
   const blob = await optimizedBlob(file);
-  if (blob.size > MAX_ATTACHMENT_BYTES) throw new Error(`${file.name} is still larger than 8 MB after optimization.`);
+  if (blob.size > MAX_ATTACHMENT_BYTES) throw new AttachmentError("optimized_too_large", { name: file.name, limitBytes: MAX_ATTACHMENT_BYTES });
   const common = {
     id: attachmentId,
     name: file.name,
@@ -141,7 +158,7 @@ export function materializeImageAttachment(attachment: PreparedImageAttachment):
       : isLocalImageAttachment(attachment)
         ? await readBlobAsDataUrl(attachment.blob)
         : "";
-    if (!dataUrl) throw new Error(`Image data is unavailable for ${attachment.name}.`);
+    if (!dataUrl) throw new AttachmentError("data_unavailable", { name: attachment.name });
     return {
       id: attachment.id,
       name: attachment.name,
@@ -188,7 +205,8 @@ export function releaseImageAttachments(attachments: Array<{ previewUrl?: string
 }
 
 export function assertAttachmentTotal(attachments: PreparedImageAttachment[]): void {
-  if (totalAttachmentBytes(attachments) > MAX_TOTAL_ATTACHMENT_BYTES) {
-    throw new Error("Attached images exceed the 16 MB total limit.");
+  const totalBytes = totalAttachmentBytes(attachments);
+  if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+    throw new AttachmentError("total_too_large", { totalBytes, limitBytes: MAX_TOTAL_ATTACHMENT_BYTES });
   }
 }

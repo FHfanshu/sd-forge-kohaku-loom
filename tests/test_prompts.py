@@ -22,7 +22,8 @@ class PromptToolsTests(unittest.TestCase):
             self.assertIn("only authority for reading or changing that UI", prompt)
             self.assertIn("Never ask whether the user is currently in Forge WebUI", prompt)
             self.assertIn("Do not append generic offers", prompt)
-            self.assertIn("YOLO removes confirmation prompts", prompt)
+            if prompt is creature_prompt:
+                self.assertIn("`edit_prompt`", prompt)
             self.assertIn("bridge", prompt.lower())
 
     def test_prompt_sanitizer_restores_tool_arguments(self):

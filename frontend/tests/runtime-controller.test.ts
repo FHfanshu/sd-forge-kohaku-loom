@@ -67,12 +67,12 @@ describe("runtime session history", () => {
     controller.destroy();
   });
 
-  it("routes edited composer sends through native edit-and-rerun and restores version metadata", async () => {
+  it("edits live user messages without server branch metadata and restores version metadata", async () => {
     useChatStore.getState().reset();
     useRuntimeStore.getState().reset();
     useRuntimeStore.getState().setSession({ session_id: "kt-1" });
     useChatStore.getState().setMessages([
-      { id: "user-1", role: "user", content: "Original", status: "complete", attachments: [], branchIndex: 0, branchCount: 1, branchTurnIndex: 1, createdAt: 1 },
+      { id: "user-1", role: "user", content: "Original", status: "complete", attachments: [], branchIndex: 0, branchCount: 1, createdAt: 1 },
       { id: "assistant-1", role: "assistant", content: "Old answer", status: "complete", attachments: [], branchIndex: 0, branchCount: 1, branchTurnIndex: 1, createdAt: 2 },
     ]);
     const host = { restoreForgeState: vi.fn() } as never;
@@ -96,7 +96,7 @@ describe("runtime session history", () => {
     });
     const controller = new LoomRuntimeController(host, { request } as never);
 
-    await controller.sendMessage({ text: "Edited", attachments: [], riskMode: "normal", reasoning: "low", editOf: "user-1" });
+    await controller.sendMessage({ text: "Edited", attachments: [], reasoning: "low", editOf: "user-1" });
 
     expect(request).toHaveBeenNthCalledWith(1, "/sessions/kt-1/edit-rerun", expect.objectContaining({ method: "POST" }));
     expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toMatchObject({ content: "Edited", turn_index: 1, user_position: 0 });
@@ -110,6 +110,79 @@ describe("runtime session history", () => {
     expect(JSON.parse(String(branchRequest?.[1]?.body))).toMatchObject({ branch_view: { "1": 1 } });
     expect(useChatStore.getState().messages[0]).toMatchObject({ content: "Original", branchIndex: 0, branchCount: 2 });
     expect(useChatStore.getState().messages[1]).toMatchObject({ content: "Old answer" });
+  });
+
+  it("shows regeneration as active and refreshes the selected assistant branch", async () => {
+    useChatStore.getState().reset();
+    useRuntimeStore.getState().reset();
+    useRuntimeStore.getState().setSession({ session_id: "kt-1" });
+    const assistant = { id: "assistant-1", role: "assistant" as const, content: "Old answer", status: "complete" as const, attachments: [], branchIndex: 0, branchCount: 1, branchTurnIndex: 1, createdAt: 2 };
+    useChatStore.getState().setMessages([{ id: "user-1", role: "user", content: "Question", status: "complete", attachments: [], branchIndex: 0, branchCount: 1, createdAt: 1 }, assistant]);
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const request = vi.fn(async (path: string) => {
+      if (path === "/sessions/kt-1/regenerate") {
+        await gate;
+        return { branch_view: { "1": 2 }, turns: [{ turn_index: 1, branches: [1, 2], selected_branch_id: 2 }] };
+      }
+      if (path === "/sessions/kt-1") return { branches: { branch_view: { "1": 2 }, turns: [{ turn_index: 1, branches: [1, 2], selected_branch_id: 2 }] }, messages: [{ role: "user", content: "Question" }, { role: "assistant", content: "New answer" }] };
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const controller = new LoomRuntimeController({} as never, { request } as never);
+
+    const regenerating = controller.regenerate(assistant);
+    expect(useChatStore.getState().activeRequestId).toMatch(/^regenerate-assistant-1-/);
+    expect(useChatStore.getState().messages[1]).toMatchObject({ content: "Old answer", status: "complete" });
+    expect(useRuntimeStore.getState().workingPhase).toBe("thinking");
+    finish();
+    await regenerating;
+
+    expect(request).toHaveBeenNthCalledWith(1, "/sessions/kt-1/regenerate", expect.objectContaining({ method: "POST", signal: expect.any(AbortSignal) }));
+    expect(useChatStore.getState().messages[1]).toMatchObject({ content: "New answer", status: "complete", branchIndex: 1, branchCount: 2 });
+    expect(useChatStore.getState().activeRequestId).toBeNull();
+    expect(useRuntimeStore.getState().workingPhase).toBe("idle");
+  });
+
+  it("restores the response and releases controls when regeneration fails", async () => {
+    useChatStore.getState().reset();
+    useRuntimeStore.getState().reset();
+    useRuntimeStore.getState().setSession({ session_id: "kt-1" });
+    const assistant = { id: "assistant-1", role: "assistant" as const, content: "Old answer", status: "complete" as const, attachments: [], branchIndex: 0, branchCount: 1, createdAt: 2 };
+    useChatStore.getState().setMessages([assistant]);
+    const controller = new LoomRuntimeController({} as never, { request: vi.fn(() => Promise.reject(new Error("regeneration failed"))) } as never);
+
+    await expect(controller.regenerate(assistant)).rejects.toThrow("regeneration failed");
+
+    expect(useChatStore.getState().messages[0]).toMatchObject({ content: "Old answer", status: "complete" });
+    expect(useChatStore.getState().activeRequestId).toBeNull();
+    expect(useRuntimeStore.getState().workingPhase).toBe("idle");
+  });
+
+  it("reuses the regeneration operation after a post-acceptance refresh failure", async () => {
+    useChatStore.getState().reset();
+    useRuntimeStore.getState().reset();
+    useRuntimeStore.getState().setSession({ session_id: "kt-1" });
+    const assistant = { id: "assistant-1", role: "assistant" as const, content: "Old answer", status: "complete" as const, attachments: [], branchIndex: 0, branchCount: 1, createdAt: 2 };
+    useChatStore.getState().setMessages([assistant]);
+    let conversationCalls = 0;
+    const request = vi.fn((path: string, _options?: RequestInit) => {
+      if (path === "/sessions/kt-1/regenerate") return Promise.resolve({ branch_view: { "1": 2 }, turns: [] });
+      if (path === "/sessions/kt-1") {
+        conversationCalls += 1;
+        return conversationCalls === 1
+          ? Promise.reject(new Error("refresh failed"))
+          : Promise.resolve({ messages: [{ role: "assistant", content: "New answer" }] });
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const controller = new LoomRuntimeController({} as never, { request } as never);
+
+    await expect(controller.regenerate(assistant)).rejects.toThrow("refresh failed");
+    await controller.regenerate(assistant);
+
+    const bodies = request.mock.calls.filter(([path]) => path === "/sessions/kt-1/regenerate").map(([, options]) => JSON.parse(String(options?.body)));
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1].operation_id).toBe(bodies[0].operation_id);
   });
 
   it("keeps legacy sessions visible when the KT sidecar is unavailable", async () => {
@@ -182,8 +255,8 @@ describe("runtime session history", () => {
     const controller = new LoomRuntimeController({} as never, { request } as never);
     (controller as unknown as { activeRun: { finished: boolean } }).activeRun = { finished: false };
 
-    await controller.sendMessage({ text: "Queued", attachments: [attachment], riskMode: "normal", reasoning: "low" });
-    await controller.editQueuedMessage("queued-1", { text: "Edited", attachments: [attachment], riskMode: "normal", reasoning: "low" });
+    await controller.sendMessage({ text: "Queued", attachments: [attachment], reasoning: "low" });
+    await controller.editQueuedMessage("queued-1", { text: "Edited", attachments: [attachment], reasoning: "low" });
 
     for (const [, options] of request.mock.calls) {
       const body = JSON.parse(String(options?.body));
@@ -272,20 +345,6 @@ describe("runtime session history", () => {
     vi.unstubAllGlobals();
   });
 
-  it("persists the Svelte risk mode to an active KT session", async () => {
-    const request = vi.fn(() => Promise.resolve({ session: { session_id: "kt-1", agent_mode: "yolo" } }));
-    const controller = new LoomRuntimeController({} as never, { request } as never);
-    useRuntimeStore.getState().setSession({ session_id: "kt-1", agent_mode: "normal" });
-
-    await controller.actions.setRiskMode("yolo");
-
-    expect(request).toHaveBeenCalledWith("/sessions/kt-1/mode", expect.objectContaining({
-      method: "PATCH",
-      body: JSON.stringify({ agent_mode: "yolo" }),
-    }));
-    expect(useRuntimeStore.getState().session?.agent_mode).toBe("yolo");
-  });
-
   it("closes any remote active session before creating a fresh one", async () => {
     useChatStore.getState().reset();
     useRuntimeStore.getState().reset();
@@ -317,7 +376,7 @@ describe("runtime session history", () => {
     useChatStore.getState().reset();
     useRuntimeStore.getState().reset();
     const request = vi.fn((path: string) => {
-      if (path === "/runtime") return Promise.resolve({ active_session: { session_id: "surviving", agent_mode: "normal" } });
+      if (path === "/runtime") return Promise.resolve({ active_session: { session_id: "surviving" } });
       if (path === "/sessions/surviving") return Promise.resolve({ messages: [] });
       throw new Error(`unexpected path: ${path}`);
     });
@@ -334,7 +393,7 @@ describe("runtime session history", () => {
     useChatStore.getState().reset();
     useRuntimeStore.getState().reset();
     const request = vi.fn((path: string) => {
-      if (path === "/runtime") return Promise.resolve({ active_session: { session_id: "kt-1", agent_mode: "normal" } });
+      if (path === "/runtime") return Promise.resolve({ active_session: { session_id: "kt-1" } });
       if (path === "/sessions/kt-1") return Promise.resolve({ messages: [{ role: "user", content: "restored" }] });
       throw new Error(`unexpected path: ${path}`);
     });
@@ -515,7 +574,7 @@ describe("runtime session history", () => {
     const controller = new LoomRuntimeController(host, client);
     useRuntimeStore.getState().setSession({ session_id: "kt-1" });
 
-    await controller.sendMessage({ text: "hello", attachments: [], riskMode: "normal", reasoning: "low" });
+    await controller.sendMessage({ text: "hello", attachments: [], reasoning: "low" });
 
     await vi.waitFor(() => expect(useChatStore.getState().activeRequestId).toBeNull());
     expect(useChatStore.getState().messages.some((message) => message.role === "assistant" && message.content === "old")).toBe(false);
@@ -548,7 +607,7 @@ describe("runtime session history", () => {
     const controller = new LoomRuntimeController(host, client);
     useRuntimeStore.getState().setSession({ session_id: "kt-1" });
 
-    await controller.sendMessage({ text: "hello", attachments: [], riskMode: "normal", reasoning: "low" });
+    await controller.sendMessage({ text: "hello", attachments: [], reasoning: "low" });
 
     await vi.waitFor(() => expect(useChatStore.getState().activeRequestId).toBeNull());
     expect(turnStreamCalls).toBe(2);
@@ -584,7 +643,7 @@ describe("runtime session history", () => {
     const controller = new LoomRuntimeController(host, client);
     useRuntimeStore.getState().setSession({ session_id: "kt-1" });
 
-    await controller.sendMessage({ text: "hello", attachments: [], riskMode: "normal", reasoning: "low" });
+    await controller.sendMessage({ text: "hello", attachments: [], reasoning: "low" });
 
     await vi.waitFor(() => expect(useChatStore.getState().activeRequestId).toBeNull());
     expect(turnStreamCalls).toBe(2);
@@ -632,7 +691,7 @@ describe("runtime session history", () => {
     const controller = new LoomRuntimeController(host as never, clientMock as never);
     useRuntimeStore.getState().setSession({ session_id: "kt-1" });
 
-    await controller.sendMessage({ text: "hello", attachments: [], riskMode: "normal", reasoning: "low" });
+    await controller.sendMessage({ text: "hello", attachments: [], reasoning: "low" });
 
     await vi.waitFor(() => expect(useChatStore.getState().activeRequestId).toBeNull());
     expect(toolStreamCalls).toBeGreaterThanOrEqual(2);
@@ -687,22 +746,22 @@ describe("runtime session history", () => {
     const controller = new LoomRuntimeController(host, client);
 
     for (let index = 0; index < 35; index += 1) {
-      await expect(controller.sendMessage({ text: `message ${index}`, attachments: [], riskMode: "normal", reasoning: "low" })).rejects.toThrow();
+      await expect(controller.sendMessage({ text: `message ${index}`, attachments: [], reasoning: "low" })).rejects.toThrow();
       await vi.waitFor(() => expect(useChatStore.getState().activeRequestId).toBeNull());
     }
 
     expect((controller as unknown as { snapshots: Map<string, unknown> }).snapshots.size).toBe(32);
   });
 
-  it("cancels an accepted turn when bridge ownership is lost during approval", async () => {
+  it("executes prompt mutations directly and restores the saved Forge state on undo", async () => {
     useChatStore.getState().reset();
     useRuntimeStore.getState().reset();
-    let claims = 0;
+    const snapshot = { prompt: "before" };
     const host = {
-      claimToolBridge: vi.fn(() => Promise.resolve(++claims === 1
-        ? { owned: true, bridge_id: "bridge-a" }
-        : { owned: false, bridge_id: "bridge-b" })),
+      claimToolBridge: vi.fn(() => Promise.resolve({ owned: true, bridge_id: "bridge-a" })),
       releaseToolBridge: vi.fn(() => Promise.resolve({ ok: true })),
+      captureForgeState: vi.fn(() => snapshot),
+      restoreForgeState: vi.fn(() => true),
       executeTool: vi.fn(() => Promise.resolve({ ok: true })),
     };
     const client = {
@@ -714,18 +773,47 @@ describe("runtime session history", () => {
     const internals = controller as unknown as {
       createRun(requestId: string, runtime?: Record<string, unknown>): unknown;
       handleToolEvent(run: unknown, event: Record<string, unknown>): Promise<void>;
-      refreshBridgeLease(run: unknown): Promise<boolean>;
     };
-    const run = internals.createRun("approval-loss", { active_turn_id: "turn-approval" });
-    const pending = internals.handleToolEvent(run, { type: "tool_request", payload: { request_id: "request-approval", tool: "edit_prompt", arguments: { prompt: "new" } } });
+    const run = internals.createRun("direct-edit", { active_turn_id: "turn-edit" });
+    await internals.handleToolEvent(run, { type: "tool_request", payload: { request_id: "request-edit", tool: "edit_prompt", arguments: { prompt: "new" } } });
+    const toolMessage = useChatStore.getState().messages.find((message) => message.id === "tool-request-edit")!;
 
-    await vi.waitFor(() => expect(useRuntimeStore.getState().pendingToolApproval?.requestId).toBe("request-approval"));
-    expect(await internals.refreshBridgeLease(run)).toBe(false);
-    await pending;
+    expect(host.executeTool).toHaveBeenCalledOnce();
+    expect(toolMessage.tool).toMatchObject({ name: "edit_prompt", undoable: true });
+    await controller.undoToolMutation(toolMessage);
+    expect(host.restoreForgeState).toHaveBeenCalledWith(snapshot);
+    expect(useChatStore.getState().messages.find((message) => message.id === toolMessage.id)?.tool).toMatchObject({ undoable: false, undone: true });
+  });
 
-    expect(host.executeTool).not.toHaveBeenCalled();
-    expect(client.request).toHaveBeenCalledWith("/turns/turn-approval/cancel", { method: "POST" });
-    expect(useRuntimeStore.getState().pendingToolApproval).toBeNull();
+  it("allows only the latest prompt mutation to be undone and re-enables the previous snapshot", async () => {
+    useChatStore.getState().reset();
+    const snapshots = [{ prompt: "first" }, { prompt: "second" }];
+    const host = {
+      captureForgeState: vi.fn(() => snapshots.shift()),
+      restoreForgeState: vi.fn(() => true),
+      executeTool: vi.fn(() => Promise.resolve({ ok: true })),
+    };
+    const client = { request: vi.fn(() => Promise.resolve({ ok: true })) };
+    const controller = new LoomRuntimeController(host as never, client as never);
+    const internals = controller as unknown as {
+      createRun(requestId: string): unknown;
+      handleToolEvent(run: unknown, event: Record<string, unknown>): Promise<void>;
+    };
+    const run = internals.createRun("stacked-edits");
+
+    await internals.handleToolEvent(run, { type: "tool_request", payload: { request_id: "edit-1", tool: "edit_prompt", arguments: { prompt: "one" } } });
+    await internals.handleToolEvent(run, { type: "tool_request", payload: { request_id: "edit-2", tool: "edit_prompt", arguments: { prompt: "two" } } });
+    const first = useChatStore.getState().messages.find((message) => message.id === "tool-edit-1")!;
+    const second = useChatStore.getState().messages.find((message) => message.id === "tool-edit-2")!;
+
+    expect(first.tool?.undoable).toBe(false);
+    expect(second.tool?.undoable).toBe(true);
+    await expect(controller.undoToolMutation(first)).rejects.toThrow("no longer available");
+    await controller.undoToolMutation(second);
+    expect(host.restoreForgeState).toHaveBeenLastCalledWith({ prompt: "second" });
+    expect(useChatStore.getState().messages.find((message) => message.id === first.id)?.tool?.undoable).toBe(true);
+    await controller.undoToolMutation(useChatStore.getState().messages.find((message) => message.id === first.id)!);
+    expect(host.restoreForgeState).toHaveBeenLastCalledWith({ prompt: "first" });
   });
 
   it("does not block turn submission on a pending bridge claim", async () => {
@@ -748,7 +836,7 @@ describe("runtime session history", () => {
     };
     const controller = new LoomRuntimeController(host as never, client as never);
     useRuntimeStore.getState().setSession({ session_id: "kt-1" });
-    const sending = controller.sendMessage({ text: "hello", attachments: [], riskMode: "normal", reasoning: "low" });
+    const sending = controller.sendMessage({ text: "hello", attachments: [], reasoning: "low" });
 
     await vi.waitFor(() => expect(host.claimToolBridge).toHaveBeenCalledOnce());
     controller.destroy();
@@ -784,7 +872,7 @@ describe("runtime session history", () => {
     const controller = new LoomRuntimeController(host, client);
     useRuntimeStore.getState().setSession({ session_id: "kt-1" });
 
-    await expect(controller.sendMessage({ text: "hello", attachments: [], riskMode: "normal", reasoning: "low" })).resolves.toMatchObject({ kind: "turn", id: "turn-accepted" });
+    await expect(controller.sendMessage({ text: "hello", attachments: [], reasoning: "low" })).resolves.toMatchObject({ kind: "turn", id: "turn-accepted" });
     expect(useChatStore.getState().activeRequestId).not.toBeNull();
     expect(useRuntimeStore.getState().workingPhase).toBe("thinking");
     finish();
@@ -817,7 +905,7 @@ describe("runtime session history", () => {
     const controller = new LoomRuntimeController(host, client);
     useRuntimeStore.getState().setSession({ session_id: "kt-1" });
 
-    await controller.sendMessage({ text: "hello", attachments: [], riskMode: "normal", reasoning: "low" });
+    await controller.sendMessage({ text: "hello", attachments: [], reasoning: "low" });
     await vi.waitFor(() => expect(useRuntimeStore.getState()).toMatchObject({ workingPhase: "retrying", workingDetail: "Attempt 1 of 5 in 2s" }));
     endTurn();
 
@@ -853,7 +941,7 @@ describe("runtime session history", () => {
     } as never;
     const controller = new LoomRuntimeController(host, client);
 
-    await expect(controller.sendMessage({ text: "first", attachments: [], riskMode: "normal", reasoning: "low" })).resolves.toMatchObject({ kind: "turn", id: "turn-1" });
+    await expect(controller.sendMessage({ text: "first", attachments: [], reasoning: "low" })).resolves.toMatchObject({ kind: "turn", id: "turn-1" });
 
     expect(request.mock.calls.findIndex(([path]) => path === "/sessions/open")).toBeLessThan(request.mock.calls.findIndex(([path]) => path === "/turns"));
     expect(useChatStore.getState().messages.some((message) => message.role === "user" && message.content === "first")).toBe(true);

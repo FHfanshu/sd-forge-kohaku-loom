@@ -35,4 +35,9 @@ describe("Markdown code blocks", () => {
     expect(execCommand).toHaveBeenCalledWith("copy");
     expect(screen.getByRole("button", { name: "Copy" })).toHaveTextContent("Copied");
   });
+
+  it("renders streaming Markdown only when explicitly requested", () => {
+    const { container } = render(Markdown, { content: "**thinking**", streaming: true, renderStreamingMarkdown: true });
+    expect(container.querySelector("strong")).toHaveTextContent("thinking");
+  });
 });

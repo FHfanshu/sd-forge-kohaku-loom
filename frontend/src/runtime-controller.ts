@@ -1,4 +1,4 @@
-import type { LoomActionHandlers, ChatMessage, HistoryRow, Profile, SendMessageInput, BranchMetadata, RuntimeSession, RiskMode, PendingToolApproval, MessageSubmission } from "./contracts";
+import type { LoomActionHandlers, ChatMessage, HistoryRow, Profile, SendMessageInput, BranchMetadata, RuntimeSession, MessageSubmission } from "./contracts";
 import type { KohakuLoomHostApi } from "./bridge";
 import { KTClient } from "./kt/client";
 import { createAbortError, isAbortError } from "./kt/retry";
@@ -9,6 +9,7 @@ import { useUiStore } from "./stores/ui";
 import { normalizeProfile, normalizeProfileState } from "./profile-adapter";
 import { SessionTransition } from "./session-transition";
 import { openSessionWithConflictRecovery } from "./runtime-session";
+import { regenerateAssistantResponse } from "./runtime-regenerate";
 import { mapLegacyMessages, parseBridgeLease, queuedMessageFromConversation, setBoundedMapValue } from "./runtime-state";
 import {
   adaptTool,
@@ -68,8 +69,10 @@ export class LoomRuntimeController {
   private readonly sessionTransition = new SessionTransition();
   private sessionEpoch = 0;
   private disposed = false;
-  private readonly toolApprovals = new Map<string, { run: LoomRun; resolve(approved: boolean): void }>();
   private readonly removingQueueIds = new Set<string>();
+  private readonly regenerationOperations = new Map<string, string>();
+  private readonly undoSnapshots = new Map<string, unknown>();
+  private readonly undoOrder: string[] = [];
 
   constructor(host: KohakuLoomHostApi, client = new KTClient({ baseUrl: host.ktBaseUrl })) {
     this.host = host;
@@ -91,9 +94,7 @@ export class LoomRuntimeController {
       selectHistory: (row) => this.selectHistory(row),
       newSession: () => this.newSession(),
       openSettings: () => this.host.openSettings(),
-      setRiskMode: (mode) => this.setRiskMode(mode),
-      approveTool: (requestId) => this.approveTool(requestId),
-      rejectTool: (requestId) => this.rejectTool(requestId),
+      undoToolMutation: (message) => this.undoToolMutation(message),
     };
   }
 
@@ -130,16 +131,6 @@ export class LoomRuntimeController {
     this.historyEventsTask = null;
   }
 
-  approveTool(requestId = useRuntimeStore.getState().pendingToolApproval?.requestId ?? ""): void {
-    const pending = this.toolApprovals.get(requestId);
-    if (pending) pending.resolve(true);
-  }
-
-  rejectTool(requestId = useRuntimeStore.getState().pendingToolApproval?.requestId ?? ""): void {
-    const pending = this.toolApprovals.get(requestId);
-    if (pending) pending.resolve(false);
-  }
-
   reloadProfiles(): Profile[] {
     const state = asRecord(this.host.profileStore.load());
     const normalized = normalizeProfileState(state);
@@ -147,9 +138,7 @@ export class LoomRuntimeController {
     return normalized.profiles;
   }
 
-  private async syncProfiles(): Promise<void> {
-    await this.host.syncProfiles();
-  }
+  private async syncProfiles(): Promise<void> { await this.host.syncProfiles(); if ("profileStore" in this.host) this.reloadProfiles(); }
 
   addProfile(profile: unknown): Profile {
     const result = normalizeProfile(this.host.profileStore.add(profile));
@@ -267,7 +256,7 @@ export class LoomRuntimeController {
     const config = asRecord(this.host.assistantConfig());
     const opened = await openSessionWithConflictRecovery(this.client, {
       profile_id: String(config.profile_id ?? useProfileStore.getState().activeProfileId ?? ""), session_id: sessionId,
-      resume, forge_bridge: true, agent_mode: useUiStore.getState().riskMode,
+      resume, forge_bridge: true,
     });
     this.assertSessionCurrent(epoch);
     const session = opened.session;
@@ -299,7 +288,6 @@ export class LoomRuntimeController {
     this.assertSessionCurrent(epoch);
     const session = { ...asRecord(status.active_session), ...seed, session_id: sessionId } as RuntimeSession;
     useRuntimeStore.getState().setSession(session);
-    useUiStore.getState().setRiskMode(session.agent_mode === "yolo" ? "yolo" : "normal");
     this.applyConversation(conversation);
     if (status.active_turn_id) this.attachRuntime(status);
   }
@@ -620,26 +608,20 @@ export class LoomRuntimeController {
         const args = asRecord(tool.arguments);
         run.activeTools.set(requestId, name);
         this.syncWorking(run);
-        if (String(payload.agent_mode) === "yolo") args._yolo_authorized = true;
-        if (String(payload.agent_mode) !== "yolo" && this.requiresToolApproval(name, args)) {
-          const approved = await this.awaitToolApproval(run, requestId, name, args);
-          if (!approved) result = { ok: false, error: "Tool execution was denied by the user" };
-        }
-        if (result === undefined) {
-          try {
-            result = await this.host.executeTool({ ...tool, arguments: args }, run.controller.signal);
-          } finally {
-            run.activeTools.delete(requestId);
-            this.syncWorking(run);
-          }
-        } else {
+        const toolMessageId = `tool-${requestId}`;
+        const snapshot = this.isForgeMutation(name, args) ? this.host.captureForgeState() : undefined;
+        try {
+          result = await this.host.executeTool({ ...tool, arguments: args }, run.controller.signal);
+        } finally {
           run.activeTools.delete(requestId);
           this.syncWorking(run);
         }
         run.toolResults.set(requestId, result);
         const output = asRecord(result);
         const detail = output.ok === false ? String(output.error ?? "failed") : typeof result === "string" ? result : JSON.stringify(result);
-        useChatStore.getState().upsertMessage({ id: `tool-${requestId}`, role: "tool", content: detail, status: output.ok === false ? "error" : "complete", tool: { name, status: output.ok === false ? "error" : "complete", detail } });
+        const succeeded = output.ok !== false;
+        if (succeeded && snapshot !== undefined) this.rememberUndoSnapshot(toolMessageId, snapshot);
+        useChatStore.getState().upsertMessage({ id: toolMessageId, role: "tool", content: detail, status: succeeded ? "complete" : "error", tool: { name, status: succeeded ? "complete" : "error", detail, undoable: succeeded && snapshot !== undefined } });
       }
       await this.client.request(`/tools/replies/${encodeURIComponent(requestId)}`, {
         method: "POST",
@@ -661,14 +643,11 @@ export class LoomRuntimeController {
     run.leaseTimer = null;
     run.resolve(result);
     run.controller.abort();
-    for (const [requestId, pending] of this.toolApprovals) {
-      if (pending.run === run) pending.resolve(false);
-    }
     const release = this.host.releaseToolBridge;
     if (release) void Promise.resolve(release.call(this.host)).catch(() => undefined);
   }
 
-  private requiresToolApproval(name: string, args: RawRecord): boolean {
+  private isForgeMutation(name: string, args: RawRecord): boolean {
     return name === "edit_prompt"
       || name === "initialize_prompt"
       || name === "patch_current_prompt"
@@ -677,22 +656,18 @@ export class LoomRuntimeController {
       || (name === "forge_resource" && String(args.action ?? "") === "apply");
   }
 
-  private async awaitToolApproval(run: LoomRun, requestId: string, name: string, args: RawRecord): Promise<boolean> {
-    if (run.cancelled || run.finished || this.disposed) return false;
-    const approval: PendingToolApproval = { requestId, name, arguments: Object.fromEntries(Object.entries(args).filter(([key]) => !key.startsWith("_"))) };
-    useRuntimeStore.getState().setPendingToolApproval(approval);
-    return new Promise<boolean>((resolve) => {
-      const pending = {
-        run,
-        resolve: (approved: boolean) => {
-          this.toolApprovals.delete(requestId);
-          if (useRuntimeStore.getState().pendingToolApproval?.requestId === requestId) useRuntimeStore.getState().setPendingToolApproval(null);
-          resolve(approved);
-        },
-      };
-      this.toolApprovals.set(requestId, pending);
-      if (run.controller.signal.aborted) pending.resolve(false);
-    });
+  private rememberUndoSnapshot(messageId: string, snapshot: unknown): void {
+    const previous = this.undoOrder.at(-1);
+    if (previous) {
+      const message = useChatStore.getState().messages.find((item) => item.id === previous);
+      if (message?.tool) useChatStore.getState().updateMessage(previous, { tool: { ...message.tool, undoable: false } });
+    }
+    this.undoSnapshots.set(messageId, snapshot);
+    this.undoOrder.push(messageId);
+    while (this.undoOrder.length > 32) {
+      const removed = this.undoOrder.shift();
+      if (removed) this.undoSnapshots.delete(removed);
+    }
   }
 
   private loseBridgeLease(run: LoomRun, message: string): false {
@@ -770,18 +745,6 @@ export class LoomRuntimeController {
         }
       }
     }
-  }
-
-  private async setRiskMode(mode: RiskMode): Promise<void> {
-    const sessionId = useRuntimeStore.getState().sessionId;
-    if (!sessionId) return;
-    const result = await this.client.request<RawRecord>(`/sessions/${encodeURIComponent(sessionId)}/mode`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent_mode: mode }),
-    });
-    const session = asRecord(result.session);
-    useRuntimeStore.getState().setSession({ ...useRuntimeStore.getState().session, ...session, session_id: sessionId });
   }
 
   async sendMessage(input: SendMessageInput): Promise<MessageSubmission> {
@@ -866,22 +829,39 @@ export class LoomRuntimeController {
     useChatStore.getState().appendMessage({ id: `tool-read-prompt-${Date.now()}`, role: "tool", content: detail, status: "complete", tool: { name: "read_prompt", status: "complete", detail } });
   }
 
+  async undoToolMutation(message: ChatMessage): Promise<void> {
+    const snapshot = this.undoSnapshots.get(message.id);
+    if (!snapshot || this.undoOrder.at(-1) !== message.id || message.role !== "tool" || !message.tool?.undoable || message.tool.undone) {
+      throw new Error("This prompt change is no longer available to undo");
+    }
+    if (!this.host.restoreForgeState(snapshot)) throw new Error("Forge could not restore the saved prompt state");
+    this.undoSnapshots.delete(message.id);
+    this.undoOrder.pop();
+    useChatStore.getState().updateMessage(message.id, { tool: { ...message.tool, undoable: false, undone: true } });
+    const previous = this.undoOrder.at(-1);
+    if (previous) {
+      const previousMessage = useChatStore.getState().messages.find((item) => item.id === previous);
+      if (previousMessage?.tool) useChatStore.getState().updateMessage(previous, { tool: { ...previousMessage.tool, undoable: true } });
+    }
+  }
+
   private async editAndRerun(input: SendMessageInput): Promise<void> {
     if (this.activeRun && !this.activeRun.finished) throw new Error("Wait for the active response before editing a message");
     const sessionId = useRuntimeStore.getState().sessionId;
     const messages = useChatStore.getState().messages;
     const target = messages.find((message) => message.id === input.editOf);
-    if (!sessionId || !target || target.role !== "user" || target.branchTurnIndex === undefined) {
+    if (!sessionId || !target || target.role !== "user") {
       throw new Error("The message is no longer available to edit");
     }
     const userPosition = messages.filter((message) => message.role === "user").findIndex((message) => message.id === target.id);
     if (userPosition < 0) throw new Error("The message is no longer available to edit");
+    const turnIndex = target.branchTurnIndex ?? userPosition + 1;
     const snapshot = this.snapshots.get(target.id);
     if (snapshot) this.host.restoreForgeState(snapshot);
     const response = await this.client.request<BranchMetadata>(`/sessions/${encodeURIComponent(sessionId)}/edit-rerun`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: contentForMessage(input), turn_index: target.branchTurnIndex, user_position: userPosition, operation_id: operationId("edit-rerun") }),
+      body: JSON.stringify({ content: contentForMessage(input), turn_index: turnIndex, user_position: userPosition, operation_id: operationId("edit-rerun") }),
     });
     useRuntimeStore.getState().setBranches(normalizeBranchMetadata(response));
     const conversation = await this.client.request<RawRecord>(`/sessions/${encodeURIComponent(sessionId)}`);
@@ -985,16 +965,13 @@ export class LoomRuntimeController {
     this.applyConversation(conversation);
   }
 
-  async regenerate(_message: ChatMessage): Promise<void> {
+  async regenerate(message: ChatMessage): Promise<void> {
     const sessionId = useRuntimeStore.getState().sessionId;
-    if (!sessionId) return;
-    const response = await this.client.request<BranchMetadata>(`/sessions/${encodeURIComponent(sessionId)}/regenerate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ operation_id: operationId("regenerate") }),
-    });
-    useRuntimeStore.getState().setBranches(response);
-    const conversation = await this.client.request<RawRecord>(`/sessions/${encodeURIComponent(sessionId)}`);
-    this.applyConversation(conversation);
+    if (!sessionId) throw new Error("Open a Loom session before regenerating a response");
+    const key = `${sessionId}:${message.id}`;
+    const requestId = this.regenerationOperations.get(key) ?? `regenerate-${message.id}-${operationId("branch")}`;
+    setBoundedMapValue(this.regenerationOperations, key, requestId, 32);
+    await regenerateAssistantResponse(this.client, sessionId, message, requestId, (conversation) => this.applyConversation(conversation));
+    this.regenerationOperations.delete(key);
   }
 }

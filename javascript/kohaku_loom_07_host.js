@@ -42,6 +42,8 @@
     }
 
     const PROFILE_IMPORT_RETRY_DELAYS = [150, 300];
+    let profilesInitialized = false;
+    let profileSyncInFlight = null;
 
     function sleep(delay) {
         return new Promise(function (resolve) { setTimeout(resolve, delay); });
@@ -63,8 +65,21 @@
         return response.status === 204 ? null : response.json();
     }
 
-    async function syncProfiles(signal) {
+    async function syncProfilesOnce(signal) {
         if (!tools.profileStore) throw new Error("Model Profile store is unavailable");
+        let browserState = tools.profileStore.load();
+        let hasPendingSecret = (browserState.profiles || []).some(function (profile) { return Boolean(profile.api_key); });
+        if (!profilesInitialized && !hasPendingSecret) {
+            const persisted = await ktJson("/profiles", { signal: signal });
+            browserState = tools.profileStore.load();
+            hasPendingSecret = (browserState.profiles || []).some(function (profile) { return Boolean(profile.api_key); });
+            if (!hasPendingSecret && Array.isArray(persisted?.profiles) && persisted.profiles.length) {
+                tools.profileStore.save(persisted);
+                profilesInitialized = true;
+                if (typeof tools.profileStore.scrubApiKeys === "function") tools.profileStore.scrubApiKeys();
+                return persisted;
+            }
+        }
         let imported;
         for (let attempt = 0; ; attempt += 1) {
             try {
@@ -72,7 +87,7 @@
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     signal: signal,
-                    body: JSON.stringify(tools.profileStore.load())
+                    body: JSON.stringify(browserState)
                 });
                 break;
             } catch (error) {
@@ -80,12 +95,24 @@
                 await sleep(PROFILE_IMPORT_RETRY_DELAYS[attempt]);
             }
         }
+        profilesInitialized = true;
         if (tools.LEGACY_PROFILE_STORAGE_KEY) localStorage.removeItem(tools.LEGACY_PROFILE_STORAGE_KEY);
         (tools.LEGACY_ASSISTANT_PROFILE_KEYS || []).filter(function (key) {
             return String(key).startsWith("q3vl_assistant_");
         }).forEach(function (key) { localStorage.removeItem(key); });
         if (typeof tools.profileStore.scrubApiKeys === "function") tools.profileStore.scrubApiKeys();
         return imported;
+    }
+
+    async function syncProfiles(signal) {
+        if (profileSyncInFlight) return profileSyncInFlight;
+        const pending = syncProfilesOnce(signal);
+        profileSyncInFlight = pending;
+        try {
+            return await pending;
+        } finally {
+            if (profileSyncInFlight === pending) profileSyncInFlight = null;
+        }
     }
 
     async function profileChat(profileId, messages, signal, timeout) {

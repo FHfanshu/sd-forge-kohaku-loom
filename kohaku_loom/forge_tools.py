@@ -2,13 +2,31 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Callable
+from typing import Any
 
 from kohakuterrarium.modules.tool.base import BaseTool, ExecutionMode, ToolResult
 
 from .forge_bridge import ForgeToolBroker
 from .kt_tools import DanbooruTool, PromptSkillTool
 from .tool_args import unwrap_object_content
+
+
+TOOL_GROUP_CATALOG: dict[str, tuple[str, ...]] = {
+    "forge_resource": ("read_style_template", "forge_resource"),
+    "danbooru": ("danbooru",),
+    "teacher": ("ask_teacher",),
+    "prompt_knowledge": ("load_prompt_skill",),
+}
+_FORGE_TOOL_GROUPS = frozenset({"forge_resource", "teacher"})
+
+
+def tool_group_catalog(*, forge_bridge: bool = True) -> dict[str, tuple[str, ...]]:
+    """Return the fixed native disclosure catalog for one Loom session."""
+    return {
+        group: tools
+        for group, tools in TOOL_GROUP_CATALOG.items()
+        if forge_bridge or group not in _FORGE_TOOL_GROUPS
+    }
 
 
 def compact_forge_tool_result(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -39,12 +57,14 @@ class ForgeBridgeTool(BaseTool):
         self,
         broker: ForgeToolBroker,
         timeout: float = 300.0,
-        mode_provider: Callable[[], str] | None = None,
     ):
         super().__init__()
         self.broker = broker
         self.timeout = timeout
-        self.mode_provider = mode_provider or (lambda: "normal")
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        """Expose the declared native schema to KT versions that query it."""
+        return dict(getattr(self, "parameters", {}) or {})
 
     @property
     def execution_mode(self) -> ExecutionMode:
@@ -53,9 +73,6 @@ class ForgeBridgeTool(BaseTool):
     async def _execute(self, args: dict[str, Any], **_: Any) -> ToolResult:
         try:
             request_args = unwrap_object_content(args)
-            request_args.pop("_yolo_authorized", None)
-            if self.mode_provider() == "yolo":
-                request_args["_yolo_authorized"] = True
             result = await self.broker.request(
                 self.tool_name,
                 request_args,
@@ -74,26 +91,6 @@ class ForgeBridgeTool(BaseTool):
         return ToolResult(output=serialized)
 
 
-class YoloForgeBridgeTool(ForgeBridgeTool):
-    def __init__(
-        self,
-        broker: ForgeToolBroker,
-        timeout: float = 300.0,
-        mode_provider: Callable[[], str] | None = None,
-    ):
-        super().__init__(broker, timeout, mode_provider)
-
-    async def _execute(self, args: dict[str, Any], **kwargs: Any) -> ToolResult:
-        if self.mode_provider() != "yolo":
-            return ToolResult(
-                output='{"ok":false,"error":"YOLO mode is required"}',
-                error="yolo_mode_required",
-            )
-        authorized_args = dict(args)
-        authorized_args["_yolo_authorized"] = True
-        return await super()._execute(authorized_args, **kwargs)
-
-
 class ReadPromptTool(ForgeBridgeTool):
     @property
     def tool_name(self) -> str:
@@ -101,7 +98,7 @@ class ReadPromptTool(ForgeBridgeTool):
 
     @property
     def description(self) -> str:
-        return "Read the current Forge prompt and guarded context hashes."
+        return "Read the current Forge prompt. Use its returned hash as edit_prompt.base_hash."
 
     parameters = {
         "type": "object",
@@ -151,7 +148,7 @@ class EditPromptTool(ForgeBridgeTool):
 
     @property
     def description(self) -> str:
-        return "Apply a guarded preview-first patch to a Forge prompt."
+        return "Edit the current Forge prompt after read_prompt. The guarded edit applies immediately and can be undone from the Forge UI."
 
     parameters = {
         "type": "object",
@@ -215,77 +212,42 @@ class ResourceTool(ForgeBridgeTool):
     }
 
 
-class ReadTxt2ImgStateTool(YoloForgeBridgeTool):
-    @property
-    def tool_name(self) -> str:
-        return "read_txt2img_state"
-
-    @property
-    def description(self) -> str:
-        return "Read the guarded Forge txt2img prompt and core generation parameters. YOLO mode only."
-
-    parameters = {"type": "object", "properties": {}}
-
-
-class ApplyTxt2ImgPatchTool(YoloForgeBridgeTool):
-    @property
-    def tool_name(self) -> str:
-        return "apply_txt2img_patch"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Atomically apply a hash-guarded patch to approved Forge txt2img parameters. "
-            "Use prompt patch operations instead of replacing whole prompts. YOLO mode only."
-        )
-
-    parameters = {
-        "type": "object",
-        "properties": {
-            "state_hash": {"type": "string"},
-            "changes": {
-                "type": "object",
-                "properties": {
-                    "positive_prompt_patches": {"type": "array", "items": {"type": "object"}},
-                    "negative_prompt_patches": {"type": "array", "items": {"type": "object"}},
-                    "seed": {"type": "integer", "minimum": -1, "maximum": 4294967295},
-                    "width": {"type": "integer", "minimum": 64, "maximum": 4096},
-                    "height": {"type": "integer", "minimum": 64, "maximum": 4096},
-                    "steps": {"type": "integer", "minimum": 1, "maximum": 150},
-                    "cfg_scale": {"type": "number", "minimum": 0, "maximum": 30},
-                    "sampler": {"type": "string"},
-                    "scheduler": {"type": "string"},
-                },
-                "additionalProperties": False,
-            },
-        },
-        "required": ["state_hash", "changes"],
-    }
+def tool_group_tools(
+    group: str,
+    broker: ForgeToolBroker,
+    timeout: float = 300.0,
+    *,
+    forge_bridge: bool = True,
+) -> list[BaseTool]:
+    """Build tools for one fixed disclosure group."""
+    if group not in TOOL_GROUP_CATALOG:
+        raise ValueError(f"unknown tool group: {group}")
+    if not forge_bridge and group in _FORGE_TOOL_GROUPS:
+        raise ValueError(f"tool group is unavailable without the Forge bridge: {group}")
+    if group == "forge_resource":
+        return [
+            ReadStyleTemplateTool(broker, timeout),
+            ResourceTool(broker, timeout),
+        ]
+    if group == "danbooru":
+        return [DanbooruTool()]
+    if group == "teacher":
+        return [AskTeacherTool(broker, timeout)]
+    return [PromptSkillTool()]
 
 
 def forge_tools(
     broker: ForgeToolBroker,
     timeout: float = 300.0,
-    mode_provider: Callable[[], str] | None = None,
 ) -> list[BaseTool]:
+    resources = tool_group_tools("forge_resource", broker, timeout)
     return [
-        AskTeacherTool(broker, timeout, mode_provider),
-        ReadPromptTool(broker, timeout, mode_provider),
-        ReadStyleTemplateTool(broker, timeout, mode_provider),
-        EditPromptTool(broker, timeout, mode_provider),
-        InitializePromptTool(broker, timeout, mode_provider),
-        ResourceTool(broker, timeout, mode_provider),
+        AskTeacherTool(broker, timeout),
+        ReadPromptTool(broker, timeout),
+        resources[0],
+        EditPromptTool(broker, timeout),
+        InitializePromptTool(broker, timeout),
+        resources[1],
         DanbooruTool(),
         PromptSkillTool(),
-    ]
-
-
-def yolo_forge_tools(
-    broker: ForgeToolBroker,
-    timeout: float = 300.0,
-    mode_provider: Callable[[], str] | None = None,
-) -> list[BaseTool]:
-    return [
-        ReadTxt2ImgStateTool(broker, timeout, mode_provider),
-        ApplyTxt2ImgPatchTool(broker, timeout, mode_provider),
     ]

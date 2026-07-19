@@ -436,6 +436,7 @@ class SidecarRuntimeUnitTests(unittest.IsolatedAsyncioTestCase):
                             interrupted_by_user=False,
                         )
                     )
+                    yield TextChunk("late event")
 
             runtime.active = mock.Mock(
                 session_id="unit",
@@ -463,6 +464,8 @@ class SidecarRuntimeUnitTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(event["type"] == "reasoning_delta" for event in events))
         self.assertTrue(any(event["type"] == "reasoning_snapshot" for event in events))
         self.assertTrue(any(event["type"] == "usage" for event in events))
+        self.assertFalse(any(event["type"] == "text_delta" and event["payload"].get("text") == "late event" for event in events))
+        self.assertEqual(1, sum(event["type"] == "turn_ended" for event in events))
         self.assertEqual("final thought", runtime._turn_snapshot["reasoning"])
         self.assertEqual({"prompt_tokens": 8, "completion_tokens": 2}, runtime._turn_snapshot["usage"])
 
@@ -473,51 +476,6 @@ class SidecarRuntimeUnitTests(unittest.IsolatedAsyncioTestCase):
             runtime.active = mock.Mock(session_id="active")
             with self.assertRaisesRegex(RuntimeError, "already active"):
                 await runtime.open_session("profile", provider=mock.Mock())
-
-    async def test_agent_mode_switch_adds_and_removes_yolo_tools(self):
-        class Tool:
-            def __init__(self, name):
-                self.tool_name = name
-
-        class Agent:
-            def __init__(self):
-                self.registry = mock.Mock()
-                self.registry.unregister_tool.side_effect = lambda name: self.tools.pop(name, None) is not None
-                self.executor = mock.Mock(_tools={})
-                self.tools = {}
-                self.refresh_system_prompt = mock.Mock()
-
-            def add_tool(self, tool):
-                self.tools[tool.tool_name] = tool
-                self.executor._tools[tool.tool_name] = tool
-
-        with tempfile.TemporaryDirectory() as directory:
-            paths = LoomRuntimePaths.under(Path(directory)).ensure()
-            agent = Agent()
-            runtime = LoomSidecarRuntime(paths, LoomProfileStore(paths), mock.Mock())
-            runtime.active = mock.Mock(
-                session_id="unit",
-                agent_mode="normal",
-                forge_bridge=True,
-                creature=mock.Mock(agent=agent),
-            )
-
-            forge_tools = types.ModuleType("kohaku_loom.forge_tools")
-            forge_tools.yolo_forge_tools = lambda *_args, **_kwargs: [
-                Tool("read_txt2img_state"),
-                Tool("apply_txt2img_patch"),
-            ]
-            with mock.patch.dict(sys.modules, {"kohaku_loom.forge_tools": forge_tools}):
-                enabled = await runtime.set_agent_mode("unit", "yolo")
-                self.assertEqual("yolo", enabled["agent_mode"])
-                self.assertEqual({"read_txt2img_state", "apply_txt2img_patch"}, set(agent.tools))
-
-                disabled = await runtime.set_agent_mode("unit", "normal")
-
-        self.assertEqual("normal", disabled["agent_mode"])
-        self.assertEqual({}, agent.tools)
-        self.assertEqual({}, agent.executor._tools)
-        agent.refresh_system_prompt.assert_called_once_with()
 
     async def test_direct_turn_cannot_bypass_queued_primary(self):
         class Store:
@@ -884,9 +842,6 @@ class SidecarApiTests(unittest.TestCase):
             async def retry_message(self, session_id, message_id):
                 return {"message_id": message_id, "session_id": session_id, "state": "pending"}
 
-            async def set_agent_mode(self, session_id, agent_mode):
-                return {"session_id": session_id, "agent_mode": agent_mode}
-
             async def start_turn(self, content, timeout, operation_id=""):
                 return {"turn_id": "turn-1", "status": "accepted", "content": content, "timeout": timeout, "operation_id": operation_id}
 
@@ -938,11 +893,6 @@ class SidecarApiTests(unittest.TestCase):
                     headers={"Authorization": "Bearer secret-token"},
                     json={"refresh": True},
                 )
-                mode = client.patch(
-                    "/sessions/session-1/mode",
-                    headers={"Authorization": "Bearer secret-token"},
-                    json={"agent_mode": "yolo"},
-                )
 
         self.assertEqual(200, response.status_code)
         self.assertEqual("turn-1", response.json()["turn_id"])
@@ -954,7 +904,6 @@ class SidecarApiTests(unittest.TestCase):
         self.assertEqual("edited", edited.json()["message"]["content"])
         self.assertEqual("cancelled", cancelled.json()["message"]["state"])
         self.assertEqual("generating", metadata.json()["metadata"]["status"])
-        self.assertEqual("yolo", mode.json()["session"]["agent_mode"])
 
 
 if __name__ == "__main__":

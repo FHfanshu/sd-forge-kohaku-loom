@@ -336,21 +336,6 @@ def create_app(
         except (RuntimeError, TypeError, ValueError) as error:
             raise HTTPException(status_code=409 if "claimed" in str(error) else 400, detail=str(error)) from error
 
-    @app.patch("/sessions/{session_id}/mode")
-    async def set_agent_mode(
-        session_id: str,
-        payload: dict[str, Any] = Body(...),
-        authorization: str = Header(default=""),
-    ) -> dict[str, Any]:
-        authorize(authorization)
-        try:
-            session = await loom_runtime.set_agent_mode(session_id, str(payload.get("agent_mode") or ""))
-            return {"ok": True, "session": session}
-        except FileNotFoundError as error:
-            raise HTTPException(status_code=404, detail="session not found") from error
-        except (RuntimeError, TypeError, ValueError) as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
-
     @app.patch("/sessions/{session_id}/messages/{message_id}")
     async def edit_message(
         session_id: str,

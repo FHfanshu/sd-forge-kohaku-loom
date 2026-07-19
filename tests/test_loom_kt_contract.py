@@ -16,10 +16,12 @@ try:
     from kohakuterrarium.testing.llm import ScriptEntry, ScriptedLLM
 
     from kohaku_loom.forge_bridge import ForgeToolBroker
-    from kohaku_loom.forge_tools import ReadPromptTool, forge_tools, yolo_forge_tools
+    from kohaku_loom.forge_tools import ReadPromptTool, forge_tools
     from kohaku_loom.profile_store import LoomProfileStore
     from kohaku_loom.runtime_paths import LoomRuntimePaths
     from kohaku_loom.sidecar.runtime import LoomSidecarRuntime, restrict_agent_skills
+    from kohaku_loom.sidecar.prompt_edit_guard import build_prompt_edit_guard, prompt_edit_requested
+    from kohaku_loom.sidecar.tool_disclosure import initial_tools
     from kohaku_loom.kt_providers import GeminiNativeProvider, LlamaOnceProvider, ProfileOpenAIProvider, _retryable_provider_error
     from kohaku_loom.provider_errors import provider_http_status
 
@@ -51,6 +53,83 @@ if KT_AVAILABLE:
                 ]
 
 
+    class NativePromptEditLLM(ScriptedLLM):
+        def __init__(self):
+            super().__init__([ScriptEntry(""), ScriptEntry(""), ScriptEntry("Prompt updated.")])
+            self.last_tool_calls: list[NativeToolCall] = []
+            self.last_assistant_extra_fields = {}
+            self.last_usage = {}
+            self.tool_names_per_call: list[list[str]] = []
+
+        async def chat(self, messages, **kwargs):
+            index = self.call_count
+            self.last_tool_calls = []
+            self.tool_names_per_call.append([
+                getattr(schema, "name", "")
+                for schema in (kwargs.get("tools") or [])
+            ])
+            async for chunk in super().chat(messages, **kwargs):
+                yield chunk
+            calls = [
+                NativeToolCall(
+                    id="read-1",
+                    name="read_prompt",
+                    arguments='{"target":"active"}',
+                ),
+                NativeToolCall(
+                    id="edit-1",
+                    name="edit_prompt",
+                    arguments=(
+                        '{"target":"txt2img","field":"positive",'
+                        '"base_hash":"fnv1a:old","prompt":"subject, warm light"}'
+                    ),
+                ),
+            ]
+            if index < len(calls):
+                self.last_tool_calls = [calls[index]]
+
+
+    class NativeReadThenProseLLM(ScriptedLLM):
+        def __init__(self, *, edit_after_prose: bool = False, retry_after_failure: bool = False):
+            scripts = [ScriptEntry("")] * 6
+            if retry_after_failure:
+                scripts = [ScriptEntry("")] * 4 + [ScriptEntry("Prompt updated.")]
+            super().__init__(scripts)
+            self.edit_after_prose = edit_after_prose
+            self.retry_after_failure = retry_after_failure
+            self.last_tool_calls: list[NativeToolCall] = []
+            self.last_assistant_extra_fields = {}
+            self.last_usage = {}
+
+        async def chat(self, messages, **kwargs):
+            index = self.call_count
+            self.last_tool_calls = []
+            async for chunk in super().chat(messages, **kwargs):
+                yield chunk
+            if index == 0:
+                self.last_tool_calls = [NativeToolCall(id="read-1", name="read_prompt", arguments='{"target":"active"}')]
+            elif self.retry_after_failure and index == 1:
+                self.last_tool_calls = [NativeToolCall(
+                    id="edit-old",
+                    name="edit_prompt",
+                    arguments='{"target":"txt2img","field":"positive","base_hash":"fnv1a:old","prompt":"subject, warm light"}',
+                )]
+            elif self.retry_after_failure and index == 2:
+                self.last_tool_calls = [NativeToolCall(id="read-2", name="read_prompt", arguments='{"target":"active"}')]
+            elif self.retry_after_failure and index == 3:
+                self.last_tool_calls = [NativeToolCall(
+                    id="edit-new",
+                    name="edit_prompt",
+                    arguments='{"target":"txt2img","field":"positive","base_hash":"fnv1a:new","prompt":"subject, cool light"}',
+                )]
+            elif self.edit_after_prose and index == 2:
+                self.last_tool_calls = [NativeToolCall(
+                    id="edit-1",
+                    name="edit_prompt",
+                    arguments='{"target":"txt2img","field":"positive","base_hash":"fnv1a:old","prompt":"subject, warm light"}',
+                )]
+
+
 @unittest.skipUnless(KT_AVAILABLE, "KohakuTerrarium sidecar dependency is not installed")
 class KohakuTerrariumContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_forge_bridge_exposes_legacy_browser_capabilities(self):
@@ -80,20 +159,6 @@ class KohakuTerrariumContractTests(unittest.IsolatedAsyncioTestCase):
             set(tools["danbooru"].parameters["properties"]["action"]["enum"]),
         )
         self.assertEqual(["name"], tools["load_prompt_skill"].parameters["required"])
-
-    async def test_yolo_tools_are_separate_and_fail_closed_in_normal_mode(self):
-        broker = ForgeToolBroker()
-        mode = "normal"
-        tools = yolo_forge_tools(broker, mode_provider=lambda: mode)
-        self.assertEqual(
-            {"read_txt2img_state", "apply_txt2img_patch"},
-            {tool.tool_name for tool in tools},
-        )
-
-        result = await tools[0]._execute({})
-
-        self.assertEqual("yolo_mode_required", result.error)
-        self.assertEqual([], [event for event in broker.events_after(0) if event["type"] == "tool_request"])
 
     async def test_forge_tool_unwraps_structured_content_arguments(self):
         broker = ForgeToolBroker()
@@ -130,28 +195,7 @@ class KohakuTerrariumContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.error)
         search.assert_called_once_with("from below", "", 12, None)
 
-    async def test_yolo_request_keeps_issued_authorization_after_mode_switch(self):
-        broker = ForgeToolBroker()
-        mode = "yolo"
-        tool = next(tool for tool in forge_tools(broker, mode_provider=lambda: mode) if tool.tool_name == "edit_prompt")
-        task = asyncio.create_task(tool._execute({"base_hash": "fnv1a:prompt"}))
-        request = await self._wait_for_request(broker)
-        mode = "normal"
-
-        self.assertEqual("yolo", request["payload"]["agent_mode"])
-        self.assertNotIn("_yolo_authorized", request["payload"]["arguments"])
-        await broker.reply(request["payload"]["request_id"], {"ok": True, "state_hash": "fnv1a:state"})
-        result = await task
-
-        self.assertIsNone(result.error)
-        forged_task = asyncio.create_task(tool._execute({"base_hash": "fnv1a:prompt", "_yolo_authorized": True}))
-        forged_request = await self._wait_for_request(broker, 2)
-        self.assertEqual("normal", forged_request["payload"]["agent_mode"])
-        self.assertNotIn("_yolo_authorized", forged_request["payload"]["arguments"])
-        await broker.reply(forged_request["payload"]["request_id"], {"ok": True})
-        self.assertIsNone((await forged_task).error)
-
-    async def test_installed_loom_creature_loads_package_tool_and_skill(self):
+    async def test_installed_loom_creature_preloads_skill_not_optional_tool(self):
         from kohakuterrarium import Terrarium
         from kohakuterrarium.terrarium.drive.config import DriveRuntimeConfig
 
@@ -180,7 +224,7 @@ class KohakuTerrariumContractTests(unittest.IsolatedAsyncioTestCase):
                     strict=True,
                     start=False,
                 )
-                self.assertIn("danbooru", creature.agent.registry.list_tools())
+                self.assertNotIn("danbooru", creature.agent.registry.list_tools())
                 self.assertIn("danbooru-prompting", creature.agent.skills.names())
                 skill = creature.agent.skills.get("danbooru-prompting")
                 self.assertTrue(skill.enabled)
@@ -246,6 +290,262 @@ output:
         self.assertEqual("subject", tool_result["prompt"])
         self.assertNotIn("positive_prompt", tool_result)
         self.assertNotIn("selected_styles", tool_result)
+
+    async def test_native_tool_rounds_continue_after_disclosure_and_guarded_edit(self):
+        broker = ForgeToolBroker()
+        llm = NativePromptEditLLM()
+        tools = initial_tools(broker, forge_bridge=True)
+        with tempfile.TemporaryDirectory() as directory:
+            creature = Path(directory)
+            (creature / "config.yaml").write_text(
+                """name: loom_mutation_contract
+version: "1.0"
+controller:
+  tool_format: native
+system_prompt: "Use the available Forge tools when needed."
+input:
+  type: none
+output:
+  type: stdout
+""",
+                encoding="utf-8",
+            )
+            agent = await Agent.build(
+                creature,
+                llm=llm,
+                io="headless",
+                tools=tools,
+                strict=True,
+            )
+            await agent.start()
+            try:
+                async def collect_events():
+                    return [event async for event in agent.run_stream("Update the current prompt.")]
+
+                turn = asyncio.create_task(collect_events())
+                read_request = await self._wait_for_request(broker)
+                self.assertEqual("read_prompt", read_request["payload"]["tool"])
+                self.assertEqual({"target": "active"}, read_request["payload"]["arguments"])
+                await broker.reply(
+                    read_request["payload"]["request_id"],
+                    {
+                        "ok": True,
+                        "target": "txt2img",
+                        "prompt": "subject",
+                        "prompt_hash": "fnv1a:old",
+                        "positive_prompt": "subject",
+                        "positive_prompt_hash": "fnv1a:old",
+                        "negative_prompt": "noise",
+                        "negative_prompt_hash": "fnv1a:negative",
+                    },
+                )
+                edit_request = await self._wait_for_request(broker, expected_count=2)
+                self.assertEqual("edit_prompt", edit_request["payload"]["tool"])
+                self.assertEqual(
+                    {
+                        "target": "txt2img",
+                        "field": "positive",
+                        "base_hash": "fnv1a:old",
+                        "prompt": "subject, warm light",
+                    },
+                    edit_request["payload"]["arguments"],
+                )
+                await broker.reply(
+                    edit_request["payload"]["request_id"],
+                    {"ok": True, "changed": True},
+                )
+                events = await asyncio.wait_for(turn, timeout=15)
+            finally:
+                await agent.stop()
+
+        ended = [event for event in events if type(event).__name__ == "TurnEnded"]
+        self.assertEqual(1, len(ended))
+        self.assertEqual("ok", ended[0].result.status)
+        self.assertEqual("Prompt updated.", ended[0].result.text)
+        self.assertEqual(3, llm.call_count)
+        self.assertIn("read_prompt", llm.tool_names_per_call[0])
+        self.assertIn("edit_prompt", llm.tool_names_per_call[0])
+        history = agent.conversation_history
+        assistant_calls = [
+            call
+            for message in history
+            if message.get("role") == "assistant"
+            for call in message.get("tool_calls", [])
+        ]
+        tool_messages = [message for message in history if message.get("role") == "tool"]
+        self.assertEqual(
+            ["read_prompt", "edit_prompt"],
+            [call["function"]["name"] for call in assistant_calls],
+        )
+        self.assertEqual(
+            ["read_prompt", "edit_prompt"],
+            [message.get("name") for message in tool_messages],
+        )
+
+    async def test_prompt_edit_guard_blocks_read_only_termination_but_allows_analysis(self):
+        guard = build_prompt_edit_guard()
+        self.assertTrue(prompt_edit_requested("Please update the current prompt by adding warm light."))
+        self.assertFalse(prompt_edit_requested("How should I improve the current prompt?"))
+        guard._required = True
+        guard._read_succeeded = True
+        decision = guard._termination_vote(None)
+        self.assertFalse(decision.should_stop)
+        guard._edited = True
+        self.assertFalse(guard._termination_vote(None).should_stop)
+
+    async def test_native_prompt_edit_guard_rejects_read_only_completion(self):
+        broker = ForgeToolBroker()
+        llm = NativeReadThenProseLLM(edit_after_prose=False)
+        with tempfile.TemporaryDirectory() as directory:
+            creature = Path(directory)
+            (creature / "config.yaml").write_text(
+                """name: loom_guard_contract
+version: "1.0"
+controller:
+  tool_format: native
+system_prompt: "Use the available Forge tools when needed."
+input:
+  type: none
+output:
+  type: stdout
+""",
+                encoding="utf-8",
+            )
+            agent = await Agent.build(
+                creature,
+                llm=llm,
+                io="headless",
+                tools=initial_tools(broker, forge_bridge=True),
+                plugins=[build_prompt_edit_guard()],
+                strict=True,
+            )
+            await agent.start()
+            try:
+                task = asyncio.create_task(agent.run("Update the current prompt.", raise_on_error=False))
+                read = await self._wait_for_request(broker)
+                self.assertEqual("read_prompt", read["payload"]["tool"])
+                await broker.reply(
+                    read["payload"]["request_id"],
+                    {"ok": True, "target": "txt2img", "prompt": "subject", "prompt_hash": "fnv1a:old"},
+                )
+                result = await asyncio.wait_for(task, timeout=15)
+            finally:
+                await agent.stop()
+
+        self.assertNotEqual("ok", result.status)
+        self.assertFalse(any(event["payload"]["tool"] == "edit_prompt" for event in broker.events_after(0) if event["type"] == "tool_request"))
+
+    async def test_native_prompt_edit_guard_continues_from_read_only_prose_to_mutation(self):
+        broker = ForgeToolBroker()
+        llm = NativeReadThenProseLLM(edit_after_prose=True)
+        with tempfile.TemporaryDirectory() as directory:
+            creature = Path(directory)
+            (creature / "config.yaml").write_text(
+                """name: loom_guard_recovery_contract
+version: "1.0"
+controller:
+  tool_format: native
+system_prompt: "Use the available Forge tools when needed."
+input:
+  type: none
+output:
+  type: stdout
+""",
+                encoding="utf-8",
+            )
+            agent = await Agent.build(
+                creature,
+                llm=llm,
+                io="headless",
+                tools=initial_tools(broker, forge_bridge=True),
+                plugins=[build_prompt_edit_guard()],
+                strict=True,
+            )
+            await agent.start()
+            try:
+                task = asyncio.create_task(agent.run("Update the current prompt.", raise_on_error=False))
+                read = await self._wait_for_request(broker)
+                await broker.reply(
+                    read["payload"]["request_id"],
+                    {"ok": True, "target": "txt2img", "prompt": "subject", "prompt_hash": "fnv1a:old"},
+                )
+                edit = await self._wait_for_request(broker, expected_count=2)
+                self.assertEqual("edit_prompt", edit["payload"]["tool"])
+                await broker.reply(edit["payload"]["request_id"], {"ok": True, "changed": True})
+                result = await asyncio.wait_for(task, timeout=15)
+            finally:
+                await agent.stop()
+
+        self.assertEqual("ok", result.status)
+
+    async def test_native_prompt_edit_guard_rereads_after_stale_mutation(self):
+        broker = ForgeToolBroker()
+        llm = NativeReadThenProseLLM(retry_after_failure=True)
+        with tempfile.TemporaryDirectory() as directory:
+            creature = Path(directory)
+            (creature / "config.yaml").write_text(
+                """name: loom_guard_retry_contract
+version: "1.0"
+controller:
+  tool_format: native
+system_prompt: "Use the available Forge tools when needed."
+input:
+  type: none
+output:
+  type: stdout
+""",
+                encoding="utf-8",
+            )
+            agent = await Agent.build(
+                creature,
+                llm=llm,
+                io="headless",
+                tools=initial_tools(broker, forge_bridge=True),
+                plugins=[build_prompt_edit_guard()],
+                strict=True,
+            )
+            await agent.start()
+            try:
+                task = asyncio.create_task(agent.run("Update the current prompt.", raise_on_error=False))
+
+                first_read = await self._wait_for_request(broker)
+                self.assertEqual("read_prompt", first_read["payload"]["tool"])
+                await broker.reply(
+                    first_read["payload"]["request_id"],
+                    {"ok": True, "target": "txt2img", "prompt": "subject", "prompt_hash": "fnv1a:old"},
+                )
+
+                stale_edit = await self._wait_for_request(broker, expected_count=2)
+                self.assertEqual("edit_prompt", stale_edit["payload"]["tool"])
+                self.assertEqual("fnv1a:old", stale_edit["payload"]["arguments"]["base_hash"])
+                await broker.reply(
+                    stale_edit["payload"]["request_id"],
+                    {"ok": False, "error": "stale_prompt_hash", "current_hash": "fnv1a:new"},
+                )
+
+                second_read = await self._wait_for_request(broker, expected_count=3)
+                self.assertEqual("read_prompt", second_read["payload"]["tool"])
+                await broker.reply(
+                    second_read["payload"]["request_id"],
+                    {"ok": True, "target": "txt2img", "prompt": "subject", "prompt_hash": "fnv1a:new"},
+                )
+
+                retried_edit = await self._wait_for_request(broker, expected_count=4)
+                self.assertEqual("edit_prompt", retried_edit["payload"]["tool"])
+                self.assertEqual("fnv1a:new", retried_edit["payload"]["arguments"]["base_hash"])
+                await broker.reply(retried_edit["payload"]["request_id"], {"ok": True, "changed": True})
+                result = await asyncio.wait_for(task, timeout=15)
+            finally:
+                await agent.stop()
+
+        self.assertEqual("ok", result.status)
+        self.assertEqual("Prompt updated.", result.text)
+        self.assertEqual(5, llm.call_count)
+        requests = [event for event in broker.events_after(0) if event["type"] == "tool_request"]
+        self.assertEqual(
+            ["read_prompt", "edit_prompt", "read_prompt", "edit_prompt"],
+            [event["payload"]["tool"] for event in requests],
+        )
 
     async def test_late_reply_is_rejected(self):
         broker = ForgeToolBroker()

@@ -9,11 +9,9 @@ skill_mode: dynamic
 skills:
   - danbooru-prompting
 
-tools:
-  - name: danbooru
-    type: package
-    module: kohaku_loom.kt_tools
-    class: DanbooruTool
+# Optional native tools are injected session-locally by the Loom sidecar
+# bootstrap, so their schemas do not enter the initial native request.
+tools: []
 
 input:
   type: none

@@ -418,7 +418,6 @@ python -m coverage report --fail-under=70
 node --check javascript/kohaku_loom.js
 node --check javascript/kohaku_loom_01_i18n.js
 node --check javascript/kohaku_loom_02_resources.js
-node --check javascript/kohaku_loom_025_yolo.js
 node --check javascript/kohaku_loom_03_profiles.js
 node --check javascript/kohaku_loom_07_host.js
 node --check javascript/kohaku_loom_90_ui.js

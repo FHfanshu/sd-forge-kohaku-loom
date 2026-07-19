@@ -1,5 +1,146 @@
 # Audit Log
 
+## 2026-07-19 Attachment Recovery, Direct Forge Edits, and Compact Chat Activity
+
+- Visible problems: two attached images could be rejected by a hard-coded English
+  total-size error with no usable recovery guidance; reopening chat did not have a
+  tested latest-message scroll contract; tool activity was separated from the
+  response it produced; and prompt mutations still exposed a removed YOLO/
+  confirmation-mode model.
+- Attachment fix: `frontend/src/attachments.ts` now raises structured
+  `AttachmentError` values with size details. `frontend/src/components/Surface.svelte`
+  localizes source, optimized, read, data, and combined-limit failures, reports
+  current and maximum MB values, and restores the draft and attachments after a
+  rejected send. The 16 MiB total request budget remains enforced.
+- Chat fix: tool results are grouped above their following assistant response;
+  opening the chat follows the latest message, while streaming only follows when
+  the user remains near the bottom. `ToolCard.svelte` exposes the latest successful
+  Forge mutation as an undo action.
+- Forge/tool contract fix: `read_prompt` and `edit_prompt` are initial native
+  tools; only resource, teacher, Danbooru, and prompt-knowledge groups remain
+  optional. Removed the YOLO browser script, mode PATCH path, permission state,
+  confirmation flow, obsolete approval styles/translations, and stale tests/docs.
+  `agent_mode` remains accepted and ignored at session open for compatibility.
+  Prompt hash guards and read-before-write validation remain unchanged. Successful
+  Forge mutations save a real host state snapshot; the frontend keeps a stack of
+  up to 32 snapshots and only the newest mutation is undoable at a time.
+- Regression coverage: attachment structured errors and localized recovery,
+  response/tool ordering, reopen/manual-scroll behavior, direct mutation undo,
+  stacked undo, initial native tool disclosure, stale-hash reread recovery, and
+  removal of permission-mode UI are covered by focused tests.
+- Verification: managed `.loom/venv/Scripts/python.exe tools/test_runner.py
+  --max-skips 20 --require-kt` passed 240 tests with 0 skips; system
+  `python -m unittest discover -s tests` passed 240 tests with 30 expected
+  environment-dependent skips. Vitest coverage passed 146 tests at 85.13%
+  statements/lines, 72.44% branches, and 75.25% functions; `pnpm run check`
+  reported 0 Svelte errors and warnings; all 6 Playwright E2E tests passed.
+  Vite built the generated UI bundle, and `bundle:size` reported 602,204 raw /
+  170,428 gzip bytes, below the 350,000 gzip budget. All seven browser scripts
+  passed `node --check`; `python -m compileall -q kohaku_loom scripts install.py
+  tools` and `git diff --check` passed. Existing npm `store-dir`, Starlette/httpx,
+  and Git line-ending warnings remained non-fatal.
+
+## 2026-07-19 Regeneration Feedback and Gemini Empty-Output Recovery
+
+- Visible symptoms: clicking the final assistant response's Regenerate action
+  appeared to do nothing, and a Gemini native stream with reasoning/usage but no
+  visible text or function call completed as an empty assistant response instead
+  of retrying with privacy recovery.
+- Root causes: the frontend called the synchronous branch-regeneration endpoint
+  without entering request/working state, disabling conflicting controls, or
+  surfacing a rejected promise. The Gemini native provider returned normally at
+  stream EOF without enforcing the same non-empty result invariant used by the
+  non-stream Gemini path.
+- Frontend fix: `frontend/src/runtime-regenerate.ts`,
+  `frontend/src/runtime-controller.ts`, and
+  `frontend/src/components/Surface.svelte` now treat regeneration as one
+  controlled branch operation. The UI shows a generating state, prevents
+  duplicate regeneration, branch selection, queue submission, and false local
+  cancellation while the synchronous server operation runs, reports failures in
+  the chat window, and refreshes from the authoritative sidecar conversation.
+  A retry after the server accepted regeneration but conversation refresh failed
+  reuses the same operation ID, so the sidecar replays the result instead of
+  creating another branch. Updated localized progress text and regenerated
+  `javascript/kohaku_loom_90_ui.js`.
+- Provider fix: `kohaku_loom/kt_providers.py` now treats a Gemini native stream
+  with neither visible text nor native tool calls as an error. Recovery emits the
+  existing provider-retry event, forces sensitive placeholder sanitization when
+  the profile had disabled it, lowers configured reasoning to LOW, and retries
+  through the bounded provider retry loop. Repeated empty responses terminate
+  with an explicit `empty visible output` error rather than a silent blank
+  success. `tests/test_kt_gemini_recovery.py` verifies both recovered and
+  exhausted paths without recording raw private content.
+- Verification: managed
+  `.loom/venv/Scripts/python.exe tools/test_runner.py --max-skips 20 --require-kt`
+  passed 244 tests with 0 skips; system `python -m unittest discover -s tests`
+  passed 244 tests with 32 environment-dependent skips. Svelte check reported 0
+  errors and 0 warnings; Vitest and coverage runs passed 145 tests with 85.37%
+  statements/lines, 72.5% branches, and 75.04% functions; all 6 mock Chromium
+  E2E tests passed. Vite transformed 4,019 modules and produced a 604,969-byte
+  raw / 170,684-byte gzip bundle, below the 350,000-byte gzip budget. All eight
+  browser scripts passed `node --check`; `python -m compileall -q kohaku_loom
+  scripts install.py tools` passed; `git diff --check` reported only existing
+  line-ending warnings. Existing npm `store-dir` and Starlette/httpx deprecation
+  warnings remained non-fatal.
+
+## 2026-07-19 Prompt Mutation Guard Recovery and Compact Tool UX
+
+- Root causes: native prompt-edit turns could terminate after a successful
+  `read_prompt` without applying the explicitly requested mutation, and the
+  recovery contract did not verify rereading after a stale mutation hash. Tool
+  results also occupied full message cards, the streaming reasoning path did
+  not exercise sanitized Markdown, and the frontend E2E fixture still modeled
+  the removed YOLO confirmation dialog.
+- Backend fix: `kohaku_loom/sidecar/prompt_edit_guard.py` now keeps explicit
+  mutation requests open after read-only prose, requires a successful
+  `edit_prompt` or `initialize_prompt`, and resets the read requirement after a
+  failed mutation so the next attempt must reread current state. The native
+  contract in `tests/test_loom_kt_contract.py` covers read-only rejection,
+  prose-to-mutation continuation, and `read_prompt -> stale edit -> read_prompt
+  -> new-hash edit` recovery. Existing Forge hash guards remain authoritative.
+- Frontend fix: `frontend/src/components/ToolCard.svelte` and
+  `frontend/src/components/Surface.svelte` fold tool results into compact
+  assistant-adjacent cards, while reasoning streams through the sanitized
+  Markdown path. `frontend/src/stores/ui.ts` persists a YOLO default and the
+  permission button toggles directly; normal-mode tool approval stays inside
+  the chat window without a page backdrop. The mock host E2E fixture now
+  implements the session-mode PATCH used by that toggle.
+- Changed files: native prompt guard, native contract tests, prompt guidance,
+  tool disclosure/Forge tool wiring, Surface/Markdown/UI styles and stores,
+  focused frontend tests, `frontend/tests/e2e/mock-host.spec.ts`, generated
+  `javascript/kohaku_loom_90_ui.js`, and this audit entry.
+- Verification: managed `.loom/venv/Scripts/python.exe -m unittest discover -s
+  tests` passed 238 tests with 0 skips; managed
+  `.loom/venv/Scripts/python.exe tools/test_runner.py --max-skips 20
+  --require-kt` passed 238 tests with 0 skips. Pinned Node 22.17.0 / pnpm
+  10.12.4 checks reported 0 Svelte errors or warnings, Vitest passed 141
+  tests, Vite built 4,018 modules, the bundle-size check reported 603,295 raw
+  bytes and 170,252 gzip bytes, and all 6 mock Chromium E2E tests passed. The
+  eight ordered browser scripts passed `node --check`; `git diff --check`
+  passed. The existing npm `store-dir` warning and Starlette/httpx deprecation
+  warning remained non-fatal.
+
+## 2026-07-19 Native Tool-Round and Terminal-Event Lifecycle Guard
+
+- Root cause: the sidecar correctly delegated native tool continuation to
+  KohakuTerrarium, but its event consumer had no explicit terminal break after
+  publishing `turn_ended`. The pinned runtime already guarantees
+  `TurnEnded` is final, but the missing guard left the local lifecycle contract
+  implicit and untested. Native disclosure also lacked an end-to-end contract
+  proving that loading the mutation group, reading the prompt, applying a
+  hash-guarded edit, and producing final text remain one logical turn.
+- Changed files: `kohaku_loom/sidecar/runtime.py` now stops consuming the stream
+  immediately after `TurnEnded`; `tests/test_loom_runtime.py` rejects a synthetic
+  post-terminal event and asserts one terminal event; `tests/test_loom_kt_contract.py`
+  covers native `load_tool_group -> read_prompt -> edit_prompt -> final response`
+  continuation and matching native tool-result messages; `AUDIT.md` records this
+  boundary change.
+- Verification: managed `.loom/venv/Scripts/python.exe -m unittest discover -s
+  tests` passed 234 tests with 0 skips; managed
+  `.loom/venv/Scripts/python.exe tools/test_runner.py --max-skips 20 --require-kt`
+  passed 234 tests with 0 skips. The existing Starlette/httpx deprecation warning
+  remained non-fatal.
+
 ## 2026-07-18 Recoverable Svelte Host Bootstrap and Server-Authoritative Sessions
 
 - Visible problem: the generated Svelte bundle synchronously required a complete
@@ -703,3 +844,78 @@ Goal: split oversized backend and browser files, keep files under 1000 lines, an
   checks. The bundle measured 603,923 raw / 170,234 gzip bytes. Residual output
   was limited to the existing Starlette `httpx` deprecation, npm `store-dir`,
   and Git line-ending warnings.
+
+## 2026-07-19 Profile Secret Restart and Message Edit Recovery
+
+- Visible symptoms: restarting Forge through `webui-user.bat` could make a
+  previously saved API key disappear, and editing a user message created in the
+  current browser session always failed with "The message is no longer
+  available to edit" before reaching the sidecar.
+- Root causes: the host's first profile synchronization treated browser
+  `localStorage` as authoritative and imported it into the sidecar, so an empty
+  or origin-specific browser profile set could delete the DPAPI-encrypted
+  server secret. Live user messages were also appended before authoritative
+  conversation replay and therefore lacked `branchTurnIndex`, while the edit
+  path incorrectly required that optional server field.
+- Changed `javascript/kohaku_loom_07_host.js` to read and adopt an existing
+  sidecar profile state before allowing browser-to-sidecar imports. The browser
+  retains only `has_api_key`; plaintext keys remain absent from local storage.
+  Concurrent startup syncs are serialized, and a key entered while the sidecar
+  GET is pending takes precedence over the older persisted state.
+  Changed `frontend/src/runtime-controller.ts` to reload the adopted profile
+  state and to derive a missing edit turn index from the stable user-message
+  position while preserving explicit branch metadata when available.
+  Regenerated `javascript/kohaku_loom_90_ui.js`.
+- Regression coverage: `tests/test_host_bridge.py` verifies startup performs a
+  profile GET and cannot overwrite an existing sidecar secret-bearing state,
+  while a newly entered plaintext key bypasses restore and is imported,
+  including when it is entered during the startup GET;
+  `frontend/tests/runtime-controller.test.ts` verifies a live user message with
+  no `branchTurnIndex` reaches native edit-and-rerun with the correct turn and
+  user positions, then restores branch version metadata.
+- Verification: `python -m compileall -q kohaku_loom scripts install.py tools`
+  passed; `python -m unittest discover -s tests` passed 241 tests with 29
+  environment-dependent skips; focused browser profile tests passed 23 tests.
+  Under isolated Node 22.17.0 / pnpm 10.12.4, Svelte check reported 0 errors
+  and 0 warnings, Vitest coverage passed 141 tests at 85.09% statements/lines,
+  72.32% branches, and 74.78% functions, and the focused controller/settings
+  run passed 49 tests. Vite transformed 4,018 modules; the generated bundle
+  measured 603,326 raw / 170,264 gzip bytes. Browser script syntax checks
+  passed. Residual output was limited to the existing npm `store-dir` and Git
+  line-ending warnings.
+
+## 2026-07-19 Minimal YOLO Prompt Tool Surface
+
+- Visible problem: YOLO sessions exposed duplicate large txt2img mutation
+  schemas while the useful `edit_prompt` tool remained behind
+  `load_tool_group`. Dynamically loaded resource, teacher, Danbooru, skill, and
+  provider tools also accumulated for the rest of the session, leaving the
+  model with an unclear and unnecessarily large tool list.
+- Root cause: agent-mode synchronization added
+  `read_txt2img_state`/`apply_txt2img_patch` without replacing the bootstrap or
+  previously disclosed groups. KohakuTerrarium also automatically restored its
+  generic `skill` tool whenever the system prompt refreshed.
+- Changed `kohaku_loom/sidecar/tool_disclosure.py` and
+  `kohaku_loom/sidecar/runtime.py` so entering YOLO atomically replaces every
+  model-visible tool with exactly `read_prompt` and `edit_prompt`. Hidden
+  bootstrap, skill, and provider-native tools are restored when returning to
+  normal mode. The restoration cache accepts only a real dictionary so loose
+  test doubles or malformed agent state cannot be mistaken for saved tools.
+  Changed `kohaku_loom/forge_tools.py` to remove
+  `initialize_prompt` from the mutation group and give the two YOLO tools an
+  explicit read-then-edit contract. The legacy browser-only txt2img tools remain
+  executable for compatibility but are no longer disclosed to the agent.
+- Changed `creatures/loom/prompts/system.md` to state that the complete YOLO
+  tool set is `read_prompt` and `edit_prompt`, and that explicit mutations must
+  follow `read_prompt -> edit_prompt` without permission prompts or obsolete
+  tool discovery. Updated focused runtime, prompt, disclosure, and managed KT
+  contract tests.
+- Verification: the managed Python suite was run in isolation and passed all
+  242 tests with 0 skips, including the non-skippable KT contract;
+  `tools/test_runner.py --max-skips 20 --require-kt` also passed 242 tests with
+  0 skips. System Python passed 242 tests with 30 environment-dependent skips.
+  Focused Node browser profile tests passed 23 tests,
+  `python -m compileall -q kohaku_loom scripts install.py tools` passed, the
+  legacy YOLO browser script passed `node --check`, and `git diff --check`
+  reported only existing line-ending warnings. The Starlette/httpx deprecation
+  warning remained non-fatal.

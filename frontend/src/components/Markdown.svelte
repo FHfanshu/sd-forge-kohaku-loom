@@ -4,7 +4,7 @@
   import { onDestroy, tick } from "svelte";
   import { useI18nStore } from "../stores/i18n";
 
-  let { content, streaming = false }: { content: string; streaming?: boolean } = $props();
+  let { content, streaming = false, renderStreamingMarkdown = false }: { content: string; streaming?: boolean; renderStreamingMarkdown?: boolean } = $props();
   let markdownElement = $state<HTMLDivElement>();
   const resetTimers = new Map<HTMLButtonElement, number>();
   const html = $derived(DOMPurify.sanitize(marked.parse(content || " ", { gfm: true }) as string));
@@ -86,8 +86,10 @@
   });
 </script>
 
-{#if streaming}
+{#if streaming && !renderStreamingMarkdown}
   <div class="kl-markdown kl-markdown-streaming">{content}</div>
+{:else if streaming}
+  <div class="kl-markdown kl-markdown-streaming">{@html html}</div>
 {:else}
   <div bind:this={markdownElement} class="kl-markdown">{@html html}</div>
 {/if}

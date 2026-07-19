@@ -182,7 +182,6 @@ class ForgeToolBroker:
                 "operation_id": request.operation_id,
                 "fingerprint": request.fingerprint,
                 "bridge_id": request.bridge_id,
-                "agent_mode": "yolo" if request.arguments.get("_yolo_authorized") is True else "normal",
             }
             for request in self._pending.values()
             if not request.future.done()
@@ -199,7 +198,6 @@ class ForgeToolBroker:
             "operation_id": request.operation_id,
             "fingerprint": request.fingerprint,
             "bridge_id": request.bridge_id,
-            "agent_mode": "yolo" if request.arguments.get("_yolo_authorized") is True else "normal",
         }
 
     async def subscribe(self, after_sequence: int = 0, keepalive: float = 15.0) -> AsyncIterator[dict[str, Any] | None]:

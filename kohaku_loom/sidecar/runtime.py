@@ -19,8 +19,6 @@ from kohaku_loom.sidecar.session_metadata import SessionMetadataQueue, metadata_
 
 
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-_AGENT_MODES = {"normal", "yolo"}
-_YOLO_TOOL_NAMES = {"read_txt2img_state", "apply_txt2img_patch"}
 _LOOM_SKILL_NAMES = {"danbooru-prompting"}
 
 
@@ -51,7 +49,6 @@ class ActiveSession:
     provider: Any
     resumed: bool
     opened_at: float
-    agent_mode: str = "normal"
     forge_bridge: bool = True
     branch_view: dict[int, int] | None = None
 
@@ -188,7 +185,7 @@ class LoomSidecarRuntime:
             if self.active is not None:
                 raise RuntimeError("A Loom session is already active")
             session_id = self._validated_session_id(session_id or uuid.uuid4().hex)
-            agent_mode = self._validated_agent_mode(agent_mode)
+            del agent_mode
             path = self.paths.sessions / f"{session_id}.kohakutr"
             if resume and not path.is_file():
                 raise FileNotFoundError(path)
@@ -216,11 +213,9 @@ class LoomSidecarRuntime:
                 provider=resolved_provider,
                 resumed=resume,
                 opened_at=time.time(),
-                agent_mode=agent_mode,
                 forge_bridge=forge_bridge,
                 branch_view={},
             )
-            self._sync_agent_mode_tools(self.active)
             self.broker.begin_session(session_id)
             queue = self._queue(self.active)
             recovered = queue.recover_interrupted()
@@ -238,19 +233,6 @@ class LoomSidecarRuntime:
             if resume:
                 self.session_metadata(session_id)
             return payload
-
-    async def set_agent_mode(self, session_id: str, agent_mode: str) -> dict[str, Any]:
-        async with self._lock:
-            session = self._active_session(session_id)
-            mode = self._validated_agent_mode(agent_mode)
-            if session.agent_mode != mode:
-                session.agent_mode = mode
-                self._sync_agent_mode_tools(session)
-                await self.events.publish(
-                    "agent_mode_changed",
-                    {"session_id": session.session_id, "agent_mode": mode},
-                )
-            return self._session_payload(session)
 
     async def close_session(self) -> None:
         async with self._lock:
@@ -456,13 +438,11 @@ class LoomSidecarRuntime:
     async def _build_session(self, provider: Any, path: Path, *, resume: bool, forge_bridge: bool):
         from kohakuterrarium import Terrarium
         from kohakuterrarium.terrarium.drive.config import DriveRuntimeConfig
-        from kohaku_loom.forge_tools import forge_tools
+        from kohaku_loom.sidecar.prompt_edit_guard import build_prompt_edit_guard
+        from kohaku_loom.sidecar.tool_disclosure import initial_tools
 
         drive_config = DriveRuntimeConfig(enabled=False)
-        tools = forge_tools(
-            self.broker,
-            mode_provider=lambda: self.active.agent_mode if self.active else "normal",
-        ) if forge_bridge else []
+        tools = initial_tools(self.broker, forge_bridge=forge_bridge)
         if resume:
             engine = await Terrarium.resume(
                 str(path),
@@ -477,6 +457,7 @@ class LoomSidecarRuntime:
             creature = creatures[0]
             for tool in tools:
                 creature.agent.add_tool(tool)
+            await creature.agent.add_plugin(build_prompt_edit_guard())
         else:
             engine = Terrarium(
                 pwd=str(self.paths.root.parent),
@@ -492,6 +473,7 @@ class LoomSidecarRuntime:
                     strict=True,
                     session=path,
                     tools=tools,
+                    plugins=[build_prompt_edit_guard()],
                     start=False,
                 )
                 await engine.start(creature)
@@ -501,31 +483,6 @@ class LoomSidecarRuntime:
         await creature.wait_restoration_ready()
         restrict_agent_skills(creature.agent)
         return engine, creature
-
-    def _sync_agent_mode_tools(self, session: ActiveSession) -> None:
-        try:
-            from kohaku_loom.forge_tools import yolo_forge_tools
-        except ModuleNotFoundError:
-            # Unit fakes can exercise the sidecar without installing the
-            # managed KohakuTerrarium environment. Real sessions have
-            # already imported it while building the creature.
-            return
-
-        agent = session.creature.agent
-        if not getattr(session, "forge_bridge", True):
-            return
-        if session.agent_mode == "yolo":
-            for tool in yolo_forge_tools(self.broker, mode_provider=lambda: session.agent_mode):
-                agent.add_tool(tool)
-            return
-        changed = False
-        for name in _YOLO_TOOL_NAMES:
-            changed = agent.registry.unregister_tool(name) or changed
-            executor_tools = getattr(agent.executor, "_tools", None)
-            if isinstance(executor_tools, dict):
-                changed = executor_tools.pop(name, None) is not None or changed
-        if changed:
-            agent.refresh_system_prompt()
 
     def _build_provider(self, profile_id: str):
         from kohaku_loom.kt_providers import build_profile_provider
@@ -629,6 +586,7 @@ class LoomSidecarRuntime:
                             {"turn_id": turn_id, "usage": result.usage},
                         )
                     await self.events.publish("turn_ended", terminal)
+                    break
         except asyncio.CancelledError:
             terminal = {"turn_id": turn_id, "status": "interrupted", "error": "turn task cancelled"}
             self._turn_snapshot["terminal"] = dict(terminal)
@@ -964,13 +922,6 @@ class LoomSidecarRuntime:
         return value
 
     @staticmethod
-    def _validated_agent_mode(value: str) -> str:
-        mode = str(value or "normal").strip().lower()
-        if mode not in _AGENT_MODES:
-            raise ValueError("agent_mode must be 'normal' or 'yolo'")
-        return mode
-
-    @staticmethod
     def _session_payload(session: ActiveSession) -> dict[str, Any]:
         branch_view = getattr(session, "branch_view", {})
         if not isinstance(branch_view, dict):
@@ -981,6 +932,5 @@ class LoomSidecarRuntime:
             "path": str(session.path),
             "resumed": session.resumed,
             "opened_at": session.opened_at,
-            "agent_mode": str(getattr(session, "agent_mode", "normal") or "normal"),
             "branch_view": dict(branch_view),
         }

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "../src/stores/chat";
+import { useUiStore } from "../src/stores/ui";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   useChatStore.getState().reset();
+  useUiStore.getState().reset();
 });
 
 describe("chat store cancellation", () => {

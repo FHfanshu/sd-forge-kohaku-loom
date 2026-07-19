@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from kohakuterrarium.modules.tool.base import BaseTool, ExecutionMode, ToolResult
 
@@ -69,6 +69,9 @@ class DanbooruTool(BaseTool):
         "required": ["action"],
     }
 
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return dict(self.parameters)
+
     async def _execute(self, args: dict[str, Any], **_: Any) -> ToolResult:
         args = _compat_danbooru_arguments(args)
         action = str(args.get("action") or "").strip()
@@ -128,6 +131,9 @@ class PromptSkillTool(BaseTool):
         "required": ["name"],
     }
 
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return dict(self.parameters)
+
     async def _execute(self, args: dict[str, Any], **_: Any) -> ToolResult:
         try:
             value = await asyncio.to_thread(load_prompt_skill, str(args.get("name") or ""))
@@ -137,3 +143,73 @@ class PromptSkillTool(BaseTool):
             return ToolResult(output=output)
         except Exception as error:
             return ToolResult(output=str(error), error=type(error).__name__)
+
+
+class LoadToolGroupTool(BaseTool):
+    """Expose the fixed session-local native tool disclosure catalog."""
+
+    needs_context = True
+
+    def __init__(
+        self,
+        load_group: Callable[[Any, str], dict[str, Any]],
+        groups: Mapping[str, Any],
+    ):
+        super().__init__()
+        self._load_group = load_group
+        self._groups = tuple(sorted(str(group) for group in groups))
+        self.parameters = {
+            "type": "object",
+            "properties": {
+                "group": {
+                    "type": "string",
+                    "enum": list(self._groups),
+                    "description": "Fixed optional Loom capability group to disclose.",
+                },
+            },
+            "required": ["group"],
+            "additionalProperties": False,
+        }
+
+    @property
+    def tool_name(self) -> str:
+        return "load_tool_group"
+
+    @property
+    def description(self) -> str:
+        return "Load one fixed optional Loom tool group for this session."
+
+    @property
+    def execution_mode(self) -> ExecutionMode:
+        return ExecutionMode.DIRECT
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return dict(self.parameters)
+
+    async def _execute(self, args: dict[str, Any], context: Any = None, **_: Any) -> ToolResult:
+        normalized = unwrap_object_content(args)
+        group = str(normalized.get("group") or "").strip().lower()
+        if group not in self._groups:
+            return ToolResult(
+                output=json.dumps(
+                    {
+                        "ok": False,
+                        "error": "unknown_tool_group",
+                        "group": group,
+                        "available_groups": list(self._groups),
+                    },
+                    ensure_ascii=False,
+                ),
+                error="unknown_tool_group",
+            )
+        agent = getattr(context, "agent", None)
+        if agent is None:
+            return ToolResult(output='{"ok":false,"error":"agent_context_unavailable"}', error="agent_context_unavailable")
+        try:
+            result = self._load_group(agent, group)
+        except Exception as error:
+            return ToolResult(output=str(error), error="tool_group_load_failed")
+        output = json.dumps(result, ensure_ascii=False)
+        if result.get("ok") is False:
+            return ToolResult(output=output, error=str(result.get("error") or "tool_group_unavailable"))
+        return ToolResult(output=output)

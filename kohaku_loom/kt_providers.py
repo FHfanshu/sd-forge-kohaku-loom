@@ -19,6 +19,8 @@ from kohakuterrarium.llm.recovery import ErrorClass, classify_openai_error
 from .assistant_gemini import (
     _PromptSanitizer,
     _gemini_client,
+    _gemini_empty_response_detail,
+    _gemini_low_reasoning_body,
     _gemini_reasoning_text,
     _gemini_response_parts,
     _gemini_sdk_config,
@@ -258,32 +260,32 @@ class GeminiNativeProvider(StreamObserverMixin, BaseLLMProvider):
         self._last_usage = {}
         self._last_assistant_extra_fields = {}
         sanitizer = _PromptSanitizer(bool(self.profile.get("sanitize_sensitive", True)))
-        body = self._request_body(sanitizer.sanitize_messages(messages), tools)
-        config = _gemini_sdk_config(body)
         endpoints = [str(self.profile["endpoint"]), *(self.profile.get("fallback_endpoints") or [])]
         last_error: Exception | None = None
         partial = ""
         recovered_tool_calls: dict[str, NativeToolCall] = {}
+        empty_recovery = False
         for attempt in range(6):
             endpoint = endpoints[attempt % len(endpoints)]
             client = _gemini_client(endpoint, str(self.profile.get("api_key") or ""), int(self.profile.get("timeout", 120)))
             tool_calls: dict[str, NativeToolCall] = {}
             reasoning_parts: list[str] = []
+            last_data: dict[str, Any] = {}
             try:
+                body = self._request_body(
+                    sanitizer.sanitize_messages(_continuation_messages(messages, partial)),
+                    tools,
+                )
+                if empty_recovery:
+                    body = _gemini_low_reasoning_body(body)
                 stream = await client.aio.models.generate_content_stream(
                     model=self.config.model,
-                    contents=_gemini_sdk_contents(
-                        self._request_body(
-                            sanitizer.sanitize_messages(
-                                _continuation_messages(messages, partial)
-                            ),
-                            tools,
-                        )
-                    ),
-                    config=config,
+                    contents=_gemini_sdk_contents(body),
+                    config=_gemini_sdk_config(body),
                 )
                 async for response in stream:
                     data = _gemini_sdk_dict(response)
+                    last_data = data
                     text, calls = _gemini_response_parts(data)
                     reasoning = _gemini_reasoning_text(data)
                     if reasoning:
@@ -311,6 +313,18 @@ class GeminiNativeProvider(StreamObserverMixin, BaseLLMProvider):
                             "usage",
                             {"usage": dict(self._last_usage)},
                         )
+                if not partial and not tool_calls:
+                    error = RuntimeError(
+                        "Gemini returned empty visible output: " + _gemini_empty_response_detail(last_data)
+                    )
+                    last_error = error
+                    if attempt >= 5:
+                        raise error
+                    if not sanitizer.enabled:
+                        sanitizer = _PromptSanitizer(True)
+                    empty_recovery = True
+                    await self._retry_delay(attempt + 1, error, _CLOUD_RETRY_DELAYS)
+                    continue
                 recovered_tool_calls.update(tool_calls)
                 self._last_tool_calls = list(recovered_tool_calls.values())
                 if reasoning_parts:

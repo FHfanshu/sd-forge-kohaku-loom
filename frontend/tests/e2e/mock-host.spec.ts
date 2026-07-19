@@ -136,7 +136,7 @@ async function installMockHost(page: Page, hostDelayMs = 0): Promise<void> {
         return json({ sessions: [{ session_id: "archived-1", title: "Mock archived chat", preview: "A previous prompt review", modified_at: 1_700_000_000, message_count: 2 }] });
       }
       if (url.pathname === "/kohaku-loom/kt/runtime") return json({ active_session: null, turn_event_sequence: 0, tool_event_sequence: 0, messages: queued ? [queuedMessage()] : [] });
-      if (url.pathname === "/kohaku-loom/kt/sessions/open" && method === "POST") return json({ session: { session_id: "mock-session", profile_id: "mock-remote", agent_mode: "normal" } });
+      if (url.pathname === "/kohaku-loom/kt/sessions/open" && method === "POST") return json({ session: { session_id: "mock-session", profile_id: "mock-remote" } });
       if (url.pathname === "/kohaku-loom/kt/sessions/close" && method === "POST") return empty();
       if (url.pathname === "/kohaku-loom/kt/sessions/mock-session" && method === "GET") return json({ messages: [], queue: [], branches: null });
       if (url.pathname === "/kohaku-loom/kt/turns/events") return sse(Boolean((window as Window & { __mockSlowTurn?: boolean }).__mockSlowTurn), signal);
@@ -417,12 +417,8 @@ test.describe("tablet layout", () => {
     await expect(tabletComposer).toBeFocused();
     await expect(chat.getByText("Mock assistant reply", { exact: true })).toBeVisible();
     await expect(chat.getByRole("button", { name: "Copy" }).first()).toBeVisible();
-    await chat.getByRole("button", { name: "Permission mode: confirmations required" }).click();
-    const directEditCard = chat.locator(".kl-window-dialog-card");
-    await expect(directEditCard).toContainText("Allow direct edits?");
-    await expect(chat.locator(".kl-window-dialog-layer")).toBeVisible();
+    await expect(chat.getByRole("button", { name: /Permission mode/ })).toHaveCount(0);
     expect(await page.locator("body > .kl-dialog-layer").count()).toBe(0);
-    await directEditCard.getByRole("button", { name: "Keep confirmations" }).click();
     await page.getByRole("button", { name: "Open settings" }).click();
     const settings = page.getByRole("dialog", { name: "Model profiles" });
 

@@ -38,7 +38,7 @@ afterEach(() => {
 
 describe("Svelte chat surface", () => {
   it("renders markdown, tools, reasoning, usage, and branches", async () => {
-    render(Surface, { initialOpen: true, messages: mockMessages, actions: {} });
+    const { container } = render(Surface, { initialOpen: true, messages: mockMessages, actions: {} });
     expect(await screen.findByRole("dialog", { name: "Kohaku Loom chat" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open Kohaku Loom" })).not.toBeInTheDocument();
     expect(screen.getByText("middle third is carrying too many competing details")).toBeInTheDocument();
@@ -46,6 +46,9 @@ describe("Svelte chat surface", () => {
     expect(screen.getByText(/642 in/)).toBeInTheDocument();
     expect(screen.getByText("Reasoning trace").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    const tool = container.querySelector("[data-tool-result='true']")!;
+    const response = screen.getByText("middle third is carrying too many competing details");
+    expect(tool.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("keeps tool results and reasoning folded with a one-line reasoning preview", async () => {
@@ -88,6 +91,26 @@ describe("Svelte chat surface", () => {
     expect(screen.queryByText("partial reply")).not.toBeInTheDocument();
   });
 
+  it("renders streaming reasoning as sanitized Markdown", () => {
+    render(Surface, {
+      initialOpen: true,
+      messages: [{
+        id: "reasoning-stream",
+        role: "assistant",
+        content: "Working",
+        reasoning: "**compare** `<script>alert(1)</script>`",
+        status: "streaming",
+        attachments: [],
+        branchIndex: 0,
+        branchCount: 1,
+        createdAt: Date.now(),
+      }],
+      actions: {},
+    });
+    expect(screen.getByText("compare").tagName).toBe("STRONG");
+    expect(document.querySelector("script")).toBeNull();
+  });
+
   it("guides an empty chat and restores the launcher after closing", async () => {
     const user = userEvent.setup();
     render(Surface, { initialOpen: true, actions: {} });
@@ -120,6 +143,35 @@ describe("Svelte chat surface", () => {
     await user.click(screen.getByRole("button", { name: "Open Kohaku Loom" }));
     expect(composer).toHaveValue("Preserve this draft");
     expect(newSession).not.toHaveBeenCalled();
+  });
+
+  it("jumps to the latest message on open but respects manual scrolling during streaming", async () => {
+    const user = userEvent.setup();
+    const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const clientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get() { return this.classList.contains("kl-message-scroll") ? 900 : 0; } });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get() { return this.classList.contains("kl-message-scroll") ? 200 : 0; } });
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    useChatStore.getState().setMessages(mockMessages.map((message) => message.id === "mock-assistant-1" ? { ...message, status: "streaming" } : message));
+    try {
+      const { container } = render(Surface, { actions: {} });
+      await user.click(screen.getByRole("button", { name: "Open Kohaku Loom" }));
+      const scroller = container.querySelector<HTMLElement>(".kl-message-scroll")!;
+      expect(scroller.scrollTop).toBe(900);
+
+      scroller.scrollTop = 300;
+      await fireEvent.scroll(scroller);
+      useChatStore.getState().updateMessage("mock-assistant-1", { content: "Streaming while scrolled up" });
+      expect(scroller.scrollTop).toBe(300);
+
+      scroller.scrollTop = 700;
+      await fireEvent.scroll(scroller);
+      useChatStore.getState().updateMessage("mock-assistant-1", { content: "Streaming near the bottom" });
+      expect(scroller.scrollTop).toBe(900);
+    } finally {
+      if (scrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeight);
+      if (clientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeight);
+    }
   });
 
   it("restores the floating window after a virtual keyboard viewport closes", async () => {
@@ -166,19 +218,15 @@ describe("Svelte chat surface", () => {
     await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "No duplicate session" })));
   });
 
-  it("sends through the typed action interface and switches modes", async () => {
+  it("sends through the typed action interface without a permission mode toggle", async () => {
     const user = userEvent.setup();
     const sendMessage = vi.fn();
     render(Surface, { initialOpen: true, actions: { sendMessage } });
     await user.type(screen.getByRole("textbox", { name: "Message Kohaku Loom" }), "Refine this prompt");
     await user.click(screen.getByRole("button", { name: "Send message" }));
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "Refine this prompt", riskMode: "normal", reasoning: "low" }));
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "Refine this prompt", reasoning: "low" }));
     expect(screen.getByRole("textbox", { name: "Message Kohaku Loom" })).toHaveValue("");
-    await user.click(screen.getByRole("button", { name: "Permission mode: confirmations required" }));
-    expect(screen.getByText("Allow direct edits?").closest(".kl-dialog-card")?.closest(".kl-window")).not.toBeNull();
-    expect(document.querySelector(".kl-dialog-layer")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Allow direct edits" }));
-    expect(screen.getByRole("button", { name: "Permission mode: direct edits" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: /Permission mode/ })).not.toBeInTheDocument();
   });
 
   it("keeps the touch composer focused and sendable while the virtual keyboard is open", async () => {
@@ -230,6 +278,19 @@ describe("Svelte chat surface", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "Edited request", editOf: mockMessages[0].id }));
+  });
+
+  it("shows regeneration progress and reports a recoverable failure", async () => {
+    const user = userEvent.setup();
+    let reject!: (error: Error) => void;
+    const regenerate = vi.fn(() => new Promise<void>((_resolve, rejectPromise) => { reject = rejectPromise; }));
+    render(Surface, { initialOpen: true, messages: mockMessages, actions: { regenerate } });
+
+    await user.click(screen.getByRole("button", { name: "Regenerate" }));
+    expect(regenerate).toHaveBeenCalledWith(mockMessages.at(-1));
+    reject(new Error("regeneration unavailable"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("regeneration unavailable");
   });
 
   it("materializes attached images only when sending and releases accepted previews", async () => {
@@ -311,6 +372,31 @@ describe("Svelte chat surface", () => {
     expect(revoke).not.toHaveBeenCalled();
   });
 
+  it("localizes the combined attachment limit and keeps the draft recoverable", async () => {
+    const user = userEvent.setup();
+    const sendMessage = vi.fn();
+    render(Surface, {
+      initialOpen: true,
+      initialAttachments: [
+        { id: "large-a", name: "first.png", dataUrl: "data:image/png;base64,AQ==", size: 9 * 1024 * 1024 },
+        { id: "large-b", name: "second.png", dataUrl: "data:image/png;base64,Ag==", size: 9 * 1024 * 1024 },
+      ],
+      actions: { sendMessage },
+    });
+    const composer = screen.getByRole("textbox", { name: "Message Kohaku Loom" });
+    await user.type(composer, "Keep this draft");
+
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("18.0 MB");
+    expect(screen.getByRole("alert")).toHaveTextContent("16.0 MB");
+    expect(screen.getByRole("alert")).toHaveTextContent("draft and attachments were kept");
+    expect(composer).toHaveValue("Keep this draft");
+    expect(screen.getByRole("button", { name: "Preview first.png" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview second.png" })).toBeInTheDocument();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("releases previews after removal, replacement, and unmount", async () => {
     const user = userEvent.setup();
     const { revoke } = installObjectUrlMocks();
@@ -389,6 +475,21 @@ describe("Svelte chat surface", () => {
 
     useChatStore.getState().cancelRequest();
     await waitFor(() => expect(screen.queryByText("Running tool…")).not.toBeInTheDocument());
+  });
+
+  it("offers undo on a successful prompt tool result", async () => {
+    const user = userEvent.setup();
+    const undoToolMutation = vi.fn();
+    const messages = [
+      { ...mockMessages[1], tool: { ...mockMessages[1].tool!, name: "edit_prompt", undoable: true, undone: false } },
+      mockMessages[2],
+    ];
+    render(Surface, { initialOpen: true, messages, actions: { undoToolMutation } });
+
+    await user.click(screen.getByText("edit_prompt"));
+    await user.click(screen.getByRole("button", { name: "Undo change" }));
+
+    expect(undoToolMutation).toHaveBeenCalledWith(messages[0]);
   });
 
   it("preserves text typed after an accepted submission", async () => {

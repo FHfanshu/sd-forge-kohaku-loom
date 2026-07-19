@@ -70,7 +70,6 @@ export interface KohakuLoomHostApi {
   listLegacySessions(limit?: number): Promise<unknown>;
   getLegacySession(sessionId: string, limit?: number): Promise<unknown>;
   readonly ktBaseUrl?: string;
-  setAgentMode?(sessionId: string, mode: "normal" | "yolo"): Promise<unknown>;
   getLocaleHints(): unknown;
   subscribeLocaleHints(listener: (hints: unknown) => void): () => void;
   openSettings(): unknown;

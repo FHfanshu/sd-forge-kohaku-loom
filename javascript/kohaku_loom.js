@@ -74,9 +74,7 @@
     const assistantState = {
         promptReads: {},
         promptStyles: null,
-        loadedPromptSkills: {},
-        agentMode: "normal",
-        txt2imgStateRead: null
+        loadedPromptSkills: {}
     };
     const assistantBridgeId = globalThis.crypto?.randomUUID?.() || `loom-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 

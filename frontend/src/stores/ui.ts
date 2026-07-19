@@ -1,5 +1,5 @@
 import { createStore } from "./store";
-import { windowLayoutSchema, type RiskMode, type WindowLayout } from "../contracts";
+import { windowLayoutSchema, type WindowLayout } from "../contracts";
 
 export type LayoutViewport = "desktop" | "mobilePortrait" | "mobileLandscape";
 
@@ -132,7 +132,6 @@ export interface UiStore {
   profileSettingsOpen: boolean;
   activePanel: "chat" | "profiles";
   frontWindow: "chat" | "profiles";
-  riskMode: RiskMode;
   historyOpen: boolean;
   layouts: Record<LayoutViewport, WindowLayout>;
   profileLayouts: Record<LayoutViewport, WindowLayout>;
@@ -142,7 +141,6 @@ export interface UiStore {
   setProfileSettingsOpen(open: boolean): void;
   setActivePanel(panel: UiStore["activePanel"]): void;
   bringToFront(windowName: UiStore["frontWindow"]): void;
-  setRiskMode(mode: RiskMode): void;
   setHistoryOpen(open: boolean): void;
   setLayout(viewport: LayoutViewport, layout: WindowLayout): void;
   setProfileLayout(viewport: LayoutViewport, layout: WindowLayout): void;
@@ -157,7 +155,6 @@ export const useUiStore = createStore<UiStore>((set) => ({
   profileSettingsOpen: false,
   activePanel: "chat",
   frontWindow: "chat",
-  riskMode: "normal",
   historyOpen: false,
   layouts: readStoredLayouts(),
   profileLayouts: readStoredProfileLayouts(),
@@ -174,9 +171,6 @@ export const useUiStore = createStore<UiStore>((set) => ({
   },
   bringToFront(frontWindow) {
     set({ frontWindow, activePanel: frontWindow });
-  },
-  setRiskMode(riskMode) {
-    set({ riskMode });
   },
   setHistoryOpen(historyOpen) {
     set({ historyOpen });
@@ -214,7 +208,6 @@ export const useUiStore = createStore<UiStore>((set) => ({
       profileSettingsOpen: false,
       activePanel: "chat",
       frontWindow: "chat",
-      riskMode: "normal",
       historyOpen: false,
       layouts: DEFAULT_LAYOUTS,
       profileLayouts: DEFAULT_PROFILE_LAYOUTS,

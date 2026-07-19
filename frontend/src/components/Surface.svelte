@@ -4,7 +4,7 @@
     AlertTriangle, Bot, Check, ChevronLeft, ChevronRight,
     CircleStop, Clipboard, Clock3, Copy, FileArchive, FileCog, Grip, History,
     ImagePlus, Pencil, Plus, RefreshCw, Search, Send, Settings2,
-    ShieldAlert, ShieldCheck, Sparkles, SquarePen, Trash2, UserRound, Wrench, X,
+    Sparkles, SquarePen, Trash2, UserRound, X,
     XCircle,
   } from "lucide-svelte";
   import type {
@@ -12,7 +12,7 @@
     ReasoningEffort, SendMessageInput,
   } from "../contracts";
   import {
-    attachmentPreviewUrl,
+    AttachmentError, attachmentPreviewUrl,
     assertAttachmentTotal,
     createImageAttachment,
     displayImageAttachment,
@@ -27,7 +27,6 @@
   import type { LoomRuntimeController } from "../runtime-controller";
   import { connectRuntimeController } from "../runtime-connection";
   import { errorText } from "../runtime-formatters";
-  import { AlertDialog } from "$lib/components/ui/alert-dialog";
   import { useChatStore } from "../stores/chat";
   import { useI18nStore } from "../stores/i18n";
   import { useProfileStore } from "../stores/profiles";
@@ -38,6 +37,7 @@
   import ModelPicker from "./ModelPicker.svelte";
   import ProfileSettings from "./ProfileSettings.svelte";
   import ReasoningPicker from "./ReasoningPicker.svelte";
+  import ToolCard from "./ToolCard.svelte";
   import WorkingIndicator from "./WorkingIndicator.svelte";
 
   interface Props {
@@ -81,7 +81,6 @@
   let notice = $state<string | null>(null);
   let editingMessageId = $state<string | null>(null);
   let preEditDraft = $state<{ text: string; attachments: PreparedImageAttachment[] } | null>(null);
-  let confirm = $state<"yolo" | null>(null);
   let returnToChatAfterSettings = $state(false);
   let controller = $state<LoomRuntimeController | null>(null);
   let controllerReady: Promise<LoomRuntimeController> | null = null;
@@ -89,6 +88,9 @@
   let connectionState = $state<"idle" | "connecting" | "ready" | "failed">("idle");
   let connectionError = $state<string | null>(null);
   let sessionTransition: Promise<void> | null = null;
+  let messageScroll = $state<HTMLDivElement>();
+  let followLatest = $state(true);
+  let wasShellOpen = false;
 
   const visibleMessages = $derived(providedMessages ?? $useChatStore.messages);
   const runtimeUnavailable = $derived(connectionState === "failed" && !Object.keys(actionOverrides).length);
@@ -101,10 +103,28 @@
   const currentLayout = $derived(clampWindowLayout($useUiStore.layouts[kind], viewport, windowMinimum));
   const activeProfile = $derived($useProfileStore.profiles.find((profile) => profile.id === $useProfileStore.activeProfileId && profile.enabled));
   const lastAssistantId = $derived([...visibleMessages].reverse().find((message) => message.role === "assistant")?.id);
+  const branchOperationActive = $derived(Boolean($useChatStore.activeRequestId?.startsWith("regenerate-")));
   const workingPhase = $derived($useRuntimeStore.workingPhase);
   const workingReasoning = $derived([...visibleMessages].reverse().find((message) => message.role === "assistant" && message.status === "streaming" && message.reasoning)?.reasoning ?? "");
-  const pendingToolApproval = $derived($useRuntimeStore.pendingToolApproval);
   const runtimeStarting = $derived($useRuntimeStore.startup === "starting");
+  const renderMessages = $derived.by(() => {
+    const groups: Array<{ message: ChatMessage; tools: ChatMessage[] }> = [];
+    const pendingTools: ChatMessage[] = [];
+
+    for (const message of visibleMessages) {
+      if (message.role === "tool") {
+        pendingTools.push(message);
+        continue;
+      }
+      const group = { message, tools: [] as ChatMessage[] };
+      if (message.role === "assistant" && pendingTools.length) {
+        group.tools.push(...pendingTools.splice(0));
+      }
+      groups.push(group);
+    }
+
+    return { groups, pendingTools };
+  });
 
   function t(key: string, fallback: string): string {
     const value = $useI18nStore.t(key);
@@ -139,6 +159,34 @@
       return t("assistant.runtime.retry", "The Loom runtime is starting or unavailable. Open chat history to retry, or check the sidecar configuration in Model profiles.");
     }
     return value;
+  }
+
+  function megabytes(bytes = 0): string {
+    return (bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 1 : 2);
+  }
+
+  function attachmentErrorText(error: unknown): string {
+    if (!(error instanceof AttachmentError)) return errorText(error);
+    const name = error.details.name ?? t("assistant.attachment.unknown", "This image");
+    const limit = megabytes(error.details.limitBytes);
+    if (error.code === "source_too_large") return tf("assistant.error.image_source_too_large", "{name} is larger than {limit} MB. Choose a smaller image.", { name, limit });
+    if (error.code === "optimized_too_large") return tf("assistant.error.image_optimized_too_large", "{name} is still larger than {limit} MB after optimization. Resize or recompress it and try again.", { name, limit });
+    if (error.code === "total_too_large") return tf("assistant.error.image_total_too_large", "The attached images total {total} MB, above the {limit} MB sending limit. Remove an image or use smaller files; your draft and attachments were kept.", { total: megabytes(error.details.totalBytes), limit });
+    if (error.code === "data_unavailable") return tf("assistant.error.image_data_unavailable", "The image data for {name} is no longer available. Remove it and attach the file again.", { name });
+    return t("assistant.error.image_read_failed", "The image could not be read. Remove it and attach the file again.");
+  }
+
+  function scrollToLatest(force = false): void {
+    if (!messageScroll || (!force && !followLatest)) return;
+    requestAnimationFrame(() => {
+      if (!messageScroll) return;
+      messageScroll.scrollTop = messageScroll.scrollHeight;
+    });
+  }
+
+  function updateFollowLatest(): void {
+    if (!messageScroll) return;
+    followLatest = messageScroll.scrollHeight - messageScroll.scrollTop - messageScroll.clientHeight < 72;
   }
 
   function syncReasoningFromProfile(): void {
@@ -257,11 +305,11 @@
     requestAnimationFrame(() => resizeComposer());
     try {
       await sessionTransition;
+      assertAttachmentTotal(submittedAttachments);
       const input = {
         text: submittedDraft.trim(),
         attachments: await materializeImageAttachments(submittedAttachments),
         displayAttachments: submittedAttachments.map(displayImageAttachment),
-        riskMode: $useUiStore.riskMode,
         reasoning,
         editOf: editingMessageId ?? undefined,
       };
@@ -278,7 +326,7 @@
       if (!attachments.length) attachments = submittedAttachments;
       requestAnimationFrame(() => resizeComposer());
       if (error instanceof DOMException && error.name === "AbortError") return;
-      notice = errorText(error) || t("assistant.error.send", "Message could not be sent. Check the active model and try again.");
+      notice = attachmentErrorText(error) || t("assistant.error.send", "Message could not be sent. Check the active model and try again.");
     }
   }
 
@@ -322,6 +370,7 @@
   }
 
   function stop(): void {
+    if (branchOperationActive) return;
     if (actionOverrides.stopRequest) actionOverrides.stopRequest();
     else if (controller) controller.actions.stopRequest();
     else $useChatStore.cancelRequest();
@@ -342,25 +391,6 @@
       $useUiStore.setShellOpen(true);
       $useUiStore.bringToFront("chat");
     }
-  }
-
-  async function toggleRiskMode(): Promise<void> {
-    if ($useUiStore.riskMode !== "yolo") {
-      confirm = "yolo";
-      return;
-    }
-    try {
-      await action("setRiskMode")("normal");
-      $useUiStore.setRiskMode("normal");
-    } catch (error) { notice = errorText(error); }
-  }
-
-  async function enableYolo(): Promise<void> {
-    try {
-      await action("setRiskMode")("yolo");
-      $useUiStore.setRiskMode("yolo");
-      confirm = null;
-    } catch (error) { notice = errorText(error); }
   }
 
   function useSuggestion(text: string): void {
@@ -453,7 +483,7 @@
       attachments = [...attachments, ...added];
     } catch (error) {
       releaseImageAttachments(added);
-      notice = error instanceof Error ? error.message : t("assistant.error.attach", "The images could not be attached. Try them again.");
+      notice = attachmentErrorText(error) || t("assistant.error.attach", "The images could not be attached. Try them again.");
     }
   }
 
@@ -485,6 +515,24 @@
     await action("copyMessage")(message);
     copiedId = message.id;
     window.setTimeout(() => { if (copiedId === message.id) copiedId = null; }, 1200);
+  }
+
+  async function undoToolMutation(message: ChatMessage): Promise<void> {
+    notice = null;
+    try {
+      await action("undoToolMutation")(message);
+    } catch (error) {
+      notice = errorText(error) || t("assistant.error.undo", "The saved Forge state could not be restored.");
+    }
+  }
+
+  async function regenerateMessage(message: ChatMessage): Promise<void> {
+    notice = null;
+    try {
+      await action("regenerate")(message);
+    } catch (error) {
+      notice = errorText(error) || t("assistant.error.regenerate", "The response could not be regenerated. Try again.");
+    }
   }
 
   function resizeKey(event: KeyboardEvent): void {
@@ -532,6 +580,18 @@
     activeProfile?.parameters.reasoningEffort;
     activeProfile?.capabilities.reasoning;
     syncReasoningFromProfile();
+  });
+
+  $effect(() => {
+    const open = $useUiStore.shellOpen;
+    const latest = visibleMessages.at(-1);
+    latest?.id;
+    latest?.content;
+    latest?.reasoning;
+    latest?.status;
+    $useChatStore.activeRequestId;
+    if (open) scrollToLatest(!wasShellOpen);
+    wasShellOpen = open;
   });
 </script>
 
@@ -603,13 +663,13 @@
         <div class="kl-window-body">
         {#if connectionState === "connecting"}<div class="kl-inline-alert" role="status" aria-live="polite"><RefreshCw size={15} /><span>Connecting to Forge runtime…</span></div>{:else if connectionState === "failed"}<div class="kl-inline-alert" role="alert"><AlertTriangle size={15} /><span>{connectionError}</span><button type="button" onclick={() => void ensureControllerReady().catch(() => undefined)}>Retry</button></div>{:else if runtimeStarting}<div class="kl-inline-alert" role="status" aria-live="polite"><RefreshCw size={15} /><span>{t("assistant.runtime.retry", "The Loom runtime is starting or unavailable. Open chat history to retry, or check the sidecar configuration in Model profiles.")}</span></div>{/if}
         {#if $useRuntimeStore.error || notice}<div class="kl-inline-alert" role="alert"><AlertTriangle size={15} /><span>{runtimeErrorText(notice || $useRuntimeStore.error || "")}</span>{#if notice}<button type="button" onclick={() => notice = null} aria-label={t("common.dismiss_message", "Dismiss message")}><X size={14} /></button>{/if}</div>{/if}
-        <div class="kl-message-scroll" role="log" aria-live="polite" aria-busy={Boolean($useChatStore.activeRequestId)}>
-          {#if visibleMessages.length > 0}
-            {#each visibleMessages as message (message.id)}
+        <div bind:this={messageScroll} class="kl-message-scroll" role="log" aria-live="polite" aria-busy={Boolean($useChatStore.activeRequestId)} onscroll={updateFollowLatest}>
+           {#if visibleMessages.length > 0}
+             {#each renderMessages.groups as group (group.message.id)}
+               {@const message = group.message}
               <article
                 class:kl-message-user={message.role === "user"}
                 class:kl-message-assistant={message.role === "assistant"}
-                class:kl-message-tool={message.role === "tool"}
                 class:kl-message-error={message.role === "error"}
                 class:kl-message-system={message.role === "system"}
                 class:kl-message-streaming={message.status === "streaming"}
@@ -618,40 +678,31 @@
                 data-message-id={message.id}
               >
                 <div class="kl-message-heading"><span class="kl-message-role">
-                  {#if message.role === "user"}<UserRound size={15} />{:else if message.role === "tool"}<Wrench size={15} />{:else if message.role === "error"}<XCircle size={15} />{:else if message.role === "assistant"}<Bot size={15} />{:else}<FileCog size={15} />{/if}
+                   {#if message.role === "user"}<UserRound size={15} />{:else if message.role === "error"}<XCircle size={15} />{:else if message.role === "assistant"}<Bot size={15} />{:else}<FileCog size={15} />{/if}
                   {roleLabel(message)}
                 </span><span class="kl-message-meta">
                   {#if message.status === "streaming"}<span class="kl-status-marker kl-status-streaming">{t("chat.status.partial", "Generating")}</span>{:else if message.status === "cancelled"}<span class="kl-status-marker kl-status-cancelled"><XCircle size={12} /> {t("chat.status.cancelled", "Cancelled")}</span>{:else if message.status === "error"}<span class="kl-status-marker kl-status-error">{t("chat.status.error", "Error")}</span>{/if}
                   {#if message.usage}<span class="kl-usage"><Clipboard size={11} /> {[message.usage.inputTokens !== undefined ? `${message.usage.inputTokens} in` : "", message.usage.outputTokens !== undefined ? `${message.usage.outputTokens} out` : "", message.usage.latencyMs !== undefined ? `${(message.usage.latencyMs / 1000).toFixed(1)}s` : ""].filter(Boolean).join(" · ")}</span>{/if}
                   {#if message.role === "assistant"}<button type="button" class="kl-message-collapse" onclick={() => toggleMessage(message.id)} aria-label={collapsedMessageIds.has(message.id) ? t("chat.expand", "Expand response") : t("chat.collapse", "Collapse response")}>{#if collapsedMessageIds.has(message.id)}<ChevronRight size={14} />{:else}<ChevronLeft size={14} />{/if}</button>{/if}
                 </span></div>
-                {#if message.role === "tool"}
-                  <details class="kl-tool-card" data-tool-result="true">
-                    <summary>
-                      <span class="kl-tool-title"><ChevronRight size={14} aria-hidden="true" /><strong>{message.tool?.name ?? t("chat.tool_call", "Tool call")}</strong></span>
-                      <span class:kl-tool-status-error={message.tool?.status === "error"} class="kl-tool-status">{t(`chat.tool_status.${message.tool?.status ?? "complete"}`, message.tool?.status ?? "complete")}</span>
-                    </summary>
-                    <div class="kl-tool-result">
-                      {#if message.tool?.detail}<p>{message.tool.detail}</p>{/if}
-                      {#if message.content}<Markdown content={message.content} streaming={message.status === "streaming"} />{/if}
-                    </div>
-                  </details>
-                {:else if collapsedMessageIds.has(message.id)}<button type="button" class="kl-message-collapsed-preview" onclick={() => toggleMessage(message.id)}>{reasoningPreview(message.content)}</button>{:else}<Markdown content={message.content} streaming={message.status === "streaming"} />{/if}
+                  {#if group.tools.length}<div class="kl-message-tools" aria-label={t("chat.tool_results", "Tool results")}>{#each group.tools as tool (tool.id)}<ToolCard message={tool} onundo={undoToolMutation} />{/each}</div>{/if}
+                  {#if collapsedMessageIds.has(message.id)}<button type="button" class="kl-message-collapsed-preview" onclick={() => toggleMessage(message.id)}>{reasoningPreview(message.content)}</button>{:else}<Markdown content={message.content} streaming={message.status === "streaming"} />{/if}
                 {#if message.reasoning && !collapsedMessageIds.has(message.id)}
                   <details class:kl-reasoning-streaming={message.status === "streaming"} class="kl-reasoning">
                     <summary>
                       <span class="kl-reasoning-label">{t("chat.reasoning_trace", "Reasoning trace")}</span>
                       <span class="kl-reasoning-preview" title={reasoningPreview(message.reasoning)}>{reasoningPreview(message.reasoning)}</span>
                     </summary>
-                    <div class="kl-reasoning-content"><Markdown content={message.reasoning} streaming={message.status === "streaming"} /></div>
+                     <div class="kl-reasoning-content"><Markdown content={message.reasoning} streaming={message.status === "streaming"} renderStreamingMarkdown={true} /></div>
                   </details>
-                {/if}
+                 {/if}
                 {#if message.attachments.length && !collapsedMessageIds.has(message.id)}<div class="kl-message-attachments" aria-label={tf("assistant.reference_images", "{count} reference images", { count: message.attachments.length })}>{#each message.attachments as attachment, index (attachment.id)}<button type="button" class="kl-message-attachment" onclick={() => lightbox = { attachments: message.attachments, index }} aria-label={tf("assistant.preview_named", "Preview {name}", { name: attachment.name })}><img src={attachmentPreviewUrl(attachment)} alt={attachment.name} width="58" height="48" loading="lazy" /></button>{/each}</div>{/if}
-                <div class="kl-message-footer"><div class="kl-message-actions"><button type="button" class="kl-message-action" onclick={() => void copyMessage(message)}>{#if copiedId === message.id}<Check size={13} /> {t("chat.copied", "Copied")}{:else}<Copy size={13} /> {t("chat.copy", "Copy")}{/if}</button>{#if message.role === "user"}<button type="button" class="kl-message-action" disabled={Boolean($useChatStore.activeRequestId)} onclick={() => beginEdit(message)}><Pencil size={13} /> {t("chat.edit", "Edit")}</button>{/if}{#if message.id === lastAssistantId}<button type="button" class="kl-message-action" onclick={() => void action("regenerate")(message)}><RefreshCw size={13} /> {t("chat.regenerate", "Regenerate")}</button>{/if}</div>
-                  {#if (message.role === "assistant" || message.role === "user") && message.branchCount > 1}<div class="kl-branch-pager" aria-label={message.role === "user" ? t("branches.message_versions", "Message versions") : t("branches.assistant_responses", "Assistant response branches")}><button type="button" class="kl-mini-button" disabled={message.branchIndex === 0} onclick={() => void action("changeBranch")(message, message.branchIndex - 1)} aria-label={t("branches.previous", "Previous branch")}><ChevronLeft size={14} /></button><span>{message.branchIndex + 1} / {message.branchCount}</span><button type="button" class="kl-mini-button" disabled={message.branchIndex >= message.branchCount - 1} onclick={() => void action("changeBranch")(message, message.branchIndex + 1)} aria-label={t("branches.next", "Next branch")}><ChevronRight size={14} /></button></div>{/if}
+                 <div class="kl-message-footer"><div class="kl-message-actions"><button type="button" class="kl-message-action" onclick={() => void copyMessage(message)}>{#if copiedId === message.id}<Check size={13} /> {t("chat.copied", "Copied")}{:else}<Copy size={13} /> {t("chat.copy", "Copy")}{/if}</button>{#if message.role === "user"}<button type="button" class="kl-message-action" disabled={Boolean($useChatStore.activeRequestId)} onclick={() => beginEdit(message)}><Pencil size={13} /> {t("chat.edit", "Edit")}</button>{/if}{#if message.id === lastAssistantId}<button type="button" class="kl-message-action" disabled={Boolean($useChatStore.activeRequestId) || message.status !== "complete"} onclick={() => void regenerateMessage(message)}><RefreshCw size={13} /> {#if branchOperationActive}{t("chat.regenerating", "Regenerating…")}{:else}{t("chat.regenerate", "Regenerate")}{/if}</button>{/if}</div>
+                  {#if (message.role === "assistant" || message.role === "user") && message.branchCount > 1}<div class="kl-branch-pager" aria-label={message.role === "user" ? t("branches.message_versions", "Message versions") : t("branches.assistant_responses", "Assistant response branches")}><button type="button" class="kl-mini-button" disabled={Boolean($useChatStore.activeRequestId) || message.branchIndex === 0} onclick={() => void action("changeBranch")(message, message.branchIndex - 1)} aria-label={t("branches.previous", "Previous branch")}><ChevronLeft size={14} /></button><span>{message.branchIndex + 1} / {message.branchCount}</span><button type="button" class="kl-mini-button" disabled={Boolean($useChatStore.activeRequestId) || message.branchIndex >= message.branchCount - 1} onclick={() => void action("changeBranch")(message, message.branchIndex + 1)} aria-label={t("branches.next", "Next branch")}><ChevronRight size={14} /></button></div>{/if}
                 </div>
-              </article>
-            {/each}
+               </article>
+             {/each}
+              {#each renderMessages.pendingTools as tool (tool.id)}<div class="kl-orphan-tools"><ToolCard message={tool} onundo={undoToolMutation} /></div>{/each}
           {:else}
             <div class="kl-empty-state"><Sparkles size={20} aria-hidden="true" /><strong>{t("assistant.empty.title", "Start with the current prompt")}</strong><p>{t("assistant.empty.hint", "Ask Loom to review composition, rewrite a prompt, inspect installed resources, or attach reference images.")}</p><div><button type="button" onclick={() => useSuggestion(t("assistant.quick.review_prompt", "Read the current prompt and suggest the highest-impact improvement."))}>{t("assistant.quick.review", "Review current prompt")}</button><button type="button" onclick={() => fileInput?.click()}>{t("assistant.quick.reference", "Analyze reference images")}</button></div></div>
           {/if}
@@ -663,24 +714,20 @@
         <form class:kl-composer-drop-active={dropActive} class="kl-composer" onsubmit={(event) => { event.preventDefault(); void submit(); }} ondragover={(event) => { event.preventDefault(); dropActive = true; }} ondragleave={() => dropActive = false} ondrop={(event) => { event.preventDefault(); dropActive = false; void addFiles(Array.from(event.dataTransfer?.files ?? [])); }}>
           {#if editingMessageId}<div class="kl-editing-banner" role="status"><span><Pencil size={13} /> {t("chat.editing", "Editing message")}</span><button type="button" onclick={cancelEdit}>{t("chat.cancel_edit", "Cancel")}</button></div>{/if}
           {#if attachments.length}<div class="kl-filmstrip" aria-label={t("assistant.attached_images", "Attached reference images")}>{#each attachments as attachment, index (attachment.id)}<div class="kl-filmstrip-item"><button type="button" class="kl-filmstrip-preview" onclick={() => lightbox = { attachments, index }} oncontextmenu={(event) => { event.preventDefault(); attachmentMenuId = attachment.id; }} aria-label={tf("assistant.preview_named", "Preview {name}", { name: attachment.name })}><img src={attachmentPreviewUrl(attachment)} alt={attachment.name} width="58" height="54" /><span class="kl-filmstrip-name">{attachment.name}</span></button><button type="button" class="kl-filmstrip-remove" onclick={() => void removeAttachment(attachment.id)} aria-label={tf("assistant.remove_named", "Remove {name}", { name: attachment.name })}><X size={12} /></button><button type="button" class="kl-filmstrip-more" onclick={() => attachmentMenuId = attachmentMenuId === attachment.id ? null : attachment.id} aria-label={tf("assistant.edit_named", "Edit {name}", { name: attachment.name })}>•••</button>{#if attachmentMenuId === attachment.id}<div class="kl-attachment-menu" role="menu"><button type="button" role="menuitem" onclick={() => { replacementId = attachment.id; replacementInput?.click(); attachmentMenuId = null; }}><Pencil size={13} /> {t("common.replace", "Replace")}</button><button type="button" role="menuitem" onclick={() => { void removeAttachment(attachment.id); attachmentMenuId = null; }}><Trash2 size={13} /> {t("common.remove", "Remove")}</button></div>{/if}</div>{/each}<button type="button" class="kl-filmstrip-add" onclick={() => fileInput?.click()} aria-label={t("assistant.attach_another", "Attach another image")}><Plus size={17} /></button></div>{/if}
-          <textarea name="kohaku-loom-message" autocomplete="off" bind:this={composerInput} bind:value={draft} rows="1" placeholder={t("assistant.input.placeholder", "Ask about or change the current prompt…")} aria-label={t("assistant.input.label", "Message Kohaku Loom")} onfocus={() => composerFocused = true} onblur={() => composerFocused = false} oninput={(event) => resizeComposer(event.currentTarget)} onkeydown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if ($useChatStore.activeRequestId) stop(); else void submit(); } }}></textarea>
+          <textarea name="kohaku-loom-message" autocomplete="off" bind:this={composerInput} bind:value={draft} rows="1" placeholder={t("assistant.input.placeholder", "Ask about or change the current prompt…")} aria-label={t("assistant.input.label", "Message Kohaku Loom")} onfocus={() => composerFocused = true} onblur={() => composerFocused = false} oninput={(event) => resizeComposer(event.currentTarget)} onkeydown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if (branchOperationActive) return; if ($useChatStore.activeRequestId) stop(); else void submit(); } }}></textarea>
           <div class="kl-composer-bottom"><div class="kl-composer-tools"><button type="button" class="kl-composer-icon" onclick={() => fileInput?.click()} aria-label={t("assistant.attach", "Attach reference images")}><ImagePlus size={16} /></button></div>
-             <div class="kl-composer-tools"><div class="kl-composer-picker-row" aria-label={t("assistant.model_controls", "Model controls")}><ModelPicker /><ReasoningPicker /></div><button type="button" class:is-direct={$useUiStore.riskMode === "yolo"} class="kl-permission-toggle" onclick={toggleRiskMode} aria-label={$useUiStore.riskMode === "yolo" ? t("assistant.risk.mode_direct", "Permission mode: direct edits") : t("assistant.risk.mode_confirm", "Permission mode: confirmations required")} title={$useUiStore.riskMode === "yolo" ? t("assistant.risk.confirm", "Require confirmation before edits") : t("assistant.risk.direct", "Allow direct edits")} aria-pressed={$useUiStore.riskMode === "yolo"}>{#if $useUiStore.riskMode === "yolo"}<ShieldAlert size={17} aria-hidden="true" />{:else}<ShieldCheck size={17} aria-hidden="true" />{/if}</button>{#if $useChatStore.activeRequestId}<button type="submit" class="kl-send-button kl-queue-button" onpointerdown={keepComposerFocus} disabled={!draft.trim() && !attachments.length} aria-label={t("assistant.queue", "Queue message")}><Send size={17} /></button><button type="button" class="kl-send-button kl-stop-button" onclick={stop} disabled={$useRuntimeStore.workingPhase === "cancelling"} aria-label={t("assistant.stop", "Stop response")}><CircleStop size={17} /></button>{:else}<button type="submit" class="kl-send-button" onpointerdown={keepComposerFocus} disabled={!draft.trim() && !attachments.length} aria-label={t("assistant.send", "Send message")}><Send size={17} /></button>{/if}</div>
+              <div class="kl-composer-tools"><div class="kl-composer-picker-row" aria-label={t("assistant.model_controls", "Model controls")}><ModelPicker /><ReasoningPicker /></div>{#if branchOperationActive}<button type="button" class="kl-send-button" disabled aria-label={t("chat.regenerating", "Regenerating response")}><RefreshCw size={17} /></button>{:else if $useChatStore.activeRequestId}<button type="submit" class="kl-send-button kl-queue-button" onpointerdown={keepComposerFocus} disabled={!draft.trim() && !attachments.length} aria-label={t("assistant.queue", "Queue message")}><Send size={17} /></button><button type="button" class="kl-send-button kl-stop-button" onclick={stop} disabled={$useRuntimeStore.workingPhase === "cancelling"} aria-label={t("assistant.stop", "Stop response")}><CircleStop size={17} /></button>{:else}<button type="submit" class="kl-send-button" onpointerdown={keepComposerFocus} disabled={!draft.trim() && !attachments.length} aria-label={t("assistant.send", "Send message")}><Send size={17} /></button>{/if}</div>
            </div>
-           {#if $useUiStore.riskMode === "yolo"}<p class="kl-risk-note"><AlertTriangle size={13} /> {t("assistant.risk.note", "Direct edits lets Loom change prompts and run tools without asking each time.")}</p>{/if}
           <input bind:this={fileInput} type="file" accept="image/*" multiple hidden onchange={(event) => { void addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
           <input bind:this={replacementInput} type="file" accept="image/*" hidden onchange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void replaceAttachment(file); event.currentTarget.value = ""; }} />
         </form>
-      </div>
-      <AlertDialog.Root open={confirm === "yolo"} onOpenChange={(value) => { if (!value) confirm = null; }}><AlertDialog.Overlay class="kl-window-dialog-layer" /><AlertDialog.Content class="kl-window-dialog-card kl-dialog-card"><header><AlertDialog.Title>{t("dialog.yolo.title", "Allow direct edits?")}</AlertDialog.Title></header><AlertDialog.Description class="kl-dialog-description">{t("dialog.yolo.description", "Loom may change the active prompt and run supported tools without asking for confirmation each time. Hash checks still protect prompts changed elsewhere.")}</AlertDialog.Description><div class="kl-dialog-actions"><AlertDialog.Cancel class="kl-dialog-cancel">{t("dialog.yolo.cancel", "Keep confirmations")}</AlertDialog.Cancel><AlertDialog.Action class="kl-dialog-confirm" onclick={enableYolo}>{t("dialog.yolo.confirm", "Allow direct edits")}</AlertDialog.Action></div></AlertDialog.Content></AlertDialog.Root>
-      {#if !composerFocused}<button type="button" class="kl-resize-handle" data-loom-interaction-handle="true" use:pointerWindow={{ mode: "resize", layout: () => currentLayout, update: updateLayout, minimum: windowMinimum, interacting: (active) => interacting = active }} onkeydown={resizeKey} aria-label={t("assistant.resize", "Resize chat window")}><Grip size={15} /></button>{/if}
+       </div>
+        {#if !composerFocused}<button type="button" class="kl-resize-handle" data-loom-interaction-handle="true" use:pointerWindow={{ mode: "resize", layout: () => currentLayout, update: updateLayout, minimum: windowMinimum, interacting: (active) => interacting = active }} onkeydown={resizeKey} aria-label={t("assistant.resize", "Resize chat window")}><Grip size={15} /></button>{/if}
     {#if kind !== "desktop" && !$useUiStore.hasSeenMobileResizeHint && !mobileHintDismissed}<div class="kl-mobile-resize-hint" role="status"><Grip size={14} /> {t("assistant.resize_hint", "Drag the corner to resize")}<button type="button" onclick={() => { mobileHintDismissed = true; $useUiStore.markMobileResizeHintSeen(); }}>{t("common.dismiss", "Dismiss")}</button></div>{/if}
     </div>
   {/if}
 
   <ProfileSettings open={$useUiStore.profileSettingsOpen} onclose={closeSettings} />
-
-  <AlertDialog.Root open={Boolean(pendingToolApproval)} onOpenChange={(value) => { if (!value && pendingToolApproval) action("rejectTool")?.(pendingToolApproval.requestId); }}><AlertDialog.Portal><AlertDialog.Overlay class="kl-dialog-layer" /><AlertDialog.Content class="kl-dialog-card"><header><AlertDialog.Title>{t("dialog.tool.title", "Approve tool action?")}</AlertDialog.Title></header>{#if pendingToolApproval}<AlertDialog.Description class="kl-dialog-description"><strong>{pendingToolApproval.name}</strong><pre>{JSON.stringify(pendingToolApproval.arguments, null, 2)}</pre></AlertDialog.Description><div class="kl-dialog-actions"><AlertDialog.Cancel class="kl-dialog-cancel" onclick={() => action("rejectTool")?.(pendingToolApproval.requestId)}>{t("dialog.tool.reject", "Reject")}</AlertDialog.Cancel><AlertDialog.Action class="kl-dialog-confirm" onclick={() => action("approveTool")?.(pendingToolApproval.requestId)}>{t("dialog.tool.approve", "Approve")}</AlertDialog.Action></div>{/if}</AlertDialog.Content></AlertDialog.Portal></AlertDialog.Root>
 
   {#if lightbox && lightbox.attachments[lightbox.index]}
     <div class="kl-lightbox" role="dialog" tabindex="-1" aria-modal="true" aria-label={t("lightbox.title", "Image preview")} onclick={() => lightbox = null} onkeydown={(event) => { if (event.key === "Escape") lightbox = null; }}>
