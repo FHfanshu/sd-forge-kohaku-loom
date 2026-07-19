@@ -1,5 +1,37 @@
 # Audit Log
 
+## 2026-07-19 Prompt Agent Migration Baseline And Architecture Audit
+
+- Goal: begin the RFC migration to a frontend Pi agent, thin Python backend,
+  request-response Forge tools, and IndexedDB sessions without losing the final
+  verified sidecar implementation.
+- Baseline preservation: committed the previously uncommitted but audited KT
+  final increment as `b016c88` (`Finalize KT runtime baseline`), created and
+  pushed branch `kt`, created and pushed tag `kt-final`, renamed the active local
+  branch to `main`, and pushed `main`. The remote still retains the old
+  `master` branch and old repository URL until the new default branch/repository
+  settings are changed deliberately.
+- Discovery: the repository contains no Kotlin or Gradle source. The archived
+  runtime is a managed Python sidecar embedding the KohakuTerrarium Python
+  package. `docs/current-architecture-audit.md` records the runtime-controller,
+  proxy, bridge lease, single-session owner, queue/replay, provider, profile,
+  session, Forge tool, build, and deletion boundaries.
+- Migration contract: `docs/kt-runtime-migration.md` records the archived
+  branch/tag, stopped-development reasons, old-data boundary, Pi version issue,
+  rollback path, and the existing license naming clause. `ROADMAP.md` now
+  governs the requested Prompt Agent architecture instead of requiring the old
+  sidecar on `main`.
+- Pi research: neither Pi package was installed. Pi `0.80.10` requires Node
+  `>=22.19.0`, above the repository's pinned Node 22.17.0; Pi `0.74.2` supports
+  Node `>=20.0.0` but has older provider import paths. Both packages must be
+  pinned and integrated as one compatibility decision.
+- Verification before freezing: managed Python suite passed 240 tests with 0
+  skips, including the required Terrarium contract. Frontend Svelte check passed
+  with 0 errors and warnings; coverage passed 146 tests; Vite built 4,019
+  modules; bundle size was 602,204 raw / 170,428 gzip bytes; all ordered browser
+  scripts passed `node --check`; `git diff --check` reported line-ending
+  warnings only.
+
 ## 2026-07-19 Attachment Recovery, Direct Forge Edits, and Compact Chat Activity
 
 - Visible problems: two attached images could be rejected by a hard-coded English
