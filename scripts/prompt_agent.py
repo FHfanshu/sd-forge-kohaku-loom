@@ -5,9 +5,9 @@ import json
 import gradio as gr
 
 from backend.prompt_agent import register_prompt_agent_api
-from backend.prompt_agent.forge_tools import ForgeToolValidationError, validate_forge_tool_request
+from backend.prompt_agent.forge_tools import ForgeToolValidationError, execute_catalog_tool, validate_forge_tool_request
 from prompt_agent.forge_resources import inspect_resource, search_resources
-from prompt_agent.danbooru import inspect_danbooru_tag, inspect_danbooru_tags, related_danbooru_tags, search_danbooru_tags
+from prompt_agent.danbooru import inspect_danbooru_tags, related_danbooru_tags, search_danbooru_tags
 from prompt_agent.i18n import locale_metadata, translation_bundle
 from prompt_agent.prompt_skills import load_prompt_skill
 from prompt_agent.reference_image import analyze_reference_image
@@ -61,7 +61,9 @@ def _assistant_api(_: gr.Blocks, app):
         cursor: str = "",
     ):
         try:
-            validate_forge_tool_request("list_resources", {"kind": kind, "query": query, "limit": limit, "cursor": cursor})
+            arguments = validate_forge_tool_request("search_resources", {"kind": kind, "query": query, "limit": limit, "cursor": cursor})
+            if kind in {"model", "embedding"}:
+                return execute_catalog_tool("search_resources", arguments)
             return search_resources(kind, query=query, limit=limit, cursor=cursor)
         except (ValueError, ForgeToolValidationError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
@@ -77,7 +79,9 @@ def _assistant_api(_: gr.Blocks, app):
         cursor: str = "",
     ):
         try:
-            validate_forge_tool_request("read_resource_metadata", {"kind": kind, "id": id, "query": query, "limit": limit, "cursor": cursor})
+            arguments = validate_forge_tool_request("inspect_resource", {"kind": kind, "id": id, "query": query, "limit": limit, "cursor": cursor})
+            if kind in {"model", "embedding"}:
+                return execute_catalog_tool("inspect_resource", arguments)
             return inspect_resource(kind, id, query=query, limit=limit, cursor=cursor)
         except (ValueError, ForgeToolValidationError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
@@ -88,6 +92,7 @@ def _assistant_api(_: gr.Blocks, app):
     async def prompt_agent_danbooru_tag_search(query: str = "", queries: str = "", category: str = "", limit: int = 12):
         try:
             batch = json.loads(queries) if queries else None
+            validate_forge_tool_request("search_danbooru_tags", {"query": query, "queries": batch, "category": category, "limit": limit})
             return search_danbooru_tags(query, category, limit, batch)
         except json.JSONDecodeError as error:
             raise HTTPException(status_code=400, detail="queries must be a JSON array") from error
@@ -96,19 +101,12 @@ def _assistant_api(_: gr.Blocks, app):
         except Exception as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
 
-    @app.get("/prompt-agent/api/danbooru/tags/inspect")
-    async def prompt_agent_danbooru_tag_inspect(name: str):
-        try:
-            return inspect_danbooru_tag(name)
-        except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
-        except Exception as error:
-            raise HTTPException(status_code=502, detail=str(error)) from error
-
     @app.get("/prompt-agent/api/danbooru/tags/inspect-batch")
     async def prompt_agent_danbooru_tag_inspect_batch(names: str, include_wiki: bool = False):
         try:
-            return inspect_danbooru_tags([name for name in names.split(",") if name.strip()], include_wiki)
+            batch = [name for name in names.split(",") if name.strip()]
+            validate_forge_tool_request("inspect_danbooru_tags", {"names": batch, "include_wiki": include_wiki})
+            return inspect_danbooru_tags(batch, include_wiki)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         except Exception as error:
@@ -117,6 +115,7 @@ def _assistant_api(_: gr.Blocks, app):
     @app.get("/prompt-agent/api/danbooru/tags/related")
     async def prompt_agent_danbooru_tag_related(name: str, category: str = "", limit: int = 12):
         try:
+            validate_forge_tool_request("related_danbooru_tags", {"name": name, "category": category, "limit": limit})
             return related_danbooru_tags(name, category, limit)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error

@@ -23,35 +23,34 @@ class ForgeToolValidationTests(unittest.TestCase):
             (
                 "read_prompt",
                 "edit_prompt",
-                "read_negative_prompt",
-                "edit_negative_prompt",
-                "list_resources",
-                "read_resource_metadata",
                 "read_generation_parameters",
                 "apply_generation_parameters",
-                "list_models",
-                "list_loras",
-                "list_embeddings",
+                "search_resources",
+                "inspect_resource",
                 "search_danbooru_tags",
-                "inspect_danbooru_tag",
                 "inspect_danbooru_tags",
                 "related_danbooru_tags",
             ),
             FORGE_TOOL_NAMES,
         )
         self.assertNotIn("ask_teacher", FORGE_TOOL_NAMES)
+        self.assertEqual(9, len(FORGE_TOOL_NAMES))
 
     def test_server_owned_paths_and_bridge_fields_are_rejected(self):
         with self.assertRaisesRegex(ForgeToolValidationError, "server-owned"):
-            validate_forge_tool_request("list_models", {"model_path": "C:/private/model.gguf"})
+            validate_forge_tool_request("search_resources", {"kind": "model", "model_path": "C:/private/model.gguf"})
         with self.assertRaisesRegex(ForgeToolValidationError, "unsupported fields"):
             validate_forge_tool_request("read_prompt", {"target": "txt2img", "owner_id": "x"})
         with self.assertRaisesRegex(ForgeToolValidationError, "unknown Forge tool"):
             validate_forge_tool_request("ask_teacher", {"question": "x"})
+        with self.assertRaisesRegex(ForgeToolValidationError, "unknown Forge tool"):
+            validate_forge_tool_request("read_negative_prompt", {})
+        with self.assertRaisesRegex(ForgeToolValidationError, "field must be positive or negative"):
+            validate_forge_tool_request("read_prompt", {})
 
     def test_mutations_require_fresh_hashes_and_allowlisted_parameters(self):
         with self.assertRaisesRegex(ForgeToolValidationError, "base_hash"):
-            validate_forge_tool_request("edit_prompt", {"patches": []})
+            validate_forge_tool_request("edit_prompt", {"field": "positive", "patches": []})
         with self.assertRaisesRegex(ForgeToolValidationError, "context_hash"):
             validate_forge_tool_request("apply_generation_parameters", {"parameters": {}})
         with self.assertRaisesRegex(ForgeToolValidationError, "server-owned"):
@@ -59,11 +58,11 @@ class ForgeToolValidationTests(unittest.TestCase):
 
     def test_prompt_patches_and_generation_values_are_revalidated(self):
         with self.assertRaisesRegex(ForgeToolValidationError, r"patches\[0\] must be an object"):
-            validate_forge_tool_request("edit_prompt", {"base_hash": "h", "patches": ["append text"]})
+            validate_forge_tool_request("edit_prompt", {"field": "positive", "base_hash": "h", "patches": ["append text"]})
         with self.assertRaisesRegex(ForgeToolValidationError, "operation is invalid"):
-            validate_forge_tool_request("edit_prompt", {"base_hash": "h", "patches": [{"operation": "write_file"}]})
+            validate_forge_tool_request("edit_prompt", {"field": "positive", "base_hash": "h", "patches": [{"operation": "write_file"}]})
         with self.assertRaisesRegex(ForgeToolValidationError, "allow_multiple must be a boolean"):
-            validate_forge_tool_request("edit_prompt", {"base_hash": "h", "patches": [{"allow_multiple": "yes"}]})
+            validate_forge_tool_request("edit_prompt", {"field": "positive", "base_hash": "h", "patches": [{"allow_multiple": "yes"}]})
         with self.assertRaisesRegex(ForgeToolValidationError, "steps must be an integer"):
             validate_forge_tool_request("apply_generation_parameters", {"context_hash": "h", "parameters": {"steps": 20.5}})
         with self.assertRaisesRegex(ForgeToolValidationError, "denoising_strength must be a number"):
@@ -78,16 +77,20 @@ class ForgeToolValidationTests(unittest.TestCase):
         self.assertEqual(20, result["parameters"]["steps"])
 
     def test_edit_prompt_accepts_full_overwrite_only_as_standalone_prompt(self):
-        accepted = validate_forge_tool_request("edit_prompt", {"base_hash": "h", "prompt": "solo, standing"})
+        accepted = validate_forge_tool_request("edit_prompt", {"field": "negative", "base_hash": "h", "prompt": "solo, standing"})
         self.assertEqual("solo, standing", accepted["prompt"])
+        self.assertEqual("negative", accepted["field"])
         with self.assertRaisesRegex(ForgeToolValidationError, "cannot be combined"):
             validate_forge_tool_request("edit_prompt", {
+                "field": "positive",
                 "base_hash": "h",
                 "prompt": "solo",
                 "patches": [{"operation": "append", "text": "light"}],
             })
         with self.assertRaisesRegex(ForgeToolValidationError, "require patches, diff, or prompt"):
-            validate_forge_tool_request("edit_prompt", {"base_hash": "h"})
+            validate_forge_tool_request("edit_prompt", {"field": "positive", "base_hash": "h"})
+        with self.assertRaisesRegex(ForgeToolValidationError, "field must be positive or negative"):
+            validate_forge_tool_request("read_prompt", {"field": "both"})
 
     def test_danbooru_tool_arguments_are_validated(self):
         search = validate_forge_tool_request("search_danbooru_tags", {
@@ -109,22 +112,27 @@ class ForgeToolValidationTests(unittest.TestCase):
         with patch("backend.prompt_agent.forge_tools._model_catalog_items", return_value=[
             {"id": "model-a", "label": "Model A", "filename": "C:/private/model.gguf"},
         ]):
-            result = execute_catalog_tool("list_models", {})
+            result = execute_catalog_tool("search_resources", {"kind": "model"})
         self.assertEqual("model-a", result["items"][0]["id"])
         self.assertEqual({"id": "model-a", "label": "Model A"}, result["items"][0])
         self.assertNotIn("C:/private", str(result))
+        with patch("backend.prompt_agent.forge_tools._model_catalog_items", return_value=[
+            {"id": "model-a", "label": "Model A", "filename": "C:/private/model.gguf"},
+        ]):
+            inspected = execute_catalog_tool("inspect_resource", {"kind": "model", "id": "model-a"})
+        self.assertEqual({"ok": True, "kind": "model", "id": "model-a", "label": "Model A"}, inspected)
 
 
 class ForgeToolApiTests(unittest.TestCase):
-    def test_health_enables_forge_tools_and_api_returns_structured_validation_errors(self):
+    def test_health_enables_forge_tools_and_validation_returns_structured_errors(self):
         with TemporaryDirectory() as directory:
             app = FastAPI()
             register_prompt_agent_api(app, ProfileAuthority(directory))
             client = TestClient(app)
             health = client.get(f"{API_PREFIX}/health")
             self.assertTrue(health.json()["features"]["forge_tools"])
-            response = client.post(f"{API_PREFIX}/forge-tools", json={
-                "tool": "list_models",
+            response = client.post(f"{API_PREFIX}/forge-tools/validate", json={
+                "tool": "search_resources",
                 "arguments": {"model_path": "C:/private/model.gguf"},
             })
         self.assertEqual(422, response.status_code)
@@ -152,7 +160,7 @@ class ForgeToolApiTests(unittest.TestCase):
                     "parameters": {"steps": 20.5},
                 },
             })
-            teacher = client.post(f"{API_PREFIX}/forge-tools", json={
+            teacher = client.post(f"{API_PREFIX}/forge-tools/validate", json={
                 "tool": "ask_teacher",
                 "arguments": {"question": "How can I improve this prompt?"},
             })

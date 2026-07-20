@@ -356,20 +356,6 @@
         };
     }
 
-    async function readStyleTemplateTool(target) {
-        const item = promptRootForTarget(target || "active");
-        const template = await styleTemplateInfo(item.target);
-        return {
-            ok: true,
-            target: item.target,
-            style_template_found: template.found,
-            style_template: template.template,
-            style_selector: template.style_selector,
-            selected_styles: template.selected_styles,
-            forge_positive_template: template.forge_positive_template
-        };
-    }
-
     function normalizePatchSeparator(value) {
         if (value === "space") return " ";
         if (value === "newline") return "\n";
@@ -761,42 +747,6 @@
         return Object.assign(latest, { changed: changed });
     }
 
-    function sanitizeForgePublicResult(value) {
-        if (Array.isArray(value)) return value.map(sanitizeForgePublicResult);
-        if (!value || typeof value !== "object") return value;
-        const result = {};
-        Object.keys(value).forEach(function (key) {
-            const normalized = key.toLowerCase().replace(/-/g, "_");
-            if (["path", "filename", "file", "model_path", "mmproj_path", "llama_server_path", "endpoint", "api_key", "headers"].includes(normalized)) return;
-            result[key] = sanitizeForgePublicResult(value[key]);
-        });
-        return result;
-    }
-
-    async function forgeApiTool(name, args, signal) {
-        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        let response;
-        try {
-            response = await fetch("/prompt-agent/api/forge-tools", {
-                method: "POST",
-                credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ tool: name, arguments: args || {} }),
-                signal: signal
-            });
-        } catch (error) {
-            if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-            return { ok: false, error: { code: "forge_api_unavailable", message: error?.message || "Forge tool API is unavailable.", retryable: true } };
-        }
-        let payload;
-        try { payload = await response.json(); } catch (_error) { payload = {}; }
-        if (!response.ok) {
-            const detail = payload.detail && typeof payload.detail === "object" ? payload.detail : payload.error;
-            return { ok: false, error: detail?.error || detail || { code: "forge_api_error", message: `Forge tool API failed with HTTP ${response.status}.`, retryable: response.status >= 500 } };
-        }
-        return sanitizeForgePublicResult(payload);
-    }
-
     async function validateForgeHostTool(name, args, signal) {
         if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         let response;
@@ -888,62 +838,30 @@
         const name = tool.tool || tool.name;
         let args = tool.arguments || {};
         if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        if ([
-            "read_prompt", "edit_prompt", "read_negative_prompt", "edit_negative_prompt",
-            "read_generation_parameters", "apply_generation_parameters"
-        ].includes(name)) {
+        if (["read_prompt", "edit_prompt", "read_generation_parameters", "apply_generation_parameters"].includes(name)) {
             const validation = await validateForgeHostTool(name, args, signal);
             if (!validation.ok) return validation;
             args = validation.arguments;
         }
-        if (name === "read_prompt" || name === "get_current_prompt") {
-            return await readPromptTool(args.target || "active");
-        }
-        if (name === "read_style_template") {
-            return await readStyleTemplateTool(args.target || "active");
+        if (name === "read_prompt") {
+            const result = await readPromptTool(args.target || "active");
+            const field = args.field === "negative" ? "negative" : "positive";
+            const selected = Object.assign({}, result, {
+                field: field,
+                prompt: field === "negative" ? result.negative_prompt : result.positive_prompt,
+                prompt_hash: field === "negative" ? result.negative_prompt_hash : result.positive_prompt_hash
+            });
+            delete selected.positive_prompt;
+            delete selected.negative_prompt;
+            delete selected.positive_prompt_hash;
+            delete selected.negative_prompt_hash;
+            return selected;
         }
         if (name === "edit_prompt") {
             return editPromptTool(args, args.patches || args.patch || []);
         }
-        if (name === "read_negative_prompt") {
-            const result = await readPromptTool(args.target || "active");
-            return Object.assign({}, result, { prompt: result.negative_prompt, prompt_hash: result.negative_prompt_hash });
-        }
-        if (name === "edit_negative_prompt") {
-            return editPromptTool(Object.assign({}, args, { field: "negative" }), args.patches || args.patch || []);
-        }
         if (name === "read_generation_parameters") return readGenerationParametersTool(args.target || "active");
         if (name === "apply_generation_parameters") return applyGenerationParametersTool(args);
-        if (name === "list_resources") {
-            const result = await resourceGet("/prompt-agent/api/resources/search", {
-                kind: args.kind,
-                query: args.query || "",
-                limit: args.limit || 20,
-                cursor: args.cursor || ""
-            }, signal);
-            return sanitizeForgePublicResult(result);
-        }
-        if (name === "read_resource_metadata") {
-            const result = await resourceGet("/prompt-agent/api/resources/inspect", {
-                kind: args.kind,
-                id: args.id,
-                query: args.query || "",
-                limit: args.limit || 20,
-                cursor: args.cursor || ""
-            }, signal);
-            return sanitizeForgePublicResult(result);
-        }
-        if (name === "list_models" || name === "list_loras" || name === "list_embeddings") {
-            return await forgeApiTool(name, args, signal);
-        }
-        if (name === "patch_current_prompt") return editPromptTool(args, args.patch || args);
-        if (name === "multi_patch_current_prompt") return editPromptTool(args, args.patches || []);
-        if (name === "set_current_prompt") {
-            return { ok: false, error: "set_current_prompt is disabled; use read_prompt then edit_prompt with base_hash and patches." };
-        }
-        if (name === "get_style_template" || name === "set_style_template" || name === "ask_teacher") {
-            return { ok: false, error: `${name} is disabled; use read_prompt/edit_prompt or the active chat model.` };
-        }
         const resourceExecutor = promptAgent.executeResourceTool;
         if (typeof resourceExecutor === "function") {
             const resourceResult = await resourceExecutor(tool, signal);
@@ -976,7 +894,6 @@
         promptHash,
         promptContextSnapshot,
         readPromptTool,
-        readStyleTemplateTool,
         normalizePatchSeparator,
         applyPromptPatchText,
         normalizeDiffText,
@@ -994,7 +911,6 @@
         generationSnapshot,
         readGenerationParametersTool,
         applyGenerationParametersTool,
-        forgeApiTool,
         executeAssistantTool
     });
 })();

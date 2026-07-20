@@ -7,17 +7,11 @@ from typing import Any
 FORGE_TOOL_NAMES = (
     "read_prompt",
     "edit_prompt",
-    "read_negative_prompt",
-    "edit_negative_prompt",
-    "list_resources",
-    "read_resource_metadata",
     "read_generation_parameters",
     "apply_generation_parameters",
-    "list_models",
-    "list_loras",
-    "list_embeddings",
+    "search_resources",
+    "inspect_resource",
     "search_danbooru_tags",
-    "inspect_danbooru_tag",
     "inspect_danbooru_tags",
     "related_danbooru_tags",
 )
@@ -69,26 +63,23 @@ def validate_forge_tool_request(tool: str, payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ForgeToolValidationError("Forge tool arguments must be an object")
     _reject_server_owned_fields(payload)
-    if tool == "list_resources":
+    if tool == "search_resources":
         _allow_keys(payload, {"kind", "query", "limit", "cursor"})
         _validate_resource_arguments(payload, require_id=False)
-    elif tool == "read_resource_metadata":
+    elif tool == "inspect_resource":
         _allow_keys(payload, {"kind", "id", "query", "limit", "cursor"})
         _validate_resource_arguments(payload, require_id=True)
-    elif tool in {"list_models", "list_loras", "list_embeddings"}:
-        _allow_keys(payload, {"query", "limit", "cursor"})
-        _safe_text(payload.get("query"), "query", 512)
-        _bounded_integer(payload.get("limit", 20), "limit", 1, 50)
-        _safe_cursor(payload.get("cursor", ""))
-    elif tool in {"read_prompt", "read_negative_prompt", "read_generation_parameters"}:
+    elif tool == "read_prompt":
+        _allow_keys(payload, {"target", "field"})
+        _validate_target(payload)
+        _validate_prompt_field(payload)
+    elif tool == "read_generation_parameters":
         _allow_keys(payload, {"target"})
         _validate_target(payload)
-    elif tool in {"edit_prompt", "edit_negative_prompt"}:
+    elif tool == "edit_prompt":
         _allow_keys(payload, {"target", "base_hash", "prompt", "diff", "patches", "return_prompt", "field"})
         _validate_target(payload)
-        expected_field = "negative" if tool == "edit_negative_prompt" else "positive"
-        if "field" in payload and payload["field"] != expected_field:
-            raise ForgeToolValidationError(f"field must be {expected_field} for {tool}")
+        _validate_prompt_field(payload)
         _safe_text(payload.get("base_hash"), "base_hash", 128, required=True)
         _safe_text(payload.get("prompt"), "prompt", 50_000)
         _safe_text(payload.get("diff"), "diff", 50_000)
@@ -120,11 +111,6 @@ def validate_forge_tool_request(tool: str, payload: Any) -> dict[str, Any]:
     elif tool == "search_danbooru_tags":
         _allow_keys(payload, {"query", "queries", "category", "limit"})
         _validate_danbooru_search(payload)
-    elif tool == "inspect_danbooru_tag":
-        _allow_keys(payload, {"name", "include_wiki"})
-        _safe_text(payload.get("name"), "name", 160, required=True)
-        if "include_wiki" in payload and not isinstance(payload.get("include_wiki"), bool):
-            raise ForgeToolValidationError("include_wiki must be a boolean")
     elif tool == "inspect_danbooru_tags":
         _allow_keys(payload, {"names", "include_wiki"})
         names = payload.get("names")
@@ -144,17 +130,13 @@ def validate_forge_tool_request(tool: str, payload: Any) -> dict[str, Any]:
 
 def execute_catalog_tool(tool: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Return logical catalog entries without exposing server-owned paths."""
-    if tool not in {"list_models", "list_loras", "list_embeddings"}:
+    kind = str(payload.get("kind") or "")
+    if tool not in {"search_resources", "inspect_resource"} or kind not in {"model", "embedding"}:
         raise ForgeToolValidationError("unsupported Forge catalog tool")
     query = _safe_text(payload.get("query"), "query", 512)
-    limit = _bounded_integer(payload.get("limit", 20), "limit", 1, 50)
-    cursor = _safe_cursor(payload.get("cursor", ""))
-    if tool == "list_models":
-        raw_items = _model_catalog_items()
-    elif tool == "list_loras":
-        raw_items = _lora_catalog_items()
-    else:
-        raw_items = _embedding_catalog_items()
+    limit = _bounded_integer(payload.get("limit", 20), "limit", 1, 100 if tool == "inspect_resource" else 50)
+    cursor = _safe_cursor(payload.get("cursor", "")) if tool == "search_resources" else 0
+    raw_items = _model_catalog_items() if kind == "model" else _embedding_catalog_items()
     items = []
     for item in raw_items:
         if not isinstance(item, dict):
@@ -163,14 +145,20 @@ def execute_catalog_tool(tool: str, payload: dict[str, Any]) -> dict[str, Any]:
         label = _logical_text(item.get("label"))
         if identifier:
             items.append({"id": identifier, "label": label or identifier})
-    if query:
+    if tool == "search_resources" and query:
         folded = query.casefold()
         items = [item for item in items if folded in f"{item['id']} {item['label']}".casefold()]
+    if tool == "inspect_resource":
+        identifier = _safe_text(payload.get("id"), "id", 512, required=True).casefold()
+        item = next((entry for entry in items if entry["id"].casefold() == identifier), None)
+        if item is None:
+            raise ForgeToolValidationError(f"unknown {kind}: {payload.get('id')}")
+        return {"ok": True, "kind": kind, **item}
     page = items[cursor : cursor + limit]
     next_cursor = str(cursor + len(page)) if cursor + len(page) < len(items) else ""
     return {
         "ok": True,
-        "kind": tool.removeprefix("list_"),
+        "kind": kind,
         "items": page,
         "total": len(items),
         "limit": limit,
@@ -185,9 +173,14 @@ def _validate_target(payload: dict[str, Any]) -> None:
         raise ForgeToolValidationError("target must be active, txt2img, or img2img")
 
 
+def _validate_prompt_field(payload: dict[str, Any]) -> None:
+    if payload.get("field") not in {"positive", "negative"}:
+        raise ForgeToolValidationError("field must be positive or negative")
+
+
 def _validate_resource_arguments(payload: dict[str, Any], *, require_id: bool) -> None:
     kind = payload.get("kind")
-    if kind not in {"wildcard", "style", "lora"}:
+    if kind not in {"wildcard", "style", "lora", "model", "embedding"}:
         raise ForgeToolValidationError("resource kind is invalid")
     if require_id:
         identifier = _safe_text(payload.get("id"), "id", 512, required=True)
@@ -195,7 +188,10 @@ def _validate_resource_arguments(payload: dict[str, Any], *, require_id: bool) -
             raise ForgeToolValidationError("resource id must be logical and must not be a local path")
     _safe_text(payload.get("query"), "query", 512)
     _bounded_integer(payload.get("limit", 20), "limit", 1, 100 if require_id else 50)
-    _safe_cursor(payload.get("cursor", ""))
+    if kind in {"model", "embedding"}:
+        _safe_cursor(payload.get("cursor", ""))
+    else:
+        _safe_text(payload.get("cursor"), "cursor", 256)
 
 
 def _validate_prompt_patch(value: Any, index: int) -> None:
@@ -250,21 +246,6 @@ def _model_catalog_items() -> list[dict[str, Any]]:
         for checkpoint in getattr(sd_models, "checkpoints_list", {}).values():
             identifier = _logical_text(getattr(checkpoint, "title", "") or getattr(checkpoint, "name", ""))
             label = _logical_text(getattr(checkpoint, "short_title", "") or getattr(checkpoint, "name", ""))
-            if identifier:
-                result.append({"id": identifier, "label": label or identifier})
-        return sorted(result, key=lambda item: item["label"].casefold())
-    except (ImportError, AttributeError):
-        return []
-
-
-def _lora_catalog_items() -> list[dict[str, str]]:
-    try:
-        import networks
-
-        result = []
-        for key, entry in getattr(networks, "available_networks", {}).items():
-            identifier = _logical_text(key)
-            label = _logical_text(entry.get_alias() if hasattr(entry, "get_alias") else getattr(entry, "alias", key))
             if identifier:
                 result.append({"id": identifier, "label": label or identifier})
         return sorted(result, key=lambda item: item["label"].casefold())

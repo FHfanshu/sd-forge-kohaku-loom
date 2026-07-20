@@ -242,3 +242,19 @@ local-only under `docs/archive/`.
   passed 13 tests; frontend vitest 123 passed; `node --check javascript/prompt_agent.js`
   and `node --test tests/test_frontend_resources.js` passed; rebuilt
   `javascript/prompt_agent_90_ui.js`.
+
+## 2026-07-20 Agent Tool Compression
+
+- Reduced the model-visible surface from 15 tools to 9 without removing
+  capabilities. Positive/negative prompt tools now share `field`; Forge
+  resources share `kind`; single Danbooru inspection uses a one-item `names`
+  array in the existing batch tool.
+- Model and embedding catalogs route through the Python logical-ID projection;
+  styles, wildcards, and LoRAs continue through the Forge resource API.
+- Removed the now-unused browser forge-tools POST client and updated schemas,
+  validation, host dispatch, docs, and regression tests.
+- Verification: `python tests/run_suite.py --max-skips 20` passed 78 tests with
+  0 skipped; frontend `pnpm run test` passed 123 tests and `pnpm run check`
+  reported 0 errors/warnings; browser contracts passed 11 tests; all Prompt
+  Agent scripts passed `node --check`; Vite build and bundle-size passed
+  (740,340 raw / 213,867 gzip bytes).

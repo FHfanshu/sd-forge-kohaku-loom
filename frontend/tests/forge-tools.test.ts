@@ -8,17 +8,11 @@ import { toPromptAgentModel } from "../src/providers/proxy-model";
 const TOOL_NAMES = [
   "read_prompt",
   "edit_prompt",
-  "read_negative_prompt",
-  "edit_negative_prompt",
-  "list_resources",
-  "read_resource_metadata",
   "read_generation_parameters",
   "apply_generation_parameters",
-  "list_models",
-  "list_loras",
-  "list_embeddings",
+  "search_resources",
+  "inspect_resource",
   "search_danbooru_tags",
-  "inspect_danbooru_tag",
   "inspect_danbooru_tags",
   "related_danbooru_tags",
 ] as const;
@@ -57,19 +51,13 @@ describe("Forge Agent Tools", () => {
   it("exports all Phase 6 tools in roadmap order with TypeBox schemas and permissions", () => {
     const tools = createForgeAgentTools({ host: () => host().api });
     const samples = {
-      read_prompt: {},
-      edit_prompt: { base_hash: "hash" },
-      read_negative_prompt: {},
-      edit_negative_prompt: { base_hash: "hash" },
-      list_resources: { kind: "style" },
-      read_resource_metadata: { kind: "style", id: "style" },
+      read_prompt: { field: "positive" },
+      edit_prompt: { field: "positive", base_hash: "hash" },
       read_generation_parameters: {},
       apply_generation_parameters: { context_hash: "hash", parameters: {} },
-      list_models: {},
-      list_loras: {},
-      list_embeddings: {},
+      search_resources: { kind: "model" },
+      inspect_resource: { kind: "style", id: "style" },
       search_danbooru_tags: { queries: ["long hair"] },
-      inspect_danbooru_tag: { name: "1girl" },
       inspect_danbooru_tags: { names: ["1girl", "blue eyes"] },
       related_danbooru_tags: { name: "1girl" },
     } as const;
@@ -78,9 +66,10 @@ describe("Forge Agent Tools", () => {
       expect(FORGE_TOOL_SCHEMAS[name]).toBeDefined();
       expect(Compile(FORGE_TOOL_SCHEMAS[name]).Check(samples[name])).toBe(true);
     }
+    expect(Compile(FORGE_TOOL_SCHEMAS.read_prompt).Check({})).toBe(false);
+    expect(Compile(FORGE_TOOL_SCHEMAS.edit_prompt).Check({ base_hash: "hash" })).toBe(false);
     expect(tools.filter((tool) => tool.permission === "write").map((tool) => tool.name)).toEqual([
       "edit_prompt",
-      "edit_negative_prompt",
       "apply_generation_parameters",
     ]);
     expect(JSON.stringify(tools)).not.toMatch(/claim|release|bridge_id|lease|owner_id/i);
@@ -92,8 +81,8 @@ describe("Forge Agent Tools", () => {
     const read = tools.find((tool) => tool.name === "read_prompt")!;
     const edit = tools.find((tool) => tool.name === "edit_prompt")!;
 
-    const readResult = await read.execute("read-1", {}, new AbortController().signal);
-    await edit.execute("edit-1", { base_hash: "hash-1", patches: [{ operation: "append", text: "light" }] }, new AbortController().signal);
+    const readResult = await read.execute("read-1", { field: "positive" }, new AbortController().signal);
+    await edit.execute("edit-1", { field: "positive", base_hash: "hash-1", patches: [{ operation: "append", text: "light" }] }, new AbortController().signal);
 
     expect(readResult.details).toMatchObject({ ok: true, prompt_hash: "hash-1" });
     expect(fake.calls).toHaveLength(2);
@@ -104,7 +93,7 @@ describe("Forge Agent Tools", () => {
     const fake = host({ ok: false, error: "prompt changed since read_prompt; read again" });
     const edit = createForgeAgentTools({ host: () => fake.api }).find((tool) => tool.name === "edit_prompt")!;
 
-    await expect(edit.execute("edit-1", { base_hash: "stale", patches: [{ operation: "append", text: "x" }] }, new AbortController().signal))
+    await expect(edit.execute("edit-1", { field: "positive", base_hash: "stale", patches: [{ operation: "append", text: "x" }] }, new AbortController().signal))
       .rejects.toMatchObject({ code: "forge_tool_failed", message: "prompt changed since read_prompt; read again" } satisfies Partial<ForgeToolError>);
   });
 
@@ -129,7 +118,7 @@ describe("Forge Agent Tools", () => {
     const fake = host();
     const edit = createForgeAgentTools({ host: () => fake.api, allowWrites: () => false }).find((tool) => tool.name === "edit_prompt")!;
 
-    await expect(edit.execute("edit-1", { base_hash: "hash", patches: [{ operation: "append", text: "x" }] }, new AbortController().signal))
+    await expect(edit.execute("edit-1", { field: "positive", base_hash: "hash", patches: [{ operation: "append", text: "x" }] }, new AbortController().signal))
       .rejects.toMatchObject({ code: "permission_denied" });
     expect(fake.calls).toHaveLength(0);
   });

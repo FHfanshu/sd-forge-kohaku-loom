@@ -6,7 +6,6 @@ from .contracts import parse_stream_request
 from .errors import PromptAgentError
 from .forge_tools import (
     ForgeToolValidationError,
-    execute_catalog_tool,
     validate_forge_tool_request,
 )
 from .models import public_models
@@ -128,17 +127,6 @@ def register_prompt_agent_api(app: Any, profile_authority: ProfileAuthority | No
         except KeyError as error:
             raise HTTPException(status_code=404, detail="profile not found") from error
         return public_models({"profiles": [profile]})
-
-    @app.post(f"{API_PREFIX}/forge-tools")
-    async def prompt_agent_forge_tool(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        try:
-            tool = str(payload.get("tool") or "").strip()
-            arguments = validate_forge_tool_request(tool, payload.get("arguments", {}))
-            if tool in {"list_models", "list_loras", "list_embeddings"}:
-                return execute_catalog_tool(tool, arguments)
-            raise ForgeToolValidationError("This Forge tool must execute in the browser Forge host.")
-        except ForgeToolValidationError as error:
-            raise HTTPException(status_code=422, detail={"ok": False, "error": {"code": "validation_error", "message": str(error), "retryable": False}}) from error
 
     @app.post(f"{API_PREFIX}/forge-tools/validate")
     async def prompt_agent_validate_forge_tool(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:

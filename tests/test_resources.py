@@ -24,6 +24,7 @@ class ResourceCatalogTests(unittest.TestCase):
         self.assertEqual("Hero B", second["items"][0]["name"])
         self.assertEqual(2, first["total"])
         self.assertFalse(second["next_cursor"])
+        self.assertNotIn("path", first["items"][0])
 
     def test_search_supports_fuzzy_terms_and_or_groups(self):
         items = [

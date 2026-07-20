@@ -16,11 +16,7 @@
     const RESOURCE_TOOLS = new Set([
         "search_resources",
         "inspect_resource",
-        "apply_resource",
-        "initialize_prompt",
-        "load_prompt_skill",
         "search_danbooru_tags",
-        "inspect_danbooru_tag",
         "inspect_danbooru_tags",
         "related_danbooru_tags"
     ]);
@@ -91,10 +87,6 @@
             category: args.category || "",
             limit: args.limit || 12
         }, signal);
-    }
-
-    async function inspectDanbooruTagTool(args, signal) {
-        return await resourceGet("/prompt-agent/api/danbooru/tags/inspect", { name: args.name || "" }, signal);
     }
 
     async function inspectDanbooruTagsTool(args, signal) {
@@ -254,11 +246,7 @@
         const args = tool.arguments || {};
         if (name === "search_resources") return await searchResourcesTool(args, signal);
         if (name === "inspect_resource") return await inspectResourceTool(args, signal);
-        if (name === "apply_resource") return await applyResourceTool(args, signal);
-        if (name === "initialize_prompt") return await initializePromptTool(args);
-        if (name === "load_prompt_skill") return await loadPromptSkillTool(args, signal);
         if (name === "search_danbooru_tags") return await searchDanbooruTagsTool(args, signal);
-        if (name === "inspect_danbooru_tag") return await inspectDanbooruTagTool(args, signal);
         if (name === "inspect_danbooru_tags") return await inspectDanbooruTagsTool(args, signal);
         if (name === "related_danbooru_tags") return await relatedDanbooruTagsTool(args, signal);
         return undefined;
@@ -272,7 +260,6 @@
         inspectResourceTool,
         loadPromptSkillTool,
         searchDanbooruTagsTool,
-        inspectDanbooruTagTool,
         inspectDanbooruTagsTool,
         relatedDanbooruTagsTool,
         resourceMutationGuard,

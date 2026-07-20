@@ -22,7 +22,7 @@ import { createForgeToolRegistry } from "../tools/tool-registry";
 import { getHostApi, promptAgentNamespace } from "../bridge";
 
 const LAST_SESSION_PREFERENCE = "last-session-id";
-export const FORGE_AGENT_SYSTEM_PROMPT = "You are the SD Forge Neo Prompt Agent. Forge state is live context: read prompts or generation parameters before changing them, use the returned latest hash/context hash, and make only bounded visible-control changes. For non-empty prompts use patches or diff; full prompt overwrite is allowed only when the field is empty. Prefer search_danbooru_tags for unfamiliar tag concepts. Never request paths or provider credentials.";
+export const FORGE_AGENT_SYSTEM_PROMPT = "You are the SD Forge Neo Prompt Agent. Forge state is live context: select the positive or negative field when reading/editing prompts, read prompts or generation parameters before changing them, use the returned latest hash/context hash, and make only bounded visible-control changes. For non-empty prompts use patches or diff; full prompt overwrite is allowed only when the field is empty. Prefer search_danbooru_tags for unfamiliar tag concepts. Never request paths or provider credentials.";
 type SessionRepository = Pick<PromptAgentSessionRepository,
   "putSession" | "getSession" | "listSessions" | "putMessage" | "getMessages" |
   "putPreference" | "getPreference" | "markInterrupted">;

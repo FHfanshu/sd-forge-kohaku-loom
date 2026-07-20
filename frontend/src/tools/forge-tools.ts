@@ -7,6 +7,10 @@ const targetSchema = Type.Optional(Type.Union([
   Type.Literal("txt2img"),
   Type.Literal("img2img"),
 ]));
+const promptFieldSchema = Type.Union([
+  Type.Literal("positive"),
+  Type.Literal("negative"),
+]);
 
 const patchSchema = Type.Object({
   operation: Type.Optional(Type.Union([
@@ -30,6 +34,7 @@ const patchSchema = Type.Object({
 
 const promptEditSchema = Type.Object({
   target: targetSchema,
+  field: promptFieldSchema,
   base_hash: Type.String({ minLength: 1, maxLength: 128 }),
   prompt: Type.Optional(Type.String({ maxLength: 50_000 })),
   diff: Type.Optional(Type.String({ maxLength: 50_000 })),
@@ -41,6 +46,8 @@ const resourceKindSchema = Type.Union([
   Type.Literal("wildcard"),
   Type.Literal("style"),
   Type.Literal("lora"),
+  Type.Literal("model"),
+  Type.Literal("embedding"),
 ]);
 
 const resourceListSchema = Type.Object({
@@ -63,11 +70,6 @@ const danbooruSearchSchema = Type.Object({
   queries: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 160 }), { minItems: 1, maxItems: 12 })),
   category: Type.Optional(Type.String({ maxLength: 32 })),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 30 })),
-}, { additionalProperties: false });
-
-const danbooruInspectSchema = Type.Object({
-  name: Type.String({ minLength: 1, maxLength: 160 }),
-  include_wiki: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
 
 const danbooruInspectBatchSchema = Type.Object({
@@ -107,26 +109,14 @@ const applyGenerationSchema = Type.Object({
   parameters: generationParameterSchema,
 }, { additionalProperties: false });
 
-const catalogSchema = Type.Object({
-  query: Type.Optional(Type.String({ maxLength: 512 })),
-  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
-  cursor: Type.Optional(Type.String({ maxLength: 256 })),
-}, { additionalProperties: false });
-
 export const FORGE_TOOL_SCHEMAS = {
-  read_prompt: Type.Object({ target: targetSchema }, { additionalProperties: false }),
+  read_prompt: Type.Object({ target: targetSchema, field: promptFieldSchema }, { additionalProperties: false }),
   edit_prompt: promptEditSchema,
-  read_negative_prompt: Type.Object({ target: targetSchema }, { additionalProperties: false }),
-  edit_negative_prompt: promptEditSchema,
-  list_resources: resourceListSchema,
-  read_resource_metadata: resourceMetadataSchema,
   read_generation_parameters: readGenerationSchema,
   apply_generation_parameters: applyGenerationSchema,
-  list_models: catalogSchema,
-  list_loras: catalogSchema,
-  list_embeddings: catalogSchema,
+  search_resources: resourceListSchema,
+  inspect_resource: resourceMetadataSchema,
   search_danbooru_tags: danbooruSearchSchema,
-  inspect_danbooru_tag: danbooruInspectSchema,
   inspect_danbooru_tags: danbooruInspectBatchSchema,
   related_danbooru_tags: danbooruRelatedSchema,
 } as const;
@@ -175,24 +165,17 @@ export interface ForgeAgentTool<TSchemaValue extends TSchema = TSchema> extends 
 const TOOL_TIMEOUTS: Record<ForgeToolName, number> = {
   read_prompt: 10_000,
   edit_prompt: 15_000,
-  read_negative_prompt: 10_000,
-  edit_negative_prompt: 15_000,
-  list_resources: 15_000,
-  read_resource_metadata: 15_000,
   read_generation_parameters: 10_000,
   apply_generation_parameters: 15_000,
-  list_models: 15_000,
-  list_loras: 15_000,
-  list_embeddings: 15_000,
+  search_resources: 15_000,
+  inspect_resource: 15_000,
   search_danbooru_tags: 30_000,
-  inspect_danbooru_tag: 20_000,
   inspect_danbooru_tags: 30_000,
   related_danbooru_tags: 20_000,
 };
 
 const WRITE_TOOLS = new Set<ForgeToolName>([
   "edit_prompt",
-  "edit_negative_prompt",
   "apply_generation_parameters",
 ]);
 
@@ -308,35 +291,20 @@ function createForgeTool<T extends TSchema>(
 
 export function createForgeAgentTools(options: ForgeToolFactoryOptions = {}): ForgeAgentTool[] {
   return [
-    createForgeTool("read_prompt", "Read prompt", "Read the current Forge positive prompt and its latest hashes.", FORGE_TOOL_SCHEMAS.read_prompt, "read", options),
+    createForgeTool("read_prompt", "Read prompt", "Read the current Forge positive or negative prompt and its latest hash. Set field to positive or negative.", FORGE_TOOL_SCHEMAS.read_prompt, "read", options),
     createForgeTool(
       "edit_prompt",
       "Edit prompt",
-      "Edit the positive prompt after read_prompt. Use patches/diff when the field is non-empty; full prompt overwrite is allowed only when the current field is empty.",
+      "Edit the positive or negative prompt after read_prompt. Use patches/diff when non-empty; full prompt overwrite only when empty.",
       FORGE_TOOL_SCHEMAS.edit_prompt,
       "write",
       options,
-      (args) => ({ ...args, field: "positive" }),
     ),
-    createForgeTool("read_negative_prompt", "Read negative prompt", "Read the current Forge negative prompt and its latest hash.", FORGE_TOOL_SCHEMAS.read_negative_prompt, "read", options),
-    createForgeTool(
-      "edit_negative_prompt",
-      "Edit negative prompt",
-      "Edit the negative prompt after read. Use patches/diff when non-empty; full prompt overwrite only when empty.",
-      FORGE_TOOL_SCHEMAS.edit_negative_prompt,
-      "write",
-      options,
-      (args) => ({ ...args, field: "negative" }),
-    ),
-    createForgeTool("list_resources", "List Forge resources", "List logical Forge resource IDs such as styles, wildcards, or LoRAs.", FORGE_TOOL_SCHEMAS.list_resources, "read", options),
-    createForgeTool("read_resource_metadata", "Read resource metadata", "Read bounded metadata for one logical Forge resource.", FORGE_TOOL_SCHEMAS.read_resource_metadata, "read", options),
     createForgeTool("read_generation_parameters", "Read generation parameters", "Read the visible allowlisted Forge generation controls and context hash.", FORGE_TOOL_SCHEMAS.read_generation_parameters, "read", options),
     createForgeTool("apply_generation_parameters", "Apply generation parameters", "Apply visible allowlisted Forge generation controls with a fresh context hash.", FORGE_TOOL_SCHEMAS.apply_generation_parameters, "write", options),
-    createForgeTool("list_models", "List models", "List logical Forge checkpoint IDs and labels without filesystem paths.", FORGE_TOOL_SCHEMAS.list_models, "read", options),
-    createForgeTool("list_loras", "List LoRAs", "List logical LoRA IDs and labels without filesystem paths.", FORGE_TOOL_SCHEMAS.list_loras, "read", options),
-    createForgeTool("list_embeddings", "List embeddings", "List logical textual inversion embedding IDs and labels without filesystem paths.", FORGE_TOOL_SCHEMAS.list_embeddings, "read", options),
+    createForgeTool("search_resources", "Search Forge resources", "Search styles, wildcards, LoRAs, checkpoints, or embeddings by logical ID.", FORGE_TOOL_SCHEMAS.search_resources, "read", options),
+    createForgeTool("inspect_resource", "Inspect Forge resource", "Inspect one logical Forge resource without exposing filesystem paths.", FORGE_TOOL_SCHEMAS.inspect_resource, "read", options),
     createForgeTool("search_danbooru_tags", "Search Danbooru tags", "Search live Danbooru tag candidates for one or more short visual concepts.", FORGE_TOOL_SCHEMAS.search_danbooru_tags, "read", options),
-    createForgeTool("inspect_danbooru_tag", "Inspect Danbooru tag", "Inspect one Danbooru tag and optional wiki summary.", FORGE_TOOL_SCHEMAS.inspect_danbooru_tag, "read", options),
     createForgeTool("inspect_danbooru_tags", "Inspect Danbooru tags", "Inspect up to 12 selected Danbooru tags in parallel.", FORGE_TOOL_SCHEMAS.inspect_danbooru_tags, "read", options),
     createForgeTool("related_danbooru_tags", "Related Danbooru tags", "Expand one verified Danbooru seed with related tag candidates.", FORGE_TOOL_SCHEMAS.related_danbooru_tags, "read", options),
   ];

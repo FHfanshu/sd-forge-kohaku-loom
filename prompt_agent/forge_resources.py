@@ -277,7 +277,7 @@ def _search_values(item: dict[str, Any]) -> list[Any]:
 
 
 def _search_preview(item: dict[str, Any]) -> dict[str, Any]:
-    result = {key: value for key, value in item.items() if key != "metadata"}
+    result = {key: value for key, value in item.items() if key not in {"metadata", "path"}}
     for key in ("prompt", "negative_prompt", "activation_text", "negative_text"):
         if key in result:
             result[key] = _text(result[key], 280)
@@ -312,6 +312,7 @@ def inspect_resource(
         raise ValueError(f"unknown resource kind: {normalized}")
     item = _find(normalized, resource_id)
     result = dict(item)
+    result.pop("path", None)
     for key in ("prompt", "negative_prompt"):
         if key in result:
             result[key] = _text(result[key], MAX_TEXT)

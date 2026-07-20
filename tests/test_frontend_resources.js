@@ -28,8 +28,14 @@ test("appendFragment is idempotent", () => {
 });
 
 test("Danbooru tools are registered for agent execution", () => {
+    assert.deepEqual([...tools.RESOURCE_TOOLS], [
+        "search_resources",
+        "inspect_resource",
+        "search_danbooru_tags",
+        "inspect_danbooru_tags",
+        "related_danbooru_tags"
+    ]);
     assert.ok(tools.RESOURCE_TOOLS.has("search_danbooru_tags"));
-    assert.ok(tools.RESOURCE_TOOLS.has("inspect_danbooru_tag"));
     assert.ok(tools.RESOURCE_TOOLS.has("inspect_danbooru_tags"));
     assert.ok(tools.RESOURCE_TOOLS.has("related_danbooru_tags"));
 });

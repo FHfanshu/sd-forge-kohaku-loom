@@ -194,17 +194,11 @@ Migrate, in order:
 ```text
 read_prompt
 edit_prompt
-read_negative_prompt
-edit_negative_prompt
-list_resources
-read_resource_metadata
 read_generation_parameters
 apply_generation_parameters
-list_models
-list_loras
-list_embeddings
+search_resources
+inspect_resource
 search_danbooru_tags
-inspect_danbooru_tag
 inspect_danbooru_tags
 related_danbooru_tags
 ```
@@ -218,7 +212,9 @@ Exit criteria:
 - stale prompt mutations remain hash guarded;
 - failed or aborted tools do not leave the runtime blocked.
 
-Frontend TypeBox schemas and Python validation cover every listed tool. Prompt
+Frontend TypeBox schemas and Python validation cover all nine listed tools.
+Positive/negative prompts share a required `field` selector; Forge
+catalogs share `kind`. Prompt
 and generation mutations are freshness guarded, nested patch and generation
 values are revalidated, and catalog output is a logical-ID allowlist. Full
 prompt overwrite is allowed only when the current field is empty. Danbooru tag

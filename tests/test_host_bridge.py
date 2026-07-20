@@ -195,11 +195,11 @@ global.window = { __SD_FORGE_NEO_PROMPT_AGENT__: {} };
 global.document = { body: {}, getElementById: () => null, querySelectorAll: () => [], querySelector: () => null };
 global.fetch = async (url, options) => {
   calls.push({ url, body: JSON.parse(options.body) });
-  return { ok: true, json: async () => ({ ok: true, tool: "read_prompt", arguments: { target: "txt2img" } }) };
+  return { ok: true, json: async () => ({ ok: true, tool: "read_prompt", arguments: { target: "txt2img", field: "positive" } }) };
 };
 vm.runInThisContext(fs.readFileSync(process.argv.at(-1), "utf8"));
 window.__SD_FORGE_NEO_PROMPT_AGENT__.readPromptTool = async (target) => ({ ok: true, target });
-window.__SD_FORGE_NEO_PROMPT_AGENT__.executeAssistantTool({ tool: "read_prompt", arguments: { target: "txt2img" } }).then((result) => {
+window.__SD_FORGE_NEO_PROMPT_AGENT__.executeAssistantTool({ tool: "read_prompt", arguments: { target: "txt2img", field: "positive" } }).then((result) => {
   process.stdout.write(JSON.stringify({ calls, result }));
 });
 '''
@@ -214,6 +214,64 @@ window.__SD_FORGE_NEO_PROMPT_AGENT__.executeAssistantTool({ tool: "read_prompt",
         self.assertEqual("/prompt-agent/api/forge-tools/validate", result["calls"][0]["url"])
         self.assertEqual("read_prompt", result["calls"][0]["body"]["tool"])
         self.assertEqual("txt2img", result["result"]["target"])
+
+    def test_prompt_field_merge_preserves_guarded_overwrite_rules(self):
+        root = Path(__file__).resolve().parents[1]
+        source = root / "javascript" / "prompt_agent.js"
+        script = r'''
+const fs = require("fs");
+const vm = require("vm");
+class Textarea {
+  constructor(value) { this.value = value; }
+  dispatchEvent() {}
+}
+global.HTMLTextAreaElement = Textarea;
+global.HTMLInputElement = class {};
+global.HTMLSelectElement = class {};
+global.Event = class { constructor(type) { this.type = type; } };
+const positive = new Textarea("existing prompt");
+const negative = new Textarea("");
+const roots = {
+  "#txt2img_prompt": { querySelector: () => positive },
+  "#txt2img_neg_prompt": { querySelector: () => negative },
+};
+global.window = { __SD_FORGE_NEO_PROMPT_AGENT__: {} };
+global.document = {
+  body: {},
+  getElementById: () => null,
+  querySelectorAll: () => [],
+  querySelector: (selector) => roots[selector] || null,
+};
+vm.runInThisContext(fs.readFileSync(process.argv.at(-1), "utf8"));
+const tools = window.__SD_FORGE_NEO_PROMPT_AGENT__;
+tools.assistantState.promptReads.txt2img = {
+  positive: positive.value,
+  negative: negative.value,
+  positive_hash: tools.promptHash(positive.value),
+  negative_hash: tools.promptHash(negative.value),
+  context_hash: "ctx",
+};
+const rejected = tools.editPromptTool({
+  target: "txt2img", field: "positive", base_hash: tools.promptHash(positive.value), prompt: "overwrite"
+}, []);
+const accepted = tools.editPromptTool({
+  target: "txt2img", field: "negative", base_hash: tools.promptHash(negative.value), prompt: "low quality"
+}, []);
+process.stdout.write(JSON.stringify({ rejected, accepted, positive: positive.value, negative: negative.value }));
+'''
+        completed = subprocess.run(
+            [shutil.which("node"), "-", str(source)],
+            input=script,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertFalse(result["rejected"]["ok"])
+        self.assertIn("only when the current field is empty", result["rejected"]["error"])
+        self.assertTrue(result["accepted"]["ok"])
+        self.assertEqual("existing prompt", result["positive"])
+        self.assertEqual("low quality", result["negative"])
 
 if __name__ == "__main__":
     unittest.main()
