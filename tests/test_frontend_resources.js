@@ -5,11 +5,11 @@ const test = require("node:test");
 global.window = {
     location: { origin: "http://127.0.0.1:7860" },
     setTimeout,
-    kohakuLoom: {
+    __SD_FORGE_NEO_PROMPT_AGENT__: {
         assistantState: { loadedPromptSkills: {}, promptReads: {} },
         promptContextSnapshot: () => ({ context_hash: "ctx" }),
         promptFieldRootForTarget: () => ({ target: "txt2img", root: null }),
-        loomApp: () => ({ querySelector: () => null, querySelectorAll: () => [] }),
+        promptAgentApp: () => ({ querySelector: () => null, querySelectorAll: () => [] }),
         readPromptTool: async () => ({}),
         positivePromptNoPhrases: () => [],
         setNativeValueIfAvailable: () => true,
@@ -19,8 +19,8 @@ global.window = {
     }
 };
 
-require(path.resolve(__dirname, "../javascript/kohaku_loom_02_resources.js"));
-const tools = window.kohakuLoom;
+require(path.resolve(__dirname, "../javascript/prompt_agent_02_resources.js"));
+const tools = window.__SD_FORGE_NEO_PROMPT_AGENT__;
 
 test("appendFragment is idempotent", () => {
     assert.deepEqual(tools.appendFragment("base", "__artists__"), { value: "base, __artists__", changed: true });
@@ -47,11 +47,12 @@ test("batch Danbooru search forwards all queries", async () => {
         global.fetch = originalFetch;
     }
     const url = new URL(requested, window.location.origin);
+    assert.equal(url.pathname, "/prompt-agent/api/danbooru/tags/search");
     assert.deepEqual(JSON.parse(url.searchParams.get("queries")), ["blue hair", "long hair"]);
     assert.equal(url.searchParams.get("query"), null);
 });
 
 test("resource mutation guard depends on the latest prompt context, not a second user confirmation", () => {
-    window.kohakuLoom.assistantState.promptReads.txt2img = { context_hash: "ctx" };
+    window.__SD_FORGE_NEO_PROMPT_AGENT__.assistantState.promptReads.txt2img = { context_hash: "ctx" };
     assert.equal(tools.resourceMutationGuard({ target: "txt2img", context_hash: "ctx" }).ok, true);
 });

@@ -1,4 +1,9 @@
-# Kohaku Loom Migration
+# Archived Kohaku Loom Runtime Contract
+
+> Historical record only. This document describes the runtime frozen at
+> `kt-final`. It is not the current architecture or an implementation guide.
+> The active design is governed by `ROADMAP.md`, `README.md`, and
+> `docs/SESSION_SYSTEM_DESIGN.md`.
 
 ## Identity
 

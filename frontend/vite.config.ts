@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       $lib: fileURLToPath(new URL("./src/lib", import.meta.url)),
+      "@earendil-works/pi-ai": fileURLToPath(new URL("./src/pi-ai-browser.ts", import.meta.url)),
     },
   },
   build: {
@@ -20,9 +21,9 @@ export default defineConfig({
     lib: {
       entry: `${rootDir}src/main.ts`,
       // Keep the IIFE export separate from the runtime contract installed by bootstrap.
-      name: "KohakuLoomSvelteUiBundle",
+      name: "PromptAgentSvelteUiBundle",
       formats: ["iife"],
-      fileName: () => "kohaku_loom_90_ui.js",
+      fileName: () => "prompt_agent_90_ui.js",
     },
     rollupOptions: {
       output: {

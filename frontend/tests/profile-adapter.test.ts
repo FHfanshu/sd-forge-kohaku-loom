@@ -14,9 +14,9 @@ describe("profile migration adapters", () => {
       has_api_key: true,
       capabilities: { tools: true, vision: true, streaming: true, reasoning: false },
       parameters: { temperature: 0.4, top_p: 0.8, max_tokens: 2048, reasoning_effort: "none", timeout: 90, sanitize_sensitive: false, teacher_mode: "regex" },
-      model_path: "C:/models/qwen.gguf",
-      mmproj_path: "C:/models/mmproj.gguf",
-      llama_server_path: "C:/llama-server.exe",
+      local_model_configured: true,
+      mmproj_configured: true,
+      llama_server_configured: true,
       n_ctx: 8192,
       n_gpu_layers: 12,
       thinking: true,
@@ -28,6 +28,9 @@ describe("profile migration adapters", () => {
       modelId: "qwen3.5-9b-vlm",
       endpoint: "http://127.0.0.1:8080/v1",
       hasApiKey: true,
+      localModelConfigured: true,
+      mmprojConfigured: true,
+      llamaServerConfigured: true,
       nCtx: 8192,
       nGpuLayers: 12,
       parameters: { topP: 0.8, maxTokens: 2048, sanitizeSensitive: false, teacherMode: "regex" },
@@ -44,7 +47,7 @@ describe("profile migration adapters", () => {
       profiles: [
         { id: "disabled", display_name: "Disabled", model_id: "disabled", enabled: false, runtime: "remote-http", protocol: "openai-chat-completions" },
         { id: "grok", display_name: "Grok", model_id: "grok", enabled: true, runtime: "remote-http", protocol: "openai-chat-completions" },
-        { id: "local-qwen-once", display_name: "Local", model_id: "qwen", enabled: true, runtime: "llama-once", protocol: "openai-chat-completions", model_path: "C:/qwen.gguf" },
+        { id: "local-qwen-once", display_name: "Local", model_id: "qwen", enabled: true, runtime: "llama-once", protocol: "openai-chat-completions", local_model_configured: true },
       ],
     });
 
@@ -60,5 +63,21 @@ describe("profile migration adapters", () => {
       model_info: { provider_id: "openai" },
       capabilities: { vision: false },
     });
+  });
+
+  it("keeps local paths write-only", () => {
+    const profile = normalizeProfile({
+      id: "local",
+      displayName: "Local",
+      modelId: "model",
+      runtime: "llama-once",
+      protocol: "openai-chat-completions",
+      modelPath: "C:/private/model.gguf",
+      localModelConfigured: true,
+    });
+
+    expect(profile.localModelConfigured).toBe(true);
+    expect(profile).not.toHaveProperty("modelPath");
+    expect(toHostProfilePatch({ modelPath: "C:/private/model.gguf" })).toEqual({ model_path: "C:/private/model.gguf" });
   });
 });

@@ -1,4 +1,4 @@
-name: Kohaku Loom Tests
+name: Prompt Agent Tests
 
 on:
   push:
@@ -26,7 +26,7 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install -r requirements-test.txt
       - name: Compile Python sources
-        run: python -m compileall -q kohaku_loom scripts install.py tools
+        run: python -m compileall -q backend prompt_agent scripts install.py tools
       - name: Run unit tests with skip budget
         run: python tools/test_runner.py --max-skips 20
 
@@ -52,26 +52,6 @@ jobs:
         with:
           name: python-coverage
           path: coverage-python.xml
-
-  backend-kt-contract:
-    name: KohakuTerrarium contract tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements-kt-test.txt
-      - name: Install contract-test dependencies
-        run: python -m pip install -r requirements-kt-test.txt
-      - name: Install Loom Terrarium package
-        run: python -m kohakuterrarium install "$GITHUB_WORKSPACE" -e
-        env:
-          KT_CONFIG_DIR: ${{ github.workspace }}/.loom/config
-          KT_SESSION_DIR: ${{ github.workspace }}/.loom/sessions
-      - name: Run non-skippable contract suite
-        run: python tools/test_runner.py --pattern test_loom_kt_contract.py --require-kt
 
   frontend:
     name: Frontend checks and coverage
@@ -144,4 +124,4 @@ jobs:
         with:
           node-version: 22
       - name: Check browser scripts
-        run: for file in javascript/kohaku_loom*.js; do node --check "$file"; done
+        run: for file in javascript/prompt_agent*.js; do node --check "$file"; done

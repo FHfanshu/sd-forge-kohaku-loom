@@ -8,6 +8,7 @@ export default defineConfig({
     conditions: ["browser"],
     alias: {
       $lib: fileURLToPath(new URL("./src/lib", import.meta.url)),
+      "@earendil-works/pi-ai": fileURLToPath(new URL("./src/pi-ai-browser.ts", import.meta.url)),
     },
   },
   test: {

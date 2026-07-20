@@ -1,8 +1,8 @@
-# Current Architecture Audit
+# Archived Runtime Architecture Audit
 
 ## Scope
 
-This audit records the verified migration baseline at commit `b016c88`, tagged
+This historical audit records the verified migration baseline at commit `b016c88`, tagged
 `kt-final`. The repository did not contain Kotlin or Gradle sources. The old
 runtime called "KT" in code and documentation is a managed Python sidecar that
 loads the KohakuTerrarium Python package.

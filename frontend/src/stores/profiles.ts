@@ -1,47 +1,8 @@
-import { createStore } from "./store";
 import { profilePatchSchema, type Profile, type ProfilePatch, type ProfileState, type ProfileStoreActionContracts } from "../contracts";
-import { getHostApi } from "../bridge";
-import {
-  createDefaultProfileState,
-  normalizeProfile,
-  normalizeProfileState,
-  toHostProfileInput,
-  toHostProfilePatch,
-} from "../profile-adapter";
-
-let profileSyncTimer: ReturnType<typeof setTimeout> | null = null;
-
-function scheduleProfileSync(host: NonNullable<ReturnType<typeof getHostApi>>): void {
-  if (profileSyncTimer) clearTimeout(profileSyncTimer);
-  profileSyncTimer = setTimeout(() => {
-    profileSyncTimer = null;
-    void host.syncProfiles().catch(() => undefined);
-  }, 250);
-}
-
-function readHostState(): unknown {
-  if (typeof window === "undefined") return null;
-  const host = getHostApi(window.kohakuLoom);
-  return host?.profileStore.load() ?? null;
-}
-
-function initialState(): ProfileState {
-  const hostState = readHostState();
-  return hostState ? normalizeProfileState(hostState) : createDefaultProfileState();
-}
-
-function hostCall(method: keyof NonNullable<ReturnType<typeof getHostApi>>["profileStore"], ...args: unknown[]): unknown {
-  if (typeof window === "undefined") return null;
-  const host = getHostApi(window.kohakuLoom);
-  const action = host?.profileStore[method] as ((...values: unknown[]) => unknown) | undefined;
-  if (!action || !host) return null;
-  const result = action.apply(host.profileStore, args);
-  if (!["load", "current", "teacher", "session", "requestProjection"].includes(method)) {
-    if (method === "update") scheduleProfileSync(host);
-    else void host.syncProfiles().catch(() => undefined);
-  }
-  return result;
-}
+import * as api from "../profile-api";
+import { createDefaultProfileState, normalizeProfile, normalizeProfileState } from "../profile-adapter";
+import { supportsAgentChat } from "../providers/profile-capabilities";
+import { createStore } from "./store";
 
 function nextId(prefix: string, profiles: Profile[]): string {
   const used = new Set(profiles.map((profile) => profile.id));
@@ -72,135 +33,96 @@ function stateSlice(state: ProfileState): Pick<ProfileStore, "profiles" | "activ
 }
 
 export const useProfileStore = createStore<ProfileStore>((set, get) => {
-  const initial = initialState();
+  const defaults = createDefaultProfileState();
   const apply = (raw: unknown, selectedProfileId = get().selectedProfileId): void => {
     const state = normalizeProfileState(raw);
-    const selected = state.profiles.some((profile) => profile.id === selectedProfileId)
-      ? selectedProfileId
-      : state.activeProfileId;
+    const selected = state.profiles.some((profile) => profile.id === selectedProfileId) ? selectedProfileId : state.activeProfileId;
     set({ ...stateSlice(state), selectedProfileId: selected, loaded: true });
   };
-  const reload = (): void => {
-    const raw = readHostState();
-    if (raw) apply(raw);
-  };
-
-  const hasHostStore = (): boolean => {
-    if (typeof window === "undefined") return false;
-    return Boolean(getHostApi(window.kohakuLoom)?.profileStore);
+  const persist = (operation: Promise<unknown>): void => { void operation.catch(() => undefined); };
+  const reload = (): void => { persist(api.listProfiles().then((state) => apply(state))); };
+  const updateLocal = (profileId: string, patch: ProfilePatch): Profile | null => {
+    const current = get();
+    const source = current.profiles.find((profile) => profile.id === profileId);
+    if (!source) return null;
+    const value = profilePatchSchema.parse(patch);
+    const updated = normalizeProfile({
+      ...source,
+      ...value,
+      id: source.id,
+      capabilities: { ...source.capabilities, ...value.capabilities },
+      parameters: { ...source.parameters, ...value.parameters },
+      modelInfo: { ...source.modelInfo, ...value.modelInfo },
+    });
+    apply({ ...current, profiles: current.profiles.map((profile) => profile.id === profileId ? updated : profile) });
+    return updated;
   };
 
   return {
-    ...stateSlice(initial),
-    selectedProfileId: initial.activeProfileId,
+    ...stateSlice(defaults),
+    selectedProfileId: defaults.activeProfileId,
     loaded: false,
     reload,
     setState: apply,
-    setProfiles(profiles) {
-      const current = get();
-      apply({
-        version: 2,
-        activeProfileId: current.activeProfileId,
-        teacherProfileId: current.teacherProfileId,
-        sessionProfileId: current.sessionProfileId,
-        namingProfileId: current.namingProfileId,
-        profiles,
-      });
-    },
-    upsertProfile(profile) {
-      const current = get();
-      const normalized = normalizeProfile(profile);
-      apply({ ...current, profiles: current.profiles.some((item) => item.id === normalized.id)
-        ? current.profiles.map((item) => item.id === normalized.id ? normalized : item)
-        : [...current.profiles, normalized] }, normalized.id);
-    },
-    selectProfile(profileId) {
-      if (get().profiles.some((profile) => profile.id === profileId)) set({ selectedProfileId: profileId });
-    },
+    setProfiles(profiles) { apply({ ...get(), profiles }); },
+    upsertProfile(profile) { apply({ ...get(), profiles: [...get().profiles.filter((item) => item.id !== profile.id), normalizeProfile(profile)] }, profile.id); },
+    selectProfile(profileId) { if (get().profiles.some((profile) => profile.id === profileId)) set({ selectedProfileId: profileId }); },
     addProfile(seed = {}) {
-      const current = get();
-      const local = normalizeProfile({
-        ...seed,
-        id: seed.id ?? nextId("profile", current.profiles),
-        displayName: seed.displayName ?? "New profile",
-        modelId: seed.modelId ?? "model",
-      });
-      const hostResult = hostCall("add", toHostProfileInput(local));
-      const added = hostResult ? normalizeProfile(hostResult, local) : local;
-      if (hasHostStore()) reload();
-      else apply({ ...current, profiles: [...current.profiles, added] }, added.id);
-      set({ selectedProfileId: added.id });
-      return added;
+      const local = normalizeProfile({ ...seed, id: seed.id ?? nextId("profile", get().profiles), displayName: seed.displayName ?? "New profile", modelId: seed.modelId ?? "model" });
+      apply({ ...get(), profiles: [...get().profiles, local] }, local.id);
+      persist(api.createProfile(local).then((remote) => {
+        const current = get();
+        apply({ ...current, profiles: current.profiles.map((profile) => profile.id === local.id ? normalizeProfile(remote, profile) : profile) }, remote.id);
+      }));
+      return local;
     },
     duplicateProfile(profileId) {
-      const current = get();
-      const source = current.profiles.find((profile) => profile.id === profileId);
+      const source = get().profiles.find((profile) => profile.id === profileId);
       if (!source) return null;
-      const hostResult = hostCall("duplicate", profileId);
-      const copy = hostResult
-        ? normalizeProfile(hostResult, { ...source, id: nextId(source.id, current.profiles), displayName: `${source.displayName} copy` })
-        : normalizeProfile({ ...source, id: nextId(source.id, current.profiles), displayName: `${source.displayName} copy` });
-      if (hasHostStore()) reload();
-      else apply({ ...current, profiles: [...current.profiles, copy] }, copy.id);
-      set({ selectedProfileId: copy.id });
+      const copy = normalizeProfile({ ...source, id: nextId(source.id, get().profiles), displayName: `${source.displayName} copy` });
+      apply({ ...get(), profiles: [...get().profiles, copy] }, copy.id);
+      persist(api.duplicateProfile(profileId).then((remote) => {
+        const current = get();
+        apply({ ...current, profiles: current.profiles.map((profile) => profile.id === copy.id ? normalizeProfile(remote, copy) : profile) }, remote.id);
+      }));
       return copy;
     },
     updateProfile(profileId, patch) {
-      const current = get();
-      const source = current.profiles.find((profile) => profile.id === profileId);
-      if (!source) return null;
-      const normalizedPatch = profilePatchSchema.parse(patch);
-      const hostResult = hostCall("update", profileId, toHostProfilePatch(normalizedPatch));
-      const updated = hostResult ? normalizeProfile(hostResult, source) : normalizeProfile({ ...source, ...patch, capabilities: { ...source.capabilities, ...patch.capabilities }, parameters: { ...source.parameters, ...patch.parameters }, modelInfo: { ...source.modelInfo, ...patch.modelInfo } });
-      if (hasHostStore()) reload();
-      else apply({ ...current, profiles: current.profiles.map((profile) => profile.id === profileId ? updated : profile) });
+      const updated = updateLocal(profileId, patch);
+      if (updated) persist(api.updateProfile(profileId, patch).then((remote) => updateLocal(profileId, normalizeProfile(remote, updated))));
       return updated;
     },
     deleteProfile(profileId) {
-      const source = get().profiles.find((profile) => profile.id === profileId);
-      if (!source) return false;
-      const hostResult = hostCall("delete", profileId);
-      if (hasHostStore()) reload();
-      else {
-        const current = get();
-        apply({ ...current, profiles: current.profiles.filter((profile) => profile.id !== profileId) });
-      }
+      const current = get();
+      if (!current.profiles.some((profile) => profile.id === profileId) || current.profiles.length <= 1) return false;
+      apply({ ...current, profiles: current.profiles.filter((profile) => profile.id !== profileId) });
+      persist(api.deleteProfile(profileId));
       return true;
     },
     activateProfile(profileId) {
-      if (!get().profiles.some((profile) => profile.id === profileId && profile.enabled)) return;
-      hostCall("setActive", profileId);
-      if (hasHostStore()) reload();
-      else set({ activeProfileId: profileId });
+      if (!get().profiles.some((profile) => profile.id === profileId && profile.enabled && supportsAgentChat(profile))) return;
+      set({ activeProfileId: profileId });
+      persist(api.setProfileRoute("active", profileId).then((state) => apply(state)));
     },
     setTeacherProfile(profileId) {
-      if (!get().profiles.some((profile) => profile.id === profileId && profile.enabled)) return;
-      hostCall("setTeacher", profileId);
-      if (hasHostStore()) reload();
-      else set({ teacherProfileId: profileId });
+      if (!get().profiles.some((profile) => profile.id === profileId && profile.enabled && supportsAgentChat(profile))) return;
+      set({ teacherProfileId: profileId });
+      persist(api.setProfileRoute("teacher", profileId).then((state) => apply(state)));
     },
     setSessionProfile(profileId) {
       if (!get().profiles.some((profile) => ["llama-endpoint", "llama-once"].includes(profile.runtime) && profile.id === profileId && profile.enabled)) return;
-      hostCall("setSession", profileId);
-      if (hasHostStore()) reload();
-      else set({ sessionProfileId: profileId });
+      set({ sessionProfileId: profileId });
+      persist(api.setProfileRoute("session", profileId).then((state) => apply(state)));
     },
     setNamingProfile(profileId) {
       if (!get().profiles.some((profile) => profile.runtime === "llama-once" && profile.id === profileId && profile.enabled)) return;
-      hostCall("setNaming", profileId);
-      if (hasHostStore()) reload();
-      else set({ namingProfileId: profileId });
+      set({ namingProfileId: profileId });
+      persist(api.setProfileRoute("naming", profileId).then((state) => apply(state)));
     },
     restoreDefaults() {
-      const hostResult = hostCall("restoreDefaults");
-      if (hasHostStore()) reload();
-      else apply(hostResult ?? createDefaultProfileState(), get().activeProfileId);
+      apply(defaults, defaults.activeProfileId);
+      persist(api.restoreDefaultProfiles().then((state) => apply(state, state.activeProfileId)));
     },
-    reset() {
-      if (profileSyncTimer) clearTimeout(profileSyncTimer);
-      profileSyncTimer = null;
-      const defaults = createDefaultProfileState();
-      set({ ...stateSlice(defaults), selectedProfileId: defaults.activeProfileId, loaded: false });
-    },
+    reset() { set({ ...stateSlice(defaults), selectedProfileId: defaults.activeProfileId, loaded: false }); },
   };
 });

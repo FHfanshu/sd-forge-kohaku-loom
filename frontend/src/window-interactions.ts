@@ -163,7 +163,7 @@ export function pointerWindow(node: HTMLElement, options: PointerWindowOptions) 
   const down = (event: PointerEvent) => {
     if (current.disabled) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
-    if (!node.hasAttribute("data-loom-interaction-handle") && event.target instanceof Element && event.target.closest("button, input, textarea, select, a")) return;
+    if (!node.hasAttribute("data-prompt-agent-interaction-handle") && event.target instanceof Element && event.target.closest("button, input, textarea, select, a")) return;
     event.preventDefault();
     const start = clampWindowLayout(current.layout(), readViewportRect(), current.minimum);
     const startX = event.clientX;

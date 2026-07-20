@@ -15,14 +15,14 @@
   const content = $derived(message.content && message.content !== detail ? message.content : "");
 </script>
 
-<details class="kl-tool-card" data-tool-result="true">
+<details class="pa-tool-card" data-prompt-agent-tool-result="true">
   <summary>
-    <span class="kl-tool-title"><ChevronRight size={14} aria-hidden="true" /><strong>{message.tool?.name ?? t("chat.tool_call", "Tool call")}</strong></span>
-    <span class:kl-tool-status-error={message.tool?.status === "error"} class="kl-tool-status">{t(`chat.tool_status.${message.tool?.status ?? "complete"}`, message.tool?.status ?? "complete")}</span>
+     <span class="pa-tool-title"><ChevronRight size={14} aria-hidden="true" /><strong>{message.tool?.name ?? t("chat.tool_call", "Tool call")}</strong></span>
+     <span class:pa-tool-status-error={message.tool?.status === "error"} class="pa-tool-status">{t(`chat.tool_status.${message.tool?.status ?? "complete"}`, message.tool?.status ?? "complete")}</span>
   </summary>
-  <div class="kl-tool-result">
+   <div class="pa-tool-result">
     {#if detail}<p>{detail}</p>{/if}
     {#if content}<Markdown content={content} streaming={message.status === "streaming"} />{/if}
-    {#if message.tool?.undoable && !message.tool.undone}<button type="button" class="kl-tool-undo" onclick={() => void onundo?.(message)}><Undo2 size={13} /> {t("chat.undo_change", "Undo change")}</button>{:else if message.tool?.undone}<span class="kl-tool-undone">{t("chat.change_undone", "Change undone")}</span>{/if}
+     {#if message.tool?.undoable && !message.tool.undone}<button type="button" class="pa-tool-undo" onclick={() => void onundo?.(message)}><Undo2 size={13} /> {t("chat.undo_change", "Undo change")}</button>{:else if message.tool?.undone}<span class="pa-tool-undone">{t("chat.change_undone", "Change undone")}</span>{/if}
   </div>
 </details>

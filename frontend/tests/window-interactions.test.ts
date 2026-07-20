@@ -66,7 +66,7 @@ describe("window viewport boundaries", () => {
 
   it("keeps message copy actions visible on coarse touch pointers", () => {
     const css = readFileSync("src/styles.css", "utf-8");
-    expect(css).toMatch(/@media \(hover: none\), \(pointer: coarse\)[\s\S]*?\.kl-message-heading, \.kl-message-footer \{ position: static; opacity: 1; pointer-events: auto; \}/);
-    expect(css).toMatch(/\.kl-message-tool > :is\(\.kl-message-heading, \.kl-message-footer\) \{ display: none; \}/);
+    expect(css).toMatch(/@media \(hover: none\), \(pointer: coarse\)[\s\S]*?\.pa-message-heading, \.pa-message-footer \{ position: static; opacity: 1; pointer-events: auto; \}/);
+    expect(css).toMatch(/\.pa-message-tool > :is\(\.pa-message-heading, \.pa-message-footer\) \{ display: none; \}/);
   });
 });

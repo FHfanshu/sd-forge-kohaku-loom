@@ -1,5 +1,13 @@
 import { createStore } from "./store";
 import type { LocaleCode, PythonTranslationBundle } from "../contracts";
+import { promptAgentNamespace } from "../bridge";
+import {
+  PROMPT_AGENT_STORAGE_KEYS,
+  LEGACY_STORAGE_KEYS,
+  readMigratedStorageValue,
+  removePromptAgentStorageValue,
+  writePromptAgentStorageValue,
+} from "../storage-migrations";
 import {
   metadataForBundle,
   preloadPythonBundles,
@@ -11,7 +19,7 @@ import {
   type RuntimeLocaleMetadata,
 } from "../i18n/runtime";
 
-const MANUAL_LOCALE_STORAGE_KEY = "loom_assistant_locale";
+const MANUAL_LOCALE_STORAGE_KEY = PROMPT_AGENT_STORAGE_KEYS.locale;
 let hostLocaleUnsubscribe: (() => void) | null = null;
 
 export interface I18nStore {
@@ -42,9 +50,9 @@ function readBrowserLanguages(): readonly string[] {
 
 function readForgeLocale(): unknown {
   if (typeof window === "undefined") return undefined;
-  const namespace = window.kohakuLoom;
+  const namespace = promptAgentNamespace(window);
   const host = readHostLocaleApi(namespace?.hostApi);
-  return host?.getLocaleHints?.() ?? namespace?.forgeLocale ?? namespace?.loomForgeLocale ?? namespace?.loomActiveLocale;
+  return host?.getLocaleHints?.() ?? namespace?.forgeLocale ?? namespace?.activeLocale;
 }
 
 interface HostLocaleApi {
@@ -63,7 +71,7 @@ function readHostLocaleApi(value: unknown): HostLocaleApi | null {
 function readManualLocale(): LocaleCode | null {
   const storage = getStorage();
   if (!storage) return null;
-  const raw = storage.getItem(MANUAL_LOCALE_STORAGE_KEY);
+  const raw = readMigratedStorageValue(storage, MANUAL_LOCALE_STORAGE_KEY, LEGACY_STORAGE_KEYS.locale);
   if (!raw || raw.toLowerCase() === "auto") return null;
   return recognizedLocale(raw);
 }
@@ -105,14 +113,15 @@ export const useI18nStore = createStore<I18nStore>((set, get) => ({
     const state = get();
     const storage = getStorage();
     if (storage) {
-      if (manualLocale) storage.setItem(MANUAL_LOCALE_STORAGE_KEY, manualLocale);
-      else storage.removeItem(MANUAL_LOCALE_STORAGE_KEY);
+      if (manualLocale) writePromptAgentStorageValue(storage, MANUAL_LOCALE_STORAGE_KEY, LEGACY_STORAGE_KEYS.locale, manualLocale);
+      else removePromptAgentStorageValue(storage, MANUAL_LOCALE_STORAGE_KEY, LEGACY_STORAGE_KEYS.locale);
     }
     set({ manualLocale, locale: chooseLocale(manualLocale, state.forgeLocale, state.browserLanguages) });
   },
   clearManualLocale() {
     const state = get();
-    getStorage()?.removeItem(MANUAL_LOCALE_STORAGE_KEY);
+    const storage = getStorage();
+    if (storage) removePromptAgentStorageValue(storage, MANUAL_LOCALE_STORAGE_KEY, LEGACY_STORAGE_KEYS.locale);
     set({ manualLocale: null, locale: chooseLocale(null, state.forgeLocale, state.browserLanguages) });
   },
   setForgeLocale(locale) {
@@ -134,7 +143,7 @@ export const useI18nStore = createStore<I18nStore>((set, get) => ({
   subscribeToHostLocaleHints() {
     if (hostLocaleUnsubscribe) return hostLocaleUnsubscribe;
     if (typeof window === "undefined") return () => undefined;
-    const host = readHostLocaleApi(window.kohakuLoom?.hostApi);
+    const host = readHostLocaleApi(promptAgentNamespace(window)?.hostApi);
     if (!host || typeof host.subscribeLocaleHints !== "function") return () => undefined;
     const unsubscribe = host.subscribeLocaleHints((hints) => {
       get().applyHostLocaleHints(hints);
@@ -150,12 +159,12 @@ export const useI18nStore = createStore<I18nStore>((set, get) => ({
     set({ loading: true, error: null });
     try {
       get().subscribeToHostLocaleHints();
-      const host = typeof window !== "undefined" ? readHostLocaleApi(window.kohakuLoom?.hostApi) : null;
+      const host = typeof window !== "undefined" ? readHostLocaleApi(promptAgentNamespace(window)?.hostApi) : null;
       if (host?.getLocaleHints) {
         get().applyHostLocaleHints(host.getLocaleHints());
       }
       await probePythonLocaleMetadata(fetchImpl).catch(() => undefined);
-      const preloaded = await preloadPythonBundles(fetchImpl, "/kohaku-loom/i18n", signal);
+      const preloaded = await preloadPythonBundles(fetchImpl, "/prompt-agent/api/i18n", signal);
       get().setBundles(preloaded);
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) });

@@ -37,16 +37,16 @@ afterEach(() => {
 });
 
 describe("Svelte chat surface", () => {
-  it("renders markdown, tools, reasoning, usage, and branches", async () => {
+  it("renders markdown, tools, reasoning, and usage without branch controls", async () => {
     const { container } = render(Surface, { initialOpen: true, messages: mockMessages, actions: {} });
-    expect(await screen.findByRole("dialog", { name: "Kohaku Loom chat" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open Kohaku Loom" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Prompt Agent chat" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Prompt Agent" })).not.toBeInTheDocument();
     expect(screen.getByText("middle third is carrying too many competing details")).toBeInTheDocument();
     expect(screen.getAllByText("read_prompt").length).toBeGreaterThan(0);
     expect(screen.getByText(/642 in/)).toBeInTheDocument();
     expect(screen.getByText("Reasoning trace").closest("details")).not.toHaveAttribute("open");
-    expect(screen.getByText("1 / 2")).toBeInTheDocument();
-    const tool = container.querySelector("[data-tool-result='true']")!;
+    expect(screen.queryByLabelText("Assistant response branches")).not.toBeInTheDocument();
+    const tool = container.querySelector("[data-prompt-agent-tool-result='true']")!;
     const response = screen.getByText("middle third is carrying too many competing details");
     expect(tool.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -55,16 +55,16 @@ describe("Svelte chat surface", () => {
     const user = userEvent.setup();
     const { container } = render(Surface, { initialOpen: true, messages: mockMessages, actions: {} });
 
-    const toolResult = container.querySelector<HTMLDetailsElement>("[data-tool-result='true']");
+    const toolResult = container.querySelector<HTMLDetailsElement>("[data-prompt-agent-tool-result='true']");
     expect(toolResult).not.toBeNull();
     expect(toolResult?.open).toBe(false);
     await user.click(toolResult!.querySelector("summary")!);
     expect(toolResult?.open).toBe(true);
 
-    const reasoning = container.querySelector<HTMLDetailsElement>(".kl-reasoning");
+    const reasoning = container.querySelector<HTMLDetailsElement>(".pa-reasoning");
     expect(reasoning).not.toBeNull();
     expect(reasoning?.open).toBe(false);
-    expect(reasoning?.querySelector(".kl-reasoning-preview")).toHaveTextContent(mockMessages[2].reasoning!);
+    expect(reasoning?.querySelector(".pa-reasoning-preview")).toHaveTextContent(mockMessages[2].reasoning!);
 
     await user.click(screen.getByRole("button", { name: "Collapse response" }));
     expect(screen.queryByText("middle third is carrying too many competing details")).not.toBeInTheDocument();
@@ -81,8 +81,6 @@ describe("Svelte chat surface", () => {
         content: "**partial reply**",
         status: "streaming",
         attachments: [],
-        branchIndex: 0,
-        branchCount: 1,
         createdAt: Date.now(),
       }],
       actions: {},
@@ -101,8 +99,6 @@ describe("Svelte chat surface", () => {
         reasoning: "**compare** `<script>alert(1)</script>`",
         status: "streaming",
         attachments: [],
-        branchIndex: 0,
-        branchCount: 1,
         createdAt: Date.now(),
       }],
       actions: {},
@@ -115,13 +111,13 @@ describe("Svelte chat surface", () => {
     const user = userEvent.setup();
     render(Surface, { initialOpen: true, actions: {} });
     expect(screen.getByText("Start with the current prompt")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Close Kohaku Loom" }));
-    expect(screen.getByRole("button", { name: "Open Kohaku Loom" })).toHaveTextContent("Assistant");
+    await user.click(screen.getByRole("button", { name: "Close Prompt Agent" }));
+    expect(screen.getByRole("button", { name: "Open Prompt Agent" })).toHaveTextContent("Prompt Agent");
   });
 
   it("moves the launcher without opening the chat", async () => {
     render(Surface, { actions: {} });
-    const launcher = screen.getByRole("button", { name: "Open Kohaku Loom" });
+    const launcher = screen.getByRole("button", { name: "Open Prompt Agent" });
     await fireEvent.pointerDown(launcher, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 20, clientY: 20 });
     await fireEvent.pointerMove(launcher, { pointerId: 1, pointerType: "mouse", clientX: 180, clientY: 120 });
     await fireEvent.pointerUp(launcher, { pointerId: 1, pointerType: "mouse", clientX: 180, clientY: 120 });
@@ -135,12 +131,12 @@ describe("Svelte chat surface", () => {
     const newSession = vi.fn();
     render(Surface, { actions: { newSession } });
 
-    await user.click(screen.getByRole("button", { name: "Open Kohaku Loom" }));
-    const composer = screen.getByRole("textbox", { name: "Message Kohaku Loom" });
+    await user.click(screen.getByRole("button", { name: "Open Prompt Agent" }));
+    const composer = screen.getByRole("textbox", { name: "Message Prompt Agent" });
     await user.type(composer, "Preserve this draft");
     expect(newSession).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Close Kohaku Loom" }));
-    await user.click(screen.getByRole("button", { name: "Open Kohaku Loom" }));
+    await user.click(screen.getByRole("button", { name: "Close Prompt Agent" }));
+    await user.click(screen.getByRole("button", { name: "Open Prompt Agent" }));
     expect(composer).toHaveValue("Preserve this draft");
     expect(newSession).not.toHaveBeenCalled();
   });
@@ -149,14 +145,14 @@ describe("Svelte chat surface", () => {
     const user = userEvent.setup();
     const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
     const clientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
-    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get() { return this.classList.contains("kl-message-scroll") ? 900 : 0; } });
-    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get() { return this.classList.contains("kl-message-scroll") ? 200 : 0; } });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get() { return this.classList.contains("pa-message-scroll") ? 900 : 0; } });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get() { return this.classList.contains("pa-message-scroll") ? 200 : 0; } });
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
     useChatStore.getState().setMessages(mockMessages.map((message) => message.id === "mock-assistant-1" ? { ...message, status: "streaming" } : message));
     try {
       const { container } = render(Surface, { actions: {} });
-      await user.click(screen.getByRole("button", { name: "Open Kohaku Loom" }));
-      const scroller = container.querySelector<HTMLElement>(".kl-message-scroll")!;
+      await user.click(screen.getByRole("button", { name: "Open Prompt Agent" }));
+      const scroller = container.querySelector<HTMLElement>(".pa-message-scroll")!;
       expect(scroller.scrollTop).toBe(900);
 
       scroller.scrollTop = 300;
@@ -187,8 +183,8 @@ describe("Svelte chat surface", () => {
 
     useUiStore.getState().setLayout("desktop", { left: 24, top: 9999, width: 460, height: 1200 });
     render(Surface, { initialOpen: true, actions: {} });
-    const dialog = screen.getByRole("dialog", { name: "Kohaku Loom chat" });
-    const composer = screen.getByRole("textbox", { name: "Message Kohaku Loom" });
+    const dialog = screen.getByRole("dialog", { name: "Prompt Agent chat" });
+    const composer = screen.getByRole("textbox", { name: "Message Prompt Agent" });
     expect(dialog).toHaveStyle({ height: "752px" });
 
     composer.focus();
@@ -208,9 +204,9 @@ describe("Svelte chat surface", () => {
     const sendMessage = vi.fn();
     render(Surface, { actions: { newSession, sendMessage } });
 
-    await user.click(screen.getByRole("button", { name: "Open Kohaku Loom" }));
+    await user.click(screen.getByRole("button", { name: "Open Prompt Agent" }));
     await user.click(screen.getByRole("button", { name: "Start a new chat" }));
-    await user.type(screen.getByRole("textbox", { name: "Message Kohaku Loom" }), "No duplicate session");
+    await user.type(screen.getByRole("textbox", { name: "Message Prompt Agent" }), "No duplicate session");
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(sendMessage).not.toHaveBeenCalled();
@@ -222,10 +218,10 @@ describe("Svelte chat surface", () => {
     const user = userEvent.setup();
     const sendMessage = vi.fn();
     render(Surface, { initialOpen: true, actions: { sendMessage } });
-    await user.type(screen.getByRole("textbox", { name: "Message Kohaku Loom" }), "Refine this prompt");
+    await user.type(screen.getByRole("textbox", { name: "Message Prompt Agent" }), "Refine this prompt");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "Refine this prompt", reasoning: "low" }));
-    expect(screen.getByRole("textbox", { name: "Message Kohaku Loom" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Message Prompt Agent" })).toHaveValue("");
     expect(screen.queryByRole("button", { name: /Permission mode/ })).not.toBeInTheDocument();
   });
 
@@ -233,7 +229,7 @@ describe("Svelte chat surface", () => {
     const user = userEvent.setup();
     const sendMessage = vi.fn();
     render(Surface, { initialOpen: true, actions: { sendMessage } });
-    const composer = screen.getByRole("textbox", { name: "Message Kohaku Loom" });
+    const composer = screen.getByRole("textbox", { name: "Message Prompt Agent" });
     await user.type(composer, "Send above the keyboard");
     expect(composer).toHaveFocus();
     expect(screen.queryByRole("button", { name: "Resize chat window" })).not.toBeInTheDocument();
@@ -252,7 +248,7 @@ describe("Svelte chat surface", () => {
     let accept!: () => void;
     const sendMessage = vi.fn(() => new Promise<void>((resolve) => { accept = resolve; }));
     render(Surface, { initialOpen: true, actions: { sendMessage } });
-    const composer = screen.getByRole("textbox", { name: "Message Kohaku Loom" });
+    const composer = screen.getByRole("textbox", { name: "Message Prompt Agent" });
     await user.type(composer, "hello");
 
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -260,37 +256,6 @@ describe("Svelte chat surface", () => {
     expect(composer).toHaveValue("");
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "hello" }));
     accept();
-  });
-
-  it("loads Edit into the composer and reruns only through the existing send button", async () => {
-    const user = userEvent.setup();
-    const sendMessage = vi.fn();
-    render(Surface, { initialOpen: true, messages: mockMessages, actions: { sendMessage } });
-
-    await user.click(screen.getByRole("button", { name: "Edit" }));
-    const composer = screen.getByRole("textbox", { name: "Message Kohaku Loom" });
-    expect(composer).toHaveValue(mockMessages[0].content);
-    expect(screen.getByText("Editing message")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /save/i })).not.toBeInTheDocument();
-    await user.clear(composer);
-    await user.type(composer, "Edited request");
-    expect(sendMessage).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "Edited request", editOf: mockMessages[0].id }));
-  });
-
-  it("shows regeneration progress and reports a recoverable failure", async () => {
-    const user = userEvent.setup();
-    let reject!: (error: Error) => void;
-    const regenerate = vi.fn(() => new Promise<void>((_resolve, rejectPromise) => { reject = rejectPromise; }));
-    render(Surface, { initialOpen: true, messages: mockMessages, actions: { regenerate } });
-
-    await user.click(screen.getByRole("button", { name: "Regenerate" }));
-    expect(regenerate).toHaveBeenCalledWith(mockMessages.at(-1));
-    reject(new Error("regeneration unavailable"));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("regeneration unavailable");
   });
 
   it("materializes attached images only when sending and releases accepted previews", async () => {
@@ -326,7 +291,7 @@ describe("Svelte chat surface", () => {
     const fileInput = container.querySelector<HTMLInputElement>('input[type="file"][multiple]')!;
 
     await user.upload(fileInput, new File([new Uint8Array([1, 2, 3])], "message.png", { type: "image/png" }));
-    await user.type(screen.getByRole("textbox", { name: "Message Kohaku Loom" }), "Keep the preview");
+    await user.type(screen.getByRole("textbox", { name: "Message Prompt Agent" }), "Keep the preview");
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => expect(screen.getByText("Keep the preview", { exact: true })).toBeInTheDocument());
@@ -363,11 +328,11 @@ describe("Svelte chat surface", () => {
     const fileInput = container.querySelector<HTMLInputElement>('input[type="file"][multiple]')!;
 
     await user.upload(fileInput, new File([new Uint8Array([1, 2, 3])], "draft.png", { type: "image/png" }));
-    await user.type(screen.getByRole("textbox", { name: "Message Kohaku Loom" }), "Keep this draft");
+    await user.type(screen.getByRole("textbox", { name: "Message Prompt Agent" }), "Keep this draft");
     await user.click(screen.getByRole("button", { name: "Start a new chat" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("session unavailable");
-    expect(screen.getByRole("textbox", { name: "Message Kohaku Loom" })).toHaveValue("Keep this draft");
+    expect(screen.getByRole("textbox", { name: "Message Prompt Agent" })).toHaveValue("Keep this draft");
     expect(screen.getByRole("button", { name: "Preview draft.png" })).toBeInTheDocument();
     expect(revoke).not.toHaveBeenCalled();
   });
@@ -383,7 +348,7 @@ describe("Svelte chat surface", () => {
       ],
       actions: { sendMessage },
     });
-    const composer = screen.getByRole("textbox", { name: "Message Kohaku Loom" });
+    const composer = screen.getByRole("textbox", { name: "Message Prompt Agent" });
     await user.type(composer, "Keep this draft");
 
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -441,7 +406,7 @@ describe("Svelte chat surface", () => {
     expect(newSession).toHaveBeenCalledOnce();
   });
 
-  it("uses separate stop and queue actions while a request is active", async () => {
+  it("keeps the next draft while exposing only stop during an active request", async () => {
     const user = userEvent.setup();
     useChatStore.getState().beginRequest("active");
     useRuntimeStore.getState().setWorking("thinking");
@@ -449,9 +414,10 @@ describe("Svelte chat surface", () => {
     const stopRequest = vi.fn();
     render(Surface, { initialOpen: true, actions: { sendMessage, stopRequest } });
     expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
-    await fireEvent.input(screen.getByRole("textbox", { name: "Message Kohaku Loom" }), { target: { value: "Follow up" } });
-    await user.click(screen.getByRole("button", { name: "Queue message" }));
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "Follow up" }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Message Prompt Agent" }), { target: { value: "Follow up" } });
+    expect(screen.queryByRole("button", { name: "Queue message" })).not.toBeInTheDocument();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Message Prompt Agent" })).toHaveValue("Follow up");
     await user.click(screen.getByRole("button", { name: "Stop response" }));
     expect(stopRequest).toHaveBeenCalledOnce();
   });
@@ -497,7 +463,7 @@ describe("Svelte chat surface", () => {
     let accept!: () => void;
     const sendMessage = vi.fn(() => new Promise<void>((resolve) => { accept = resolve; }));
     render(Surface, { initialOpen: true, actions: { sendMessage } });
-    const composer = screen.getByRole("textbox", { name: "Message Kohaku Loom" });
+    const composer = screen.getByRole("textbox", { name: "Message Prompt Agent" });
 
     await user.type(composer, "First request");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -507,11 +473,11 @@ describe("Svelte chat surface", () => {
     await waitFor(() => expect(composer).toHaveValue(" and next draft"));
   });
 
-  it("shows a recoverable status while the sidecar is starting", () => {
+  it("shows a recoverable status while Prompt Agent is starting", () => {
     useRuntimeStore.getState().setStartup("starting");
     render(Surface, { initialOpen: true, actions: { sendMessage: vi.fn() } });
 
-    expect(screen.getByRole("status")).toHaveTextContent("Loom runtime is starting or unavailable");
+    expect(screen.getByRole("status")).toHaveTextContent("Prompt Agent is starting or unavailable");
   });
 
   it("shows connection progress instead of mock history while the host bridge is unavailable", async () => {
@@ -523,38 +489,26 @@ describe("Svelte chat surface", () => {
     expect(screen.queryByText("Mock archived chat")).not.toBeInTheDocument();
   });
 
-  it("offers retry after the host connection deadline", async () => {
-    vi.useFakeTimers();
+  it("offers retry when local session storage cannot initialize", async () => {
+    const originalIndexedDb = globalThis.indexedDB;
+    Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: undefined });
     render(Surface, { initialOpen: true });
 
-    await vi.advanceTimersByTimeAsync(15_100);
-
-    expect(screen.getByRole("alert")).toHaveTextContent("host API did not become ready");
+    await waitFor(() => expect(screen.getAllByRole("alert")[0]).toHaveTextContent(/indexedDB|reading 'open'/));
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-  });
-
-  it("offers retry for failed queued messages and exposes paused state", async () => {
-    const user = userEvent.setup();
-    const retryQueuedMessage = vi.fn();
-    useRuntimeStore.getState().setQueuePaused(true);
-    useChatStore.getState().upsertQueue({ id: "failed-1", text: "Try again", attachments: [], state: "failed", createdAt: 1 });
-    render(Surface, { initialOpen: true, actions: { retryQueuedMessage } });
-
-    expect(screen.getByRole("status")).toHaveTextContent("Queue is paused");
-    await user.click(screen.getByRole("button", { name: "Retry queued message failed-1" }));
-    expect(retryQueuedMessage).toHaveBeenCalledWith("failed-1");
+    Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: originalIndexedDb });
   });
 
   it("keeps the composer input and actions inside one rounded shell", () => {
     const { container } = render(Surface, { initialOpen: true, actions: {} });
-    const composer = container.querySelector("form.kl-composer");
+    const composer = container.querySelector("form.pa-composer");
 
     expect(composer).not.toBeNull();
     expect(composer?.querySelector("textarea")).toBeInTheDocument();
-    expect(composer?.querySelector(".kl-composer-bottom")).toBeInTheDocument();
-    expect(composer?.querySelector(".kl-send-button")).toBeInTheDocument();
-    expect(composer?.querySelector(".kl-composer-bottom")?.closest("form")).toBe(composer);
-    expect(composer?.querySelector(".kl-send-button")?.closest("form")).toBe(composer);
+    expect(composer?.querySelector(".pa-composer-bottom")).toBeInTheDocument();
+    expect(composer?.querySelector(".pa-send-button")).toBeInTheDocument();
+    expect(composer?.querySelector(".pa-composer-bottom")?.closest("form")).toBe(composer);
+    expect(composer?.querySelector(".pa-send-button")?.closest("form")).toBe(composer);
   });
 
   it("switches the active model from the composer", async () => {
@@ -592,6 +546,6 @@ describe("Svelte chat surface", () => {
     await user.click(screen.getByRole("button", { name: "Change reasoning effort" }));
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Reasoning effort" })).not.toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "Kohaku Loom chat" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Prompt Agent chat" })).toBeInTheDocument();
   });
 });

@@ -1,2 +1,1 @@
-openai>=1.68.0,<3
-google-genai>=1.0.0,<2
+httpx>=0.27,<1

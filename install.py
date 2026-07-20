@@ -4,5 +4,5 @@ import launch
 
 
 requirements = Path(__file__).parent / "requirements.txt"
-if not launch.is_installed("openai") or not launch.is_installed("google.genai"):
-    launch.run_pip(f'install -r "{requirements}"', "remote SDKs for Kohaku Loom")
+if not launch.is_installed("httpx"):
+    launch.run_pip(f'install -r "{requirements}"', "Prompt Agent provider proxy")

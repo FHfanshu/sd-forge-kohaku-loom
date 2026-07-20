@@ -1,4 +1,4 @@
-import type { ChatMessage, HistoryRow, LoomActionHandlers } from "./contracts";
+import type { ChatMessage, HistoryRow, PromptAgentActionHandlers } from "./contracts";
 
 export const mockMessages: ChatMessage[] = [
   {
@@ -7,8 +7,6 @@ export const mockMessages: ChatMessage[] = [
     content: "Read the current prompt and tell me where the composition feels crowded.",
     status: "complete",
     attachments: [],
-    branchIndex: 0,
-    branchCount: 1,
     createdAt: 1,
   },
   {
@@ -18,8 +16,6 @@ export const mockMessages: ChatMessage[] = [
     status: "complete",
     tool: { name: "read_prompt", status: "complete", detail: "Prompt context captured" },
     attachments: [],
-    branchIndex: 0,
-    branchCount: 1,
     createdAt: 2,
   },
   {
@@ -30,19 +26,16 @@ export const mockMessages: ChatMessage[] = [
     status: "complete",
     usage: { inputTokens: 642, outputTokens: 118, latencyMs: 4200 },
     attachments: [],
-    branchIndex: 0,
-    branchCount: 2,
     createdAt: 3,
   },
 ];
 
 export const mockHistory: HistoryRow[] = [
-  { id: "kt-1", source: "KT", title: "Crowded middle third", preview: "Read the current prompt and tell me...", updatedAt: "Today, 14:42", messageCount: 8 },
-  { id: "kt-2", source: "KT", title: "Rainy neon study", preview: "Keep the palette restrained and...", updatedAt: "Yesterday", messageCount: 14 },
-  { id: "legacy-1", source: "legacy", title: "Portrait prompt notes", preview: "A legacy Forge assistant session", updatedAt: "Jun 28", messageCount: 5 },
+  { id: "local-1", source: "prompt-agent", title: "Crowded middle third", preview: "Read the current prompt and tell me...", updatedAt: "Today, 14:42", messageCount: 8 },
+  { id: "local-2", source: "prompt-agent", title: "Rainy neon study", preview: "Keep the palette restrained and...", updatedAt: "Yesterday", messageCount: 14 },
 ];
 
-export const noopActions: LoomActionHandlers = {
+export const noopActions: PromptAgentActionHandlers = {
   sendMessage: () => undefined,
   stopRequest: () => undefined,
   attachFiles: () => undefined,
@@ -53,10 +46,7 @@ export const noopActions: LoomActionHandlers = {
   copyMessage: async (message) => {
     if (typeof navigator !== "undefined" && navigator.clipboard) await navigator.clipboard.writeText(message.content);
   },
-  regenerate: () => undefined,
   undoToolMutation: () => undefined,
-  changeBranch: () => undefined,
-  removeQueuedMessage: () => undefined,
   selectHistory: () => undefined,
   newSession: () => undefined,
   openSettings: () => undefined,

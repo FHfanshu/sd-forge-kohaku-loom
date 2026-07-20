@@ -1,5 +1,5 @@
 import { mount, unmount } from "svelte";
-import { getHostApi, handshakeWithLoom, type BridgeHandshakeRequest, type KohakuLoomBridgeApi } from "./bridge";
+import { getHostApi, handshakeWithPromptAgent, promptAgentNamespace, type BridgeHandshakeRequest, type PromptAgentBridgeApi, type PromptAgentWindow } from "./bridge";
 import Shell from "./components/Shell.svelte";
 import { useUiStore } from "./stores/ui";
 
@@ -9,9 +9,9 @@ let mountTarget: HTMLElement | null = null;
 
 export function mountSvelteUi(host: HTMLElement = document.body): ReturnType<typeof mount> | null {
   if (app) return app;
-  const existing = document.querySelector<HTMLElement>("#kohaku-loom-svelte-mount");
+  const existing = document.querySelector<HTMLElement>("#prompt-agent-svelte-mount");
   mountTarget = existing ?? document.createElement("div");
-  mountTarget.id = "kohaku-loom-svelte-mount";
+  mountTarget.id = "prompt-agent-svelte-mount";
   if (!mountTarget.isConnected) host.appendChild(mountTarget);
   app = mount(Shell, { target: mountTarget });
   return app;
@@ -37,30 +37,33 @@ export function closeProfileSettings(): void {
 
 export interface SvelteUiGlobal {
   readonly UI_READY: typeof UI_READY;
-  readonly bridge?: KohakuLoomBridgeApi;
+  readonly bridge?: PromptAgentBridgeApi;
   mountSvelteUi: typeof mountSvelteUi;
   unmountSvelteUi: typeof unmountSvelteUi;
   openProfileSettings: typeof openProfileSettings;
   closeProfileSettings: typeof closeProfileSettings;
-  handshake(request: BridgeHandshakeRequest): ReturnType<typeof handshakeWithLoom>;
+  handshake(request: BridgeHandshakeRequest): ReturnType<typeof handshakeWithPromptAgent>;
   error?: string;
 }
 
 export function installRuntimeContracts(globalWindow: Window): SvelteUiGlobal {
+  const promptAgentWindow = globalWindow as PromptAgentWindow;
+  const namespace = promptAgentNamespace(promptAgentWindow) ?? {};
+  promptAgentWindow.__SD_FORGE_NEO_PROMPT_AGENT__ = namespace;
   const api: SvelteUiGlobal = {
     UI_READY,
     get bridge() {
-      return getHostApi(globalWindow.kohakuLoom) ?? undefined;
+      return getHostApi(promptAgentNamespace(promptAgentWindow)) ?? undefined;
     },
     mountSvelteUi,
     unmountSvelteUi,
     openProfileSettings,
     closeProfileSettings,
     handshake(request) {
-      return handshakeWithLoom(globalWindow.kohakuLoom ?? {}, request);
+      return handshakeWithPromptAgent(promptAgentNamespace(promptAgentWindow) ?? {}, request);
     },
   };
-  globalWindow.KohakuLoomSvelteUi = api;
-  globalWindow.dispatchEvent(new CustomEvent("kohaku-loom:svelte-ready"));
+  namespace.ui = api;
+  globalWindow.dispatchEvent(new CustomEvent("prompt-agent:svelte-ready"));
   return api;
 }

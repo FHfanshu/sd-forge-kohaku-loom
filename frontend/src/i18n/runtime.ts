@@ -15,8 +15,8 @@ export interface PythonI18nResponse extends PythonTranslationBundle {
 }
 
 export interface PythonI18nContract {
-  endpoint: "/kohaku-loom/i18n";
-  metadataEndpoint: "/kohaku-loom/i18n/locale";
+  endpoint: "/prompt-agent/api/i18n";
+  metadataEndpoint: "/prompt-agent/api/i18n/locale";
   supportedLocales: readonly LocaleCode[];
   fallbackLocale: "en";
   response: PythonI18nResponse;
@@ -128,7 +128,7 @@ export function translate(
 
 export async function preloadPythonBundles(
   fetchImpl: typeof fetch = fetch,
-  endpoint = "/kohaku-loom/i18n",
+  endpoint = "/prompt-agent/api/i18n",
   signal?: AbortSignal,
 ): Promise<PreloadedBundles> {
   const entries = await Promise.all(
@@ -158,7 +158,7 @@ export async function preloadPythonBundles(
 
 export async function probePythonLocaleMetadata(
   fetchImpl: typeof fetch = fetch,
-  endpoint = "/kohaku-loom/i18n/locale",
+  endpoint = "/prompt-agent/api/i18n/locale",
   signal?: AbortSignal,
 ): Promise<LocaleMetadataResponse> {
   const response = await fetchImpl(endpoint, { signal, cache: "no-store" });

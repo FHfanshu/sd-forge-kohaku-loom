@@ -4,14 +4,14 @@ export type StorePatch<T> = Partial<T> | ((state: T) => Partial<T>);
 export type StoreSetter<T> = (patch: StorePatch<T>) => void;
 export type StoreGetter<T> = () => T;
 
-export interface LoomStore<T> extends Readable<T> {
+export interface PromptAgentStore<T> extends Readable<T> {
   getState(): T;
   setState(patch: StorePatch<T>): void;
 }
 
 export function createStore<T>(
   initialize: (set: StoreSetter<T>, get: StoreGetter<T>) => T,
-): LoomStore<T> {
+): PromptAgentStore<T> {
   let current!: T;
   const source = writable<T>(undefined as T);
   const setState: StoreSetter<T> = (patch) => {

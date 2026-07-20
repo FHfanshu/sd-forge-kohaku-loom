@@ -1,10 +1,8 @@
-import type { SvelteUiGlobal } from "./bootstrap";
-import type { KohakuLoomNamespace } from "./bridge";
+import type { PromptAgentNamespace } from "./bridge";
 
 declare global {
   interface Window {
-    kohakuLoom?: KohakuLoomNamespace;
-    KohakuLoomSvelteUi?: SvelteUiGlobal;
+    __SD_FORGE_NEO_PROMPT_AGENT__?: PromptAgentNamespace;
   }
 }
 

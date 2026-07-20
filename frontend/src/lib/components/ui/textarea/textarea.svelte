@@ -3,4 +3,4 @@
   import { cn } from "$lib/utils";
   let { class: className, value = $bindable(), ...rest }: HTMLTextareaAttributes = $props();
 </script>
-  <textarea data-slot="textarea" bind:value class={cn("kl-flex kl-min-h-20 kl-w-full kl-rounded-md kl-border kl-border-input kl-bg-background kl-px-3 kl-py-2 kl-text-sm focus-visible:kl-outline-none focus-visible:kl-ring-2 focus-visible:kl-ring-ring disabled:kl-opacity-50", className)} {...rest}></textarea>
+  <textarea data-slot="textarea" bind:value class={cn("pa-flex pa-min-h-20 pa-w-full pa-rounded-md pa-border pa-border-input pa-bg-background pa-px-3 pa-py-2 pa-text-sm focus-visible:pa-outline-none focus-visible:pa-ring-2 focus-visible:pa-ring-ring disabled:pa-opacity-50", className)} {...rest}></textarea>

@@ -12,14 +12,14 @@ describe("Markdown code blocks", () => {
     const { container } = render(Markdown, { content: "```text\nalpha, beta\n```" });
 
     const copy = await screen.findByRole("button", { name: "Copy" });
-    expect(container.querySelector(".kl-code-block > pre > code")).toHaveTextContent("alpha, beta");
+    expect(container.querySelector(".pa-code-block > pre > code")).toHaveTextContent("alpha, beta");
     await user.click(copy);
     expect(writeText).toHaveBeenCalledWith("alpha, beta\n");
     expect(copy).toHaveTextContent("Copied");
 
     const css = readFileSync("src/styles.css", "utf-8");
-    expect(css).toMatch(/\.kl-markdown pre \{[^}]*-webkit-user-select: text; user-select: text;[^}]*touch-action: pan-x pan-y;/);
-    await waitFor(() => expect(container.querySelector(".kl-code-copy")).not.toBeNull());
+    expect(css).toMatch(/\.pa-markdown pre \{[^}]*-webkit-user-select: text; user-select: text;[^}]*touch-action: pan-x pan-y;/);
+    await waitFor(() => expect(container.querySelector(".pa-code-copy")).not.toBeNull());
   });
 
   it("falls back when an embedded browser denies the Clipboard API", async () => {

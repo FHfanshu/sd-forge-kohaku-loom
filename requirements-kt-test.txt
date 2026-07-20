@@ -1,6 +1,0 @@
-# The real KohakuTerrarium contract suite is deliberately isolated from the
-# mock/unit test job so a missing sidecar dependency cannot look like success.
--r requirements-test.txt
-# Capability-level 2 snapshot: PyPI stable does not yet expose Agent.build or
-# terrarium.drive, while an unpinned main branch makes CI change underneath us.
-KohakuTerrarium @ git+https://github.com/Kohaku-Lab/KohakuTerrarium.git@f22b739d19785b9a065ac839a83eda457daba030

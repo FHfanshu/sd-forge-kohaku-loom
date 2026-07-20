@@ -2,13 +2,13 @@
   import { onMount } from "svelte";
   import {
     AlertTriangle, Bot, Check, ChevronLeft, ChevronRight,
-    CircleStop, Clipboard, Clock3, Copy, FileArchive, FileCog, Grip, History,
+    CircleStop, Clipboard, Clock3, Copy, FileCog, Grip, History,
     ImagePlus, Pencil, Plus, RefreshCw, Search, Send, Settings2,
     Sparkles, SquarePen, Trash2, UserRound, X,
     XCircle,
   } from "lucide-svelte";
   import type {
-    ChatAttachment, ChatMessage, HistoryRow, LoomActionHandlers, MessageSubmission,
+    ChatAttachment, ChatMessage, HistoryRow, PromptAgentActionHandlers, MessageSubmission,
     ReasoningEffort, SendMessageInput,
   } from "../contracts";
   import {
@@ -24,9 +24,9 @@
     type PreparedImageAttachment,
   } from "../attachments";
   import { noopActions } from "../mock-data";
-  import type { LoomRuntimeController } from "../runtime-controller";
-  import { connectRuntimeController } from "../runtime-connection";
-  import { errorText } from "../runtime-formatters";
+  import type { PromptAgentController } from "../agent/controller";
+  import { connectPromptAgentController } from "../runtime-connection";
+  import { errorText } from "../errors";
   import { useChatStore } from "../stores/chat";
   import { useI18nStore } from "../stores/i18n";
   import { useProfileStore } from "../stores/profiles";
@@ -43,7 +43,7 @@
   interface Props {
     messages?: ChatMessage[];
     history?: HistoryRow[];
-    actions?: Partial<LoomActionHandlers>;
+    actions?: Partial<PromptAgentActionHandlers>;
     initialAttachments?: ChatAttachment[];
     initialOpen?: boolean;
   }
@@ -79,11 +79,9 @@
   let replacementId = $state<string | null>(null);
   let attachmentMenuId = $state<string | null>(null);
   let notice = $state<string | null>(null);
-  let editingMessageId = $state<string | null>(null);
-  let preEditDraft = $state<{ text: string; attachments: PreparedImageAttachment[] } | null>(null);
   let returnToChatAfterSettings = $state(false);
-  let controller = $state<LoomRuntimeController | null>(null);
-  let controllerReady: Promise<LoomRuntimeController> | null = null;
+  let controller = $state<PromptAgentController | null>(null);
+  let controllerReady: Promise<PromptAgentController> | null = null;
   let controllerAbort: AbortController | null = null;
   let connectionState = $state<"idle" | "connecting" | "ready" | "failed">("idle");
   let connectionError = $state<string | null>(null);
@@ -102,8 +100,6 @@
   const windowMinimum = $derived(minimumForViewport(kind));
   const currentLayout = $derived(clampWindowLayout($useUiStore.layouts[kind], viewport, windowMinimum));
   const activeProfile = $derived($useProfileStore.profiles.find((profile) => profile.id === $useProfileStore.activeProfileId && profile.enabled));
-  const lastAssistantId = $derived([...visibleMessages].reverse().find((message) => message.role === "assistant")?.id);
-  const branchOperationActive = $derived(Boolean($useChatStore.activeRequestId?.startsWith("regenerate-")));
   const workingPhase = $derived($useRuntimeStore.workingPhase);
   const workingReasoning = $derived([...visibleMessages].reverse().find((message) => message.role === "assistant" && message.status === "streaming" && message.reasoning)?.reasoning ?? "");
   const runtimeStarting = $derived($useRuntimeStore.startup === "starting");
@@ -155,9 +151,6 @@
   }
 
   function runtimeErrorText(value: string): string {
-    if (/KT HTTP request failed|HTTP 503|sidecar.*(starting|unavailable)|still starting/i.test(value)) {
-      return t("assistant.runtime.retry", "The Loom runtime is starting or unavailable. Open chat history to retry, or check the sidecar configuration in Model profiles.");
-    }
     return value;
   }
 
@@ -236,7 +229,7 @@
     if (!focused) kind = viewportKind(viewport);
   }
 
-  async function ensureControllerReady(): Promise<LoomRuntimeController | null> {
+  async function ensureControllerReady(): Promise<PromptAgentController | null> {
     if (Object.keys(actionOverrides).length) return null;
     if (controller) return controller;
     if (controllerReady) return controllerReady;
@@ -244,7 +237,7 @@
     connectionError = null;
     const abort = new AbortController();
     controllerAbort = abort;
-    const pending = connectRuntimeController(() => window.kohakuLoom, abort.signal)
+    const pending = connectPromptAgentController(abort.signal)
       .then(async (next) => {
         if (abort.signal.aborted) {
           next.destroy();
@@ -274,16 +267,16 @@
     return pending;
   }
 
-  function action<K extends keyof LoomActionHandlers>(name: K): LoomActionHandlers[K] {
+  function action<K extends keyof PromptAgentActionHandlers>(name: K): PromptAgentActionHandlers[K] {
     const resolved = actionOverrides[name] ?? controller?.actions[name];
-    if (resolved) return resolved as LoomActionHandlers[K];
+    if (resolved) return resolved as PromptAgentActionHandlers[K];
     if (Object.keys(actionOverrides).length || ["attachFiles", "replaceAttachment", "removeAttachment", "copyMessage", "clearChat"].includes(name)) {
-      return noopActions[name] as LoomActionHandlers[K];
+      return noopActions[name] as PromptAgentActionHandlers[K];
     }
     return (() => {
-      notice = connectionError ?? "Kohaku Loom is still connecting to the Forge runtime.";
+      notice = connectionError ?? "Prompt Agent is still connecting to the Forge runtime.";
       void ensureControllerReady().catch(() => undefined);
-    }) as LoomActionHandlers[K];
+    }) as PromptAgentActionHandlers[K];
   }
 
   async function send(input: SendMessageInput): Promise<MessageSubmission | void> {
@@ -291,7 +284,7 @@
       return await actionOverrides.sendMessage(input);
     }
     const activeController = await ensureControllerReady();
-    if (!activeController) throw new Error("Kohaku Loom runtime controller is unavailable");
+    if (!activeController) throw new Error("Prompt Agent runtime controller is unavailable");
     return await activeController.actions.sendMessage(input);
   }
 
@@ -311,15 +304,9 @@
         attachments: await materializeImageAttachments(submittedAttachments),
         displayAttachments: submittedAttachments.map(displayImageAttachment),
         reasoning,
-        editOf: editingMessageId ?? undefined,
       };
       const submission = await send(input);
       releaseImageAttachments(submittedAttachments);
-      if (editingMessageId === input.editOf) {
-        releaseImageAttachments(preEditDraft?.attachments ?? []);
-        editingMessageId = null;
-        preEditDraft = null;
-      }
       requestAnimationFrame(() => resizeComposer());
     } catch (error) {
       if (!draft) draft = submittedDraft;
@@ -345,32 +332,7 @@
     if (composerFocused && event.pointerType !== "mouse") event.preventDefault();
   }
 
-  function beginEdit(message: ChatMessage): void {
-    if (!editingMessageId) preEditDraft = { text: draft, attachments: [...attachments] };
-    else releaseImageAttachments(attachments);
-    editingMessageId = message.id;
-    draft = message.content;
-    attachments = [...message.attachments];
-    retainImageAttachments(attachments);
-    notice = null;
-    requestAnimationFrame(() => {
-      resizeComposer();
-      composerInput?.focus();
-      composerInput?.setSelectionRange(draft.length, draft.length);
-    });
-  }
-
-  function cancelEdit(): void {
-    releaseImageAttachments(attachments);
-    draft = preEditDraft?.text ?? "";
-    attachments = [...(preEditDraft?.attachments ?? [])];
-    editingMessageId = null;
-    preEditDraft = null;
-    requestAnimationFrame(() => resizeComposer());
-  }
-
   function stop(): void {
-    if (branchOperationActive) return;
     if (actionOverrides.stopRequest) actionOverrides.stopRequest();
     else if (controller) controller.actions.stopRequest();
     else $useChatStore.cancelRequest();
@@ -410,11 +372,11 @@
       void ensureControllerReady()
         .then((activeController) => {
           if (!activeController) return [];
-          if ($useRuntimeStore.startup === "error") throw new Error($useRuntimeStore.error ?? t("assistant.runtime.retry", "The Loom runtime is starting or unavailable. Open chat history to retry, or check the sidecar configuration in Model profiles."));
+          if ($useRuntimeStore.startup === "error") throw new Error($useRuntimeStore.error ?? t("assistant.runtime.retry", "Prompt Agent is unavailable. Retry or check Model profiles."));
           return activeController.loadHistory();
         })
         .then(async (rows) => {
-          if (rows.some((row) => row.source === "KT")) return;
+          if (rows.some((row) => row.source === "prompt-agent")) return;
           await new Promise((resolve) => window.setTimeout(resolve, 900));
           await controller?.loadHistory();
         })
@@ -428,24 +390,17 @@
     notice = null;
     const previousDraft = draft;
     const previousAttachments = [...attachments];
-    const previousEditingMessageId = editingMessageId;
-    const previousPreEditDraft = preEditDraft;
     try {
       if (actionOverrides.newSession) await actionOverrides.newSession();
       else {
         const activeController = await ensureControllerReady();
-        if (!activeController) throw new Error("Kohaku Loom runtime controller is unavailable");
+        if (!activeController) throw new Error("Prompt Agent runtime controller is unavailable");
         await activeController.actions.newSession();
       }
       if (draft === previousDraft) draft = "";
       if (attachments.length === previousAttachments.length && attachments.every((item, index) => item.id === previousAttachments[index]?.id)) {
         attachments = [];
         releaseImageAttachments(previousAttachments);
-      }
-      if (editingMessageId === previousEditingMessageId) editingMessageId = null;
-      if (preEditDraft === previousPreEditDraft) {
-        releaseImageAttachments(previousPreEditDraft?.attachments ?? []);
-        preEditDraft = null;
       }
     } catch (error) {
       notice = error instanceof Error ? error.message : t("assistant.error.new_chat", "A new chat could not be started. Stop the current response and try again.");
@@ -526,15 +481,6 @@
     }
   }
 
-  async function regenerateMessage(message: ChatMessage): Promise<void> {
-    notice = null;
-    try {
-      await action("regenerate")(message);
-    } catch (error) {
-      notice = errorText(error) || t("assistant.error.regenerate", "The response could not be regenerated. Try again.");
-    }
-  }
-
   function resizeKey(event: KeyboardEvent): void {
     const delta = event.shiftKey ? 40 : 10;
     const width = event.key === "ArrowRight" ? delta : event.key === "ArrowLeft" ? -delta : 0;
@@ -572,7 +518,6 @@
       controller = null;
       controllerReady = null;
       releaseImageAttachments(attachments);
-      releaseImageAttachments(preEditDraft?.attachments ?? []);
     };
   });
 
@@ -595,13 +540,13 @@
   });
 </script>
 
-<div class="kl-surface kl-viewport-{kind}" data-kohaku-loom-surface="true">
+<div class="pa-surface pa-viewport-{kind}" data-prompt-agent-surface="true">
   {#if !$useUiStore.shellOpen && !$useUiStore.profileSettingsOpen}
     <button
-      class:kl-launcher-interacting={launcherInteracting}
-      class="kl-launcher"
+      class:pa-launcher-interacting={launcherInteracting}
+      class="pa-launcher"
       type="button"
-      aria-label={t("assistant.open", "Open Kohaku Loom")}
+       aria-label={t("assistant.open", "Open Prompt Agent")}
       aria-expanded="false"
       title={t("assistant.drag", "Drag to move")}
       style:left={$useUiStore.launcherPosition ? `${$useUiStore.launcherPosition.left}px` : undefined}
@@ -612,14 +557,14 @@
       onclick={openLauncher}
     >
       <Sparkles size={15} />
-      <span>{t("assistant.launcher", "Assistant")}</span>
+       <span>{t("assistant.launcher", "Prompt Agent")}</span>
     </button>
   {/if}
 
   {#if $useUiStore.shellOpen}
     <div
-      class:kl-window-interacting={interacting}
-      class="kl-window"
+      class:pa-window-interacting={interacting}
+      class="pa-window"
       style:left="{currentLayout.left}px"
       style:top="{currentLayout.top}px"
       style:width="{currentLayout.width}px"
@@ -627,111 +572,106 @@
       style:z-index={$useUiStore.frontWindow === "chat" ? 1002 : 1000}
       role="dialog"
       aria-modal="false"
-      aria-label={t("assistant.chat_dialog", "Kohaku Loom chat")}
+       aria-label={t("assistant.chat_dialog", "Prompt Agent chat")}
       tabindex="-1"
-      data-pending="false"
+      data-prompt-agent-pending="false"
       onpointerdown={() => $useUiStore.bringToFront("chat")}
       onkeydown={(event) => { if (event.key === "Escape") $useUiStore.setShellOpen(false); }}
     >
-      <header class="kl-window-header" use:pointerWindow={{ mode: "drag", layout: () => currentLayout, update: updateLayout, minimum: windowMinimum, interacting: (active) => interacting = active }}>
-        <div class="kl-chat-title"><strong>{t("assistant.title", "Assistant")}</strong></div>
-        <div class="kl-header-controls">
-          <div class="kl-history-anchor">
-            <button type="button" class="kl-header-icon" aria-label={t("history.open", "Open chat history")} aria-expanded={$useUiStore.historyOpen} onclick={toggleHistory}><History size={16} /></button>
+       <header class="pa-window-header" use:pointerWindow={{ mode: "drag", layout: () => currentLayout, update: updateLayout, minimum: windowMinimum, interacting: (active) => interacting = active }}>
+         <div class="pa-chat-title"><strong>{t("assistant.title", "Prompt Agent")}</strong></div>
+         <div class="pa-header-controls">
+           <div class="pa-history-anchor">
+             <button type="button" class="pa-header-icon" aria-label={t("history.open", "Open chat history")} aria-expanded={$useUiStore.historyOpen} onclick={toggleHistory}><History size={16} /></button>
             {#if $useUiStore.historyOpen}
-              <div class="kl-history-popover" role="dialog" tabindex="-1" aria-label={t("history.title", "Chat history")} onkeydown={(event) => { if (event.key === "Escape") { event.stopPropagation(); $useUiStore.setHistoryOpen(false); } }}>
-                <div class="kl-history-heading"><div><span class="kl-eyebrow">{t("history.archive", "Archive")}</span><strong>{t("history.title", "Chat history")}</strong></div><span class="kl-history-count">{filteredHistory.length}</span></div>
-                <label class="kl-history-search"><Search size={14} /><input bind:value={historySearch} placeholder={t("history.search", "Search sessions")} aria-label={t("history.search_label", "Search chat history")} /></label>
-                <div class="kl-history-list" role="listbox" aria-label={t("history.sessions", "Chat history sessions")}>
-                  {#if runtimeUnavailable}<p class="kl-history-empty" role="status">{t("assistant.runtime.disconnected", "The Loom runtime is not connected. Open Model profiles and retry the connection.")}</p>{:else}{#if $useRuntimeStore.loading}<p class="kl-history-empty" role="status">{t("history.loading", "Loading chat history…")}</p>{/if}{#each filteredHistory as row (row.id)}
-                    <button type="button" class="kl-history-row" aria-label={row.title} role="option" aria-selected="false" onclick={() => { void action("selectHistory")(row); $useUiStore.setHistoryOpen(false); }}>
-                      <span class="kl-history-source kl-history-source-{row.source.toLowerCase()}">{#if row.source === "KT"}<Clock3 size={12} />{:else}<FileArchive size={12} />{/if}{row.source}</span>
-                      <span class="kl-history-row-main"><strong>{row.title}</strong><small>{row.preview || t("history.no_preview", "No preview")}</small></span>
-                      <span class="kl-history-row-meta"><time>{row.updatedAt}</time><small>{tf("history.message_count", "{count} messages", { count: row.messageCount })}</small></span>
+               <div class="pa-history-popover" role="dialog" tabindex="-1" aria-label={t("history.title", "Chat history")} onkeydown={(event) => { if (event.key === "Escape") { event.stopPropagation(); $useUiStore.setHistoryOpen(false); } }}>
+                 <div class="pa-history-heading"><div><span class="pa-eyebrow">{t("history.archive", "Archive")}</span><strong>{t("history.title", "Chat history")}</strong></div><span class="pa-history-count">{filteredHistory.length}</span></div>
+                 <label class="pa-history-search"><Search size={14} /><input bind:value={historySearch} placeholder={t("history.search", "Search sessions")} aria-label={t("history.search_label", "Search chat history")} /></label>
+                 <div class="pa-history-list" role="listbox" aria-label={t("history.sessions", "Chat history sessions")}>
+                   {#if runtimeUnavailable}<p class="pa-history-empty" role="status">{t("assistant.runtime.disconnected", "The Prompt Agent runtime is not connected. Open Model profiles and retry the connection.")}</p>{:else}{#if $useRuntimeStore.loading}<p class="pa-history-empty" role="status">{t("history.loading", "Loading chat history…")}</p>{/if}{#each filteredHistory as row (row.id)}
+                     <button type="button" class="pa-history-row" aria-label={row.title} role="option" aria-selected="false" onclick={() => { void action("selectHistory")(row); $useUiStore.setHistoryOpen(false); }}>
+                       <span class="pa-history-source pa-history-source-{row.source.toLowerCase()}"><Clock3 size={12} />{row.source}</span>
+                       <span class="pa-history-row-main"><strong>{row.title}</strong><small>{row.preview || t("history.no_preview", "No preview")}</small></span>
+                       <span class="pa-history-row-meta"><time>{row.updatedAt}</time><small>{tf("history.message_count", "{count} messages", { count: row.messageCount })}</small></span>
                     </button>
-                  {:else}<p class="kl-history-empty">{t("history.empty_search", "No sessions match that search.")}</p>{/each}{/if}
+                   {:else}<p class="pa-history-empty">{t("history.empty_search", "No sessions match that search.")}</p>{/each}{/if}
                 </div>
               </div>
             {/if}
           </div>
-          <button type="button" class="kl-header-icon" onclick={() => void newSession()} aria-label={t("assistant.new_chat", "Start a new chat")} title={t("assistant.new_chat", "Start a new chat")} disabled={Boolean($useChatStore.activeRequestId)}><SquarePen size={16} /></button>
-          <button type="button" class="kl-header-icon" onclick={openSettings} aria-label={t("assistant.open_settings", "Open settings")}><Settings2 size={16} /></button>
-          <button type="button" class="kl-header-icon kl-header-close" onclick={() => $useUiStore.setShellOpen(false)} aria-label={t("assistant.close_window", "Close Kohaku Loom")}><X size={16} /></button>
+           <button type="button" class="pa-header-icon" onclick={() => void newSession()} aria-label={t("assistant.new_chat", "Start a new chat")} title={t("assistant.new_chat", "Start a new chat")} disabled={Boolean($useChatStore.activeRequestId)}><SquarePen size={16} /></button>
+           <button type="button" class="pa-header-icon" onclick={openSettings} aria-label={t("assistant.open_settings", "Open settings")}><Settings2 size={16} /></button>
+           <button type="button" class="pa-header-icon pa-header-close" onclick={() => $useUiStore.setShellOpen(false)} aria-label={t("assistant.close_window", "Close Prompt Agent")}><X size={16} /></button>
         </div>
       </header>
 
-        <div class="kl-window-body">
-        {#if connectionState === "connecting"}<div class="kl-inline-alert" role="status" aria-live="polite"><RefreshCw size={15} /><span>Connecting to Forge runtime…</span></div>{:else if connectionState === "failed"}<div class="kl-inline-alert" role="alert"><AlertTriangle size={15} /><span>{connectionError}</span><button type="button" onclick={() => void ensureControllerReady().catch(() => undefined)}>Retry</button></div>{:else if runtimeStarting}<div class="kl-inline-alert" role="status" aria-live="polite"><RefreshCw size={15} /><span>{t("assistant.runtime.retry", "The Loom runtime is starting or unavailable. Open chat history to retry, or check the sidecar configuration in Model profiles.")}</span></div>{/if}
-        {#if $useRuntimeStore.error || notice}<div class="kl-inline-alert" role="alert"><AlertTriangle size={15} /><span>{runtimeErrorText(notice || $useRuntimeStore.error || "")}</span>{#if notice}<button type="button" onclick={() => notice = null} aria-label={t("common.dismiss_message", "Dismiss message")}><X size={14} /></button>{/if}</div>{/if}
-        <div bind:this={messageScroll} class="kl-message-scroll" role="log" aria-live="polite" aria-busy={Boolean($useChatStore.activeRequestId)} onscroll={updateFollowLatest}>
+        <div class="pa-window-body">
+        {#if connectionState === "connecting"}<div class="pa-inline-alert" role="status" aria-live="polite"><RefreshCw size={15} /><span>Connecting to Forge runtime…</span></div>{:else if connectionState === "failed"}<div class="pa-inline-alert" role="alert"><AlertTriangle size={15} /><span>{connectionError}</span><button type="button" onclick={() => void ensureControllerReady().catch(() => undefined)}>Retry</button></div>{:else if runtimeStarting}<div class="pa-inline-alert" role="status" aria-live="polite"><RefreshCw size={15} /><span>{t("assistant.runtime.retry", "Prompt Agent is starting or unavailable. Retry or check Model profiles.")}</span></div>{/if}
+        {#if $useRuntimeStore.error || notice}<div class="pa-inline-alert" role="alert"><AlertTriangle size={15} /><span>{runtimeErrorText(notice || $useRuntimeStore.error || "")}</span>{#if notice}<button type="button" onclick={() => notice = null} aria-label={t("common.dismiss_message", "Dismiss message")}><X size={14} /></button>{/if}</div>{/if}
+        <div bind:this={messageScroll} class="pa-message-scroll" role="log" aria-live="polite" aria-busy={Boolean($useChatStore.activeRequestId)} onscroll={updateFollowLatest}>
            {#if visibleMessages.length > 0}
              {#each renderMessages.groups as group (group.message.id)}
                {@const message = group.message}
               <article
-                class:kl-message-user={message.role === "user"}
-                class:kl-message-assistant={message.role === "assistant"}
-                class:kl-message-error={message.role === "error"}
-                class:kl-message-system={message.role === "system"}
-                class:kl-message-streaming={message.status === "streaming"}
-                class:kl-message-cancelled={message.status === "cancelled"}
-                class="kl-message-card"
-                data-message-id={message.id}
+                class:pa-message-user={message.role === "user"}
+                class:pa-message-assistant={message.role === "assistant"}
+                class:pa-message-error={message.role === "error"}
+                class:pa-message-system={message.role === "system"}
+                class:pa-message-streaming={message.status === "streaming"}
+                class:pa-message-cancelled={message.status === "cancelled"}
+                class="pa-message-card"
+                data-prompt-agent-message-id={message.id}
               >
-                <div class="kl-message-heading"><span class="kl-message-role">
+                <div class="pa-message-heading"><span class="pa-message-role">
                    {#if message.role === "user"}<UserRound size={15} />{:else if message.role === "error"}<XCircle size={15} />{:else if message.role === "assistant"}<Bot size={15} />{:else}<FileCog size={15} />{/if}
                   {roleLabel(message)}
-                </span><span class="kl-message-meta">
-                  {#if message.status === "streaming"}<span class="kl-status-marker kl-status-streaming">{t("chat.status.partial", "Generating")}</span>{:else if message.status === "cancelled"}<span class="kl-status-marker kl-status-cancelled"><XCircle size={12} /> {t("chat.status.cancelled", "Cancelled")}</span>{:else if message.status === "error"}<span class="kl-status-marker kl-status-error">{t("chat.status.error", "Error")}</span>{/if}
-                  {#if message.usage}<span class="kl-usage"><Clipboard size={11} /> {[message.usage.inputTokens !== undefined ? `${message.usage.inputTokens} in` : "", message.usage.outputTokens !== undefined ? `${message.usage.outputTokens} out` : "", message.usage.latencyMs !== undefined ? `${(message.usage.latencyMs / 1000).toFixed(1)}s` : ""].filter(Boolean).join(" · ")}</span>{/if}
-                  {#if message.role === "assistant"}<button type="button" class="kl-message-collapse" onclick={() => toggleMessage(message.id)} aria-label={collapsedMessageIds.has(message.id) ? t("chat.expand", "Expand response") : t("chat.collapse", "Collapse response")}>{#if collapsedMessageIds.has(message.id)}<ChevronRight size={14} />{:else}<ChevronLeft size={14} />{/if}</button>{/if}
+                </span><span class="pa-message-meta">
+                  {#if message.status === "streaming"}<span class="pa-status-marker pa-status-streaming">{t("chat.status.partial", "Generating")}</span>{:else if message.status === "cancelled"}<span class="pa-status-marker pa-status-cancelled"><XCircle size={12} /> {t("chat.status.cancelled", "Cancelled")}</span>{:else if message.status === "error"}<span class="pa-status-marker pa-status-error">{t("chat.status.error", "Error")}</span>{/if}
+                  {#if message.usage}<span class="pa-usage"><Clipboard size={11} /> {[message.usage.inputTokens !== undefined ? `${message.usage.inputTokens} in` : "", message.usage.outputTokens !== undefined ? `${message.usage.outputTokens} out` : "", message.usage.latencyMs !== undefined ? `${(message.usage.latencyMs / 1000).toFixed(1)}s` : ""].filter(Boolean).join(" · ")}</span>{/if}
+                  {#if message.role === "assistant"}<button type="button" class="pa-message-collapse" onclick={() => toggleMessage(message.id)} aria-label={collapsedMessageIds.has(message.id) ? t("chat.expand", "Expand response") : t("chat.collapse", "Collapse response")}>{#if collapsedMessageIds.has(message.id)}<ChevronRight size={14} />{:else}<ChevronLeft size={14} />{/if}</button>{/if}
                 </span></div>
-                  {#if group.tools.length}<div class="kl-message-tools" aria-label={t("chat.tool_results", "Tool results")}>{#each group.tools as tool (tool.id)}<ToolCard message={tool} onundo={undoToolMutation} />{/each}</div>{/if}
-                  {#if collapsedMessageIds.has(message.id)}<button type="button" class="kl-message-collapsed-preview" onclick={() => toggleMessage(message.id)}>{reasoningPreview(message.content)}</button>{:else}<Markdown content={message.content} streaming={message.status === "streaming"} />{/if}
+                  {#if group.tools.length}<div class="pa-message-tools" aria-label={t("chat.tool_results", "Tool results")}>{#each group.tools as tool (tool.id)}<ToolCard message={tool} onundo={undoToolMutation} />{/each}</div>{/if}
+                  {#if collapsedMessageIds.has(message.id)}<button type="button" class="pa-message-collapsed-preview" onclick={() => toggleMessage(message.id)}>{reasoningPreview(message.content)}</button>{:else}<Markdown content={message.content} streaming={message.status === "streaming"} />{/if}
                 {#if message.reasoning && !collapsedMessageIds.has(message.id)}
-                  <details class:kl-reasoning-streaming={message.status === "streaming"} class="kl-reasoning">
+                  <details class:pa-reasoning-streaming={message.status === "streaming"} class="pa-reasoning">
                     <summary>
-                      <span class="kl-reasoning-label">{t("chat.reasoning_trace", "Reasoning trace")}</span>
-                      <span class="kl-reasoning-preview" title={reasoningPreview(message.reasoning)}>{reasoningPreview(message.reasoning)}</span>
+                      <span class="pa-reasoning-label">{t("chat.reasoning_trace", "Reasoning trace")}</span>
+                      <span class="pa-reasoning-preview" title={reasoningPreview(message.reasoning)}>{reasoningPreview(message.reasoning)}</span>
                     </summary>
-                     <div class="kl-reasoning-content"><Markdown content={message.reasoning} streaming={message.status === "streaming"} renderStreamingMarkdown={true} /></div>
+                     <div class="pa-reasoning-content"><Markdown content={message.reasoning} streaming={message.status === "streaming"} renderStreamingMarkdown={true} /></div>
                   </details>
                  {/if}
-                {#if message.attachments.length && !collapsedMessageIds.has(message.id)}<div class="kl-message-attachments" aria-label={tf("assistant.reference_images", "{count} reference images", { count: message.attachments.length })}>{#each message.attachments as attachment, index (attachment.id)}<button type="button" class="kl-message-attachment" onclick={() => lightbox = { attachments: message.attachments, index }} aria-label={tf("assistant.preview_named", "Preview {name}", { name: attachment.name })}><img src={attachmentPreviewUrl(attachment)} alt={attachment.name} width="58" height="48" loading="lazy" /></button>{/each}</div>{/if}
-                 <div class="kl-message-footer"><div class="kl-message-actions"><button type="button" class="kl-message-action" onclick={() => void copyMessage(message)}>{#if copiedId === message.id}<Check size={13} /> {t("chat.copied", "Copied")}{:else}<Copy size={13} /> {t("chat.copy", "Copy")}{/if}</button>{#if message.role === "user"}<button type="button" class="kl-message-action" disabled={Boolean($useChatStore.activeRequestId)} onclick={() => beginEdit(message)}><Pencil size={13} /> {t("chat.edit", "Edit")}</button>{/if}{#if message.id === lastAssistantId}<button type="button" class="kl-message-action" disabled={Boolean($useChatStore.activeRequestId) || message.status !== "complete"} onclick={() => void regenerateMessage(message)}><RefreshCw size={13} /> {#if branchOperationActive}{t("chat.regenerating", "Regenerating…")}{:else}{t("chat.regenerate", "Regenerate")}{/if}</button>{/if}</div>
-                  {#if (message.role === "assistant" || message.role === "user") && message.branchCount > 1}<div class="kl-branch-pager" aria-label={message.role === "user" ? t("branches.message_versions", "Message versions") : t("branches.assistant_responses", "Assistant response branches")}><button type="button" class="kl-mini-button" disabled={Boolean($useChatStore.activeRequestId) || message.branchIndex === 0} onclick={() => void action("changeBranch")(message, message.branchIndex - 1)} aria-label={t("branches.previous", "Previous branch")}><ChevronLeft size={14} /></button><span>{message.branchIndex + 1} / {message.branchCount}</span><button type="button" class="kl-mini-button" disabled={Boolean($useChatStore.activeRequestId) || message.branchIndex >= message.branchCount - 1} onclick={() => void action("changeBranch")(message, message.branchIndex + 1)} aria-label={t("branches.next", "Next branch")}><ChevronRight size={14} /></button></div>{/if}
-                </div>
+                {#if message.attachments.length && !collapsedMessageIds.has(message.id)}<div class="pa-message-attachments" aria-label={tf("assistant.reference_images", "{count} reference images", { count: message.attachments.length })}>{#each message.attachments as attachment, index (attachment.id)}<button type="button" class="pa-message-attachment" onclick={() => lightbox = { attachments: message.attachments, index }} aria-label={tf("assistant.preview_named", "Preview {name}", { name: attachment.name })}><img src={attachmentPreviewUrl(attachment)} alt={attachment.name} width="58" height="48" loading="lazy" /></button>{/each}</div>{/if}
+                 <div class="pa-message-footer"><div class="pa-message-actions"><button type="button" class="pa-message-action" onclick={() => void copyMessage(message)}>{#if copiedId === message.id}<Check size={13} /> {t("chat.copied", "Copied")}{:else}<Copy size={13} /> {t("chat.copy", "Copy")}{/if}</button></div></div>
                </article>
              {/each}
-              {#each renderMessages.pendingTools as tool (tool.id)}<div class="kl-orphan-tools"><ToolCard message={tool} onundo={undoToolMutation} /></div>{/each}
+              {#each renderMessages.pendingTools as tool (tool.id)}<div class="pa-orphan-tools"><ToolCard message={tool} onundo={undoToolMutation} /></div>{/each}
           {:else}
-            <div class="kl-empty-state"><Sparkles size={20} aria-hidden="true" /><strong>{t("assistant.empty.title", "Start with the current prompt")}</strong><p>{t("assistant.empty.hint", "Ask Loom to review composition, rewrite a prompt, inspect installed resources, or attach reference images.")}</p><div><button type="button" onclick={() => useSuggestion(t("assistant.quick.review_prompt", "Read the current prompt and suggest the highest-impact improvement."))}>{t("assistant.quick.review", "Review current prompt")}</button><button type="button" onclick={() => fileInput?.click()}>{t("assistant.quick.reference", "Analyze reference images")}</button></div></div>
+             <div class="pa-empty-state"><Sparkles size={20} aria-hidden="true" /><strong>{t("assistant.empty.title", "Start with the current prompt")}</strong><p>{t("assistant.empty.hint", "Ask Prompt Agent to review composition, rewrite a prompt, inspect installed resources, or attach reference images.")}</p><div><button type="button" onclick={() => useSuggestion(t("assistant.quick.review_prompt", "Read the current prompt and suggest the highest-impact improvement."))}>{t("assistant.quick.review", "Review current prompt")}</button><button type="button" onclick={() => fileInput?.click()}>{t("assistant.quick.reference", "Analyze reference images")}</button></div></div>
           {/if}
           {#if $useChatStore.activeRequestId && workingPhase !== "idle"}<WorkingIndicator phase={workingPhase} tool={$useRuntimeStore.workingTool} statusDetail={$useRuntimeStore.workingDetail} reasoning={workingReasoning} />{/if}
         </div>
 
-        {#if $useChatStore.queue.length}<div class="kl-queue-strip" aria-label={t("queue.messages", "Queued messages")}>{#if $useRuntimeStore.queuePaused}<div class="kl-queue-status" role="status">{t("queue.paused", "Queue is paused. Retry a failed message to resume.")}</div>{/if}<span class="kl-queue-label"><span class="kl-queue-dot"></span> {t("queue.label", "Queue")} {$useChatStore.queue.length}</span><div class="kl-queue-items">{#each $useChatStore.queue as item (item.id)}<div class="kl-queue-item"><span>{item.text || tf("queue.image_count", "{count} images", { count: Math.max(item.attachmentCount, item.attachments.length) })}</span>{#if item.state === "failed"}<button type="button" onclick={() => { if (actionOverrides.retryQueuedMessage) void actionOverrides.retryQueuedMessage(item.id); else if (controller) void controller.actions.retryQueuedMessage?.(item.id); }} aria-label={tf("queue.retry", "Retry queued message {id}", { id: item.id })}>{t("common.retry", "Retry")}</button>{/if}<button type="button" onclick={() => { if (actionOverrides.removeQueuedMessage) actionOverrides.removeQueuedMessage(item.id); else if (controller) void controller.actions.removeQueuedMessage(item.id); else $useChatStore.removeQueuedMessage(item.id); }} aria-label={tf("queue.remove", "Remove queued message {id}", { id: item.id })}><XCircle size={13} /></button></div>{/each}</div></div>{/if}
-
-        <form class:kl-composer-drop-active={dropActive} class="kl-composer" onsubmit={(event) => { event.preventDefault(); void submit(); }} ondragover={(event) => { event.preventDefault(); dropActive = true; }} ondragleave={() => dropActive = false} ondrop={(event) => { event.preventDefault(); dropActive = false; void addFiles(Array.from(event.dataTransfer?.files ?? [])); }}>
-          {#if editingMessageId}<div class="kl-editing-banner" role="status"><span><Pencil size={13} /> {t("chat.editing", "Editing message")}</span><button type="button" onclick={cancelEdit}>{t("chat.cancel_edit", "Cancel")}</button></div>{/if}
-          {#if attachments.length}<div class="kl-filmstrip" aria-label={t("assistant.attached_images", "Attached reference images")}>{#each attachments as attachment, index (attachment.id)}<div class="kl-filmstrip-item"><button type="button" class="kl-filmstrip-preview" onclick={() => lightbox = { attachments, index }} oncontextmenu={(event) => { event.preventDefault(); attachmentMenuId = attachment.id; }} aria-label={tf("assistant.preview_named", "Preview {name}", { name: attachment.name })}><img src={attachmentPreviewUrl(attachment)} alt={attachment.name} width="58" height="54" /><span class="kl-filmstrip-name">{attachment.name}</span></button><button type="button" class="kl-filmstrip-remove" onclick={() => void removeAttachment(attachment.id)} aria-label={tf("assistant.remove_named", "Remove {name}", { name: attachment.name })}><X size={12} /></button><button type="button" class="kl-filmstrip-more" onclick={() => attachmentMenuId = attachmentMenuId === attachment.id ? null : attachment.id} aria-label={tf("assistant.edit_named", "Edit {name}", { name: attachment.name })}>•••</button>{#if attachmentMenuId === attachment.id}<div class="kl-attachment-menu" role="menu"><button type="button" role="menuitem" onclick={() => { replacementId = attachment.id; replacementInput?.click(); attachmentMenuId = null; }}><Pencil size={13} /> {t("common.replace", "Replace")}</button><button type="button" role="menuitem" onclick={() => { void removeAttachment(attachment.id); attachmentMenuId = null; }}><Trash2 size={13} /> {t("common.remove", "Remove")}</button></div>{/if}</div>{/each}<button type="button" class="kl-filmstrip-add" onclick={() => fileInput?.click()} aria-label={t("assistant.attach_another", "Attach another image")}><Plus size={17} /></button></div>{/if}
-          <textarea name="kohaku-loom-message" autocomplete="off" bind:this={composerInput} bind:value={draft} rows="1" placeholder={t("assistant.input.placeholder", "Ask about or change the current prompt…")} aria-label={t("assistant.input.label", "Message Kohaku Loom")} onfocus={() => composerFocused = true} onblur={() => composerFocused = false} oninput={(event) => resizeComposer(event.currentTarget)} onkeydown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if (branchOperationActive) return; if ($useChatStore.activeRequestId) stop(); else void submit(); } }}></textarea>
-          <div class="kl-composer-bottom"><div class="kl-composer-tools"><button type="button" class="kl-composer-icon" onclick={() => fileInput?.click()} aria-label={t("assistant.attach", "Attach reference images")}><ImagePlus size={16} /></button></div>
-              <div class="kl-composer-tools"><div class="kl-composer-picker-row" aria-label={t("assistant.model_controls", "Model controls")}><ModelPicker /><ReasoningPicker /></div>{#if branchOperationActive}<button type="button" class="kl-send-button" disabled aria-label={t("chat.regenerating", "Regenerating response")}><RefreshCw size={17} /></button>{:else if $useChatStore.activeRequestId}<button type="submit" class="kl-send-button kl-queue-button" onpointerdown={keepComposerFocus} disabled={!draft.trim() && !attachments.length} aria-label={t("assistant.queue", "Queue message")}><Send size={17} /></button><button type="button" class="kl-send-button kl-stop-button" onclick={stop} disabled={$useRuntimeStore.workingPhase === "cancelling"} aria-label={t("assistant.stop", "Stop response")}><CircleStop size={17} /></button>{:else}<button type="submit" class="kl-send-button" onpointerdown={keepComposerFocus} disabled={!draft.trim() && !attachments.length} aria-label={t("assistant.send", "Send message")}><Send size={17} /></button>{/if}</div>
+        <form class:pa-composer-drop-active={dropActive} class="pa-composer" onsubmit={(event) => { event.preventDefault(); void submit(); }} ondragover={(event) => { event.preventDefault(); dropActive = true; }} ondragleave={() => dropActive = false} ondrop={(event) => { event.preventDefault(); dropActive = false; void addFiles(Array.from(event.dataTransfer?.files ?? [])); }}>
+          {#if attachments.length}<div class="pa-filmstrip" aria-label={t("assistant.attached_images", "Attached reference images")}>{#each attachments as attachment, index (attachment.id)}<div class="pa-filmstrip-item"><button type="button" class="pa-filmstrip-preview" onclick={() => lightbox = { attachments, index }} oncontextmenu={(event) => { event.preventDefault(); attachmentMenuId = attachment.id; }} aria-label={tf("assistant.preview_named", "Preview {name}", { name: attachment.name })}><img src={attachmentPreviewUrl(attachment)} alt={attachment.name} width="58" height="54" /><span class="pa-filmstrip-name">{attachment.name}</span></button><button type="button" class="pa-filmstrip-remove" onclick={() => void removeAttachment(attachment.id)} aria-label={tf("assistant.remove_named", "Remove {name}", { name: attachment.name })}><X size={12} /></button><button type="button" class="pa-filmstrip-more" onclick={() => attachmentMenuId = attachmentMenuId === attachment.id ? null : attachment.id} aria-label={tf("assistant.edit_named", "Edit {name}", { name: attachment.name })}>•••</button>{#if attachmentMenuId === attachment.id}<div class="pa-attachment-menu" role="menu"><button type="button" role="menuitem" onclick={() => { replacementId = attachment.id; replacementInput?.click(); attachmentMenuId = null; }}><Pencil size={13} /> {t("common.replace", "Replace")}</button><button type="button" role="menuitem" onclick={() => { void removeAttachment(attachment.id); attachmentMenuId = null; }}><Trash2 size={13} /> {t("common.remove", "Remove")}</button></div>{/if}</div>{/each}<button type="button" class="pa-filmstrip-add" onclick={() => fileInput?.click()} aria-label={t("assistant.attach_another", "Attach another image")}><Plus size={17} /></button></div>{/if}
+           <textarea name="prompt-agent-message" autocomplete="off" bind:this={composerInput} bind:value={draft} rows="1" placeholder={t("assistant.input.placeholder", "Ask about or change the current prompt…")} aria-label={t("assistant.input.label", "Message Prompt Agent")} onfocus={() => composerFocused = true} onblur={() => composerFocused = false} oninput={(event) => resizeComposer(event.currentTarget)} onkeydown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if ($useChatStore.activeRequestId) stop(); else void submit(); } }}></textarea>
+          <div class="pa-composer-bottom"><div class="pa-composer-tools"><button type="button" class="pa-composer-icon" onclick={() => fileInput?.click()} aria-label={t("assistant.attach", "Attach reference images")}><ImagePlus size={16} /></button></div>
+              <div class="pa-composer-tools"><div class="pa-composer-picker-row" aria-label={t("assistant.model_controls", "Model controls")}><ModelPicker /><ReasoningPicker /></div>{#if $useChatStore.activeRequestId}<button type="button" class="pa-send-button pa-stop-button" onclick={stop} disabled={$useRuntimeStore.workingPhase === "cancelling"} aria-label={t("assistant.stop", "Stop response")}><CircleStop size={17} /></button>{:else}<button type="submit" class="pa-send-button" onpointerdown={keepComposerFocus} disabled={!draft.trim() && !attachments.length} aria-label={t("assistant.send", "Send message")}><Send size={17} /></button>{/if}</div>
            </div>
           <input bind:this={fileInput} type="file" accept="image/*" multiple hidden onchange={(event) => { void addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
           <input bind:this={replacementInput} type="file" accept="image/*" hidden onchange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void replaceAttachment(file); event.currentTarget.value = ""; }} />
         </form>
        </div>
-        {#if !composerFocused}<button type="button" class="kl-resize-handle" data-loom-interaction-handle="true" use:pointerWindow={{ mode: "resize", layout: () => currentLayout, update: updateLayout, minimum: windowMinimum, interacting: (active) => interacting = active }} onkeydown={resizeKey} aria-label={t("assistant.resize", "Resize chat window")}><Grip size={15} /></button>{/if}
-    {#if kind !== "desktop" && !$useUiStore.hasSeenMobileResizeHint && !mobileHintDismissed}<div class="kl-mobile-resize-hint" role="status"><Grip size={14} /> {t("assistant.resize_hint", "Drag the corner to resize")}<button type="button" onclick={() => { mobileHintDismissed = true; $useUiStore.markMobileResizeHintSeen(); }}>{t("common.dismiss", "Dismiss")}</button></div>{/if}
+        {#if !composerFocused}<button type="button" class="pa-resize-handle" data-prompt-agent-interaction-handle="true" use:pointerWindow={{ mode: "resize", layout: () => currentLayout, update: updateLayout, minimum: windowMinimum, interacting: (active) => interacting = active }} onkeydown={resizeKey} aria-label={t("assistant.resize", "Resize chat window")}><Grip size={15} /></button>{/if}
+    {#if kind !== "desktop" && !$useUiStore.hasSeenMobileResizeHint && !mobileHintDismissed}<div class="pa-mobile-resize-hint" role="status"><Grip size={14} /> {t("assistant.resize_hint", "Drag the corner to resize")}<button type="button" onclick={() => { mobileHintDismissed = true; $useUiStore.markMobileResizeHintSeen(); }}>{t("common.dismiss", "Dismiss")}</button></div>{/if}
     </div>
   {/if}
 
   <ProfileSettings open={$useUiStore.profileSettingsOpen} onclose={closeSettings} />
 
   {#if lightbox && lightbox.attachments[lightbox.index]}
-    <div class="kl-lightbox" role="dialog" tabindex="-1" aria-modal="true" aria-label={t("lightbox.title", "Image preview")} onclick={() => lightbox = null} onkeydown={(event) => { if (event.key === "Escape") lightbox = null; }}>
-      <div class="kl-lightbox-panel" onclick={(event) => event.stopPropagation()} role="presentation"><button type="button" class="kl-lightbox-close" onclick={() => lightbox = null} aria-label={t("lightbox.close", "Close preview")}><X size={18} /></button><img src={attachmentPreviewUrl(lightbox.attachments[lightbox.index])} alt={lightbox.attachments[lightbox.index].name} width="900" height="900" />{#if lightbox.attachments.length > 1}<button type="button" class="kl-lightbox-nav kl-lightbox-prev" disabled={lightbox.index === 0} onclick={() => lightbox && (lightbox = { ...lightbox, index: Math.max(0, lightbox.index - 1) })} aria-label={t("lightbox.previous", "Previous image")}><ChevronLeft size={22} /></button><button type="button" class="kl-lightbox-nav kl-lightbox-next" disabled={lightbox.index === lightbox.attachments.length - 1} onclick={() => lightbox && (lightbox = { ...lightbox, index: Math.min(lightbox.attachments.length - 1, lightbox.index + 1) })} aria-label={t("lightbox.next", "Next image")}><ChevronRight size={22} /></button><span class="kl-lightbox-count">{lightbox.index + 1} / {lightbox.attachments.length}</span>{/if}</div>
+    <div class="pa-lightbox" role="dialog" tabindex="-1" aria-modal="true" aria-label={t("lightbox.title", "Image preview")} onclick={() => lightbox = null} onkeydown={(event) => { if (event.key === "Escape") lightbox = null; }}>
+      <div class="pa-lightbox-panel" onclick={(event) => event.stopPropagation()} role="presentation"><button type="button" class="pa-lightbox-close" onclick={() => lightbox = null} aria-label={t("lightbox.close", "Close preview")}><X size={18} /></button><img src={attachmentPreviewUrl(lightbox.attachments[lightbox.index])} alt={lightbox.attachments[lightbox.index].name} width="900" height="900" />{#if lightbox.attachments.length > 1}<button type="button" class="pa-lightbox-nav pa-lightbox-prev" disabled={lightbox.index === 0} onclick={() => lightbox && (lightbox = { ...lightbox, index: Math.max(0, lightbox.index - 1) })} aria-label={t("lightbox.previous", "Previous image")}><ChevronLeft size={22} /></button><button type="button" class="pa-lightbox-nav pa-lightbox-next" disabled={lightbox.index === lightbox.attachments.length - 1} onclick={() => lightbox && (lightbox = { ...lightbox, index: Math.min(lightbox.attachments.length - 1, lightbox.index + 1) })} aria-label={t("lightbox.next", "Next image")}><ChevronRight size={22} /></button><span class="pa-lightbox-count">{lightbox.index + 1} / {lightbox.attachments.length}</span>{/if}</div>
     </div>
   {/if}
 </div>

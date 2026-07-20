@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProfileSettings from "../src/components/ProfileSettings.svelte";
-import { BRIDGE_API_VERSION, BRIDGE_CAPABILITIES, BRIDGE_NAME, getHostApi, HOST_API_NAME } from "../src/bridge";
+import { normalizeProfile } from "../src/profile-adapter";
 import { useI18nStore } from "../src/stores/i18n";
 import { useProfileStore } from "../src/stores/profiles";
 import { useUiStore } from "../src/stores/ui";
@@ -15,32 +15,54 @@ beforeEach(() => {
   useI18nStore.getState().reset();
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+  installProfileApi();
 });
 
 afterEach(() => {
   vi.useRealTimers();
-  delete window.kohakuLoom;
+  vi.unstubAllGlobals();
 });
 
-function installHost(profileChat: (profileId: string, messages: unknown[], signal?: AbortSignal, timeout?: number) => Promise<unknown>): ReturnType<typeof vi.fn> {
-  const profileStore = Object.fromEntries([
-    "load", "current", "teacher", "session", "add", "duplicate", "update", "delete",
-    "setActive", "setTeacher", "setSession", "setNaming", "restoreDefaults", "requestProjection",
-  ].map((name) => [name, vi.fn()]));
-  const syncProfiles = vi.fn(() => Promise.resolve({}));
-  window.kohakuLoom = { hostApi: {
-    name: HOST_API_NAME,
-    version: "1.0.0",
-    apiVersion: BRIDGE_API_VERSION,
-    capabilities: [...BRIDGE_CAPABILITIES],
-    handshake: () => ({ ok: true, bridge: BRIDGE_NAME, apiVersion: BRIDGE_API_VERSION, version: "1.0.0", capabilities: BRIDGE_CAPABILITIES }),
-    isForgeAvailable: vi.fn(), activePromptTarget: vi.fn(), readPrompt: vi.fn(), captureForgeState: vi.fn(), restoreForgeState: vi.fn(),
-    executeTool: vi.fn(), executeAssistantTool: vi.fn(), assistantConfig: vi.fn(), profileStore,
-    claimToolBridge: vi.fn(), releaseToolBridge: vi.fn(), claimAssistantToolBridge: vi.fn(), releaseAssistantToolBridge: vi.fn(),
-    syncProfiles, profileChat, listLegacySessions: vi.fn(), getLegacySession: vi.fn(), openSettings: vi.fn(),
-    getLocaleHints: vi.fn(), subscribeLocaleHints: vi.fn(),
-  } };
-  return syncProfiles;
+function installProfileApi(options: {
+  connection?: (signal?: AbortSignal) => Promise<Record<string, unknown>>;
+  failSecretSaves?: number;
+  forceHasApiKey?: boolean;
+} = {}): ReturnType<typeof vi.fn> {
+  let failSecretSaves = options.failSecretSaves ?? 0;
+  const storedKeys = new Set<string>();
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), "http://localhost");
+    const method = init?.method ?? "GET";
+    const profileId = decodeURIComponent(url.pathname.match(/\/profiles\/([^/]+)/)?.[1] ?? "");
+    const current = useProfileStore.getState();
+    const profile = current.profiles.find((item) => item.id === profileId) ?? current.profiles[0];
+    if (url.pathname.endsWith("/connection-test")) {
+      const result = await (options.connection?.(init?.signal ?? undefined) ?? Promise.resolve({ ok: true, transport: "system/environment proxy http://127.0.0.1:7890" }));
+      return new Response(JSON.stringify(result), { status: 200 });
+    }
+    if (url.pathname === "/prompt-agent/api/profiles" && method === "GET") {
+      return new Response(JSON.stringify(current), { status: 200 });
+    }
+    if (url.pathname === "/prompt-agent/api/profiles/restore-defaults" && method === "POST") {
+      return new Response(JSON.stringify(current), { status: 200 });
+    }
+    if (method === "PATCH") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      if ("api_key" in body) {
+        if (failSecretSaves > 0) {
+          failSecretSaves -= 1;
+          return new Response(JSON.stringify({ detail: "unavailable" }), { status: 503 });
+        }
+        if (body.api_key) storedKeys.add(profileId); else storedKeys.delete(profileId);
+      }
+      const hasApiKey = options.forceHasApiKey ?? (storedKeys.has(profileId) || profile.hasApiKey);
+      return new Response(JSON.stringify({ ...normalizeProfile(profile), hasApiKey, has_api_key: hasApiKey }), { status: 200 });
+    }
+    if (method === "DELETE") return new Response(null, { status: 204 });
+    return new Response(JSON.stringify(profile), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 describe("Svelte profile settings", () => {
@@ -78,23 +100,22 @@ describe("Svelte profile settings", () => {
   });
 
   it("reports the resolved connection route and forwards a bounded timeout", async () => {
-    const profileChat = vi.fn(async () => ({ text: "OK", transport: "system/environment proxy http://127.0.0.1:7890" }));
-    installHost(profileChat);
+    const fetchMock = installProfileApi();
     render(ProfileSettings, { open: true, onclose: () => undefined });
 
     await fireEvent.click(screen.getByRole("button", { name: "Test" }));
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Connection successful"));
     expect(screen.getByRole("status")).toHaveTextContent("system/environment proxy http://127.0.0.1:7890");
-    expect(profileChat).toHaveBeenCalledWith(expect.any(String), expect.any(Array), expect.any(AbortSignal), 30);
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/connection-test$/), expect.objectContaining({ method: "POST", signal: expect.any(AbortSignal) }));
   });
 
   it("recovers the connection-test controls after the client deadline", async () => {
     vi.useFakeTimers();
     useProfileStore.getState().updateProfile(useProfileStore.getState().selectedProfileId, { parameters: { timeout: 1 } });
-    installHost((_profileId, _messages, signal) => new Promise((_resolve, reject) => {
+    installProfileApi({ connection: (signal) => new Promise((_resolve, reject) => {
       signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
-    }));
+    }) });
     render(ProfileSettings, { open: true, onclose: () => undefined });
 
     await fireEvent.click(screen.getByRole("button", { name: "Test" }));
@@ -115,28 +136,19 @@ describe("Svelte profile settings", () => {
     expect(useProfileStore.getState().profiles.find((profile) => profile.id === useProfileStore.getState().selectedProfileId)?.enabled).toBe(false);
   });
 
-  it("coalesces rapid profile edits into one host sync", async () => {
-    vi.useFakeTimers();
-    const syncProfiles = installHost(async () => ({ text: "OK" }));
-    useProfileStore.getState().reload();
+  it("persists profile edits through the Prompt Agent API instead of the host bridge", async () => {
+    const fetchMock = installProfileApi();
     const profileId = useProfileStore.getState().selectedProfileId;
 
-    useProfileStore.getState().updateProfile(profileId, { displayName: "A" });
-    useProfileStore.getState().updateProfile(profileId, { displayName: "AB" });
     useProfileStore.getState().updateProfile(profileId, { displayName: "ABC" });
-    expect(syncProfiles).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(250);
-    expect(syncProfiles).toHaveBeenCalledOnce();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/prompt-agent/api/profiles/${profileId}`, expect.objectContaining({ method: "PATCH" })));
+    expect(window.__SD_FORGE_NEO_PROMPT_AGENT__).toBeUndefined();
   });
 
-  it("keeps manual save retryable until the sidecar confirms persistence", async () => {
+  it("keeps manual save retryable until Prompt Agent confirms persistence", async () => {
     const user = userEvent.setup();
-    const syncProfiles = installHost(async () => ({ text: "OK" }));
-    const profileId = useProfileStore.getState().selectedProfileId;
-    syncProfiles
-      .mockRejectedValueOnce(new Error("sidecar unavailable"))
-      .mockResolvedValueOnce({ profiles: [{ profile_id: profileId, has_api_key: true }] });
+    const fetchMock = installProfileApi({ failSecretSaves: 1 });
     render(ProfileSettings, { open: true, onclose: () => undefined });
     await user.click(screen.getByRole("tab", { name: "Connection" }));
     const input = screen.getByLabelText("API key");
@@ -149,13 +161,11 @@ describe("Svelte profile settings", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved securely"));
-    expect(syncProfiles).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PATCH").length).toBe(3);
   });
 
   it("does not claim success when a remote profile never had an API key", async () => {
-    const profileId = useProfileStore.getState().selectedProfileId;
-    const syncProfiles = installHost(async () => ({ text: "OK" }));
-    syncProfiles.mockResolvedValue({ profiles: [{ profile_id: profileId, has_api_key: false }] });
+    installProfileApi({ forceHasApiKey: false });
     render(ProfileSettings, { open: true, onclose: () => undefined });
 
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -165,12 +175,10 @@ describe("Svelte profile settings", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
-  it("keeps a complete API key draft out of host state until explicit save", async () => {
+  it("keeps a complete API key draft out of requests until explicit save", async () => {
     const user = userEvent.setup();
     const profileId = useProfileStore.getState().selectedProfileId;
-    const syncProfiles = installHost(async () => ({ text: "OK" }));
-    const updateProfile = getHostApi(window.kohakuLoom)!.profileStore.update as ReturnType<typeof vi.fn>;
-    syncProfiles.mockResolvedValue({ profiles: [{ profile_id: profileId, has_api_key: true }] });
+    const fetchMock = installProfileApi();
     render(ProfileSettings, { open: true, onclose: () => undefined });
     await user.click(screen.getByRole("tab", { name: "Connection" }));
     const input = screen.getByLabelText("API key");
@@ -178,16 +186,15 @@ describe("Svelte profile settings", () => {
     await user.type(input, "secret-typed-once");
 
     expect(input).toHaveValue("secret-typed-once");
-    expect(updateProfile).not.toHaveBeenCalled();
-    expect(syncProfiles).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved securely"));
-    expect(updateProfile).toHaveBeenCalledWith(profileId, expect.objectContaining({
-      api_key: "secret-typed-once",
-      has_api_key: true,
-    }));
+    const secretRequest = fetchMock.mock.calls.find(([, init]) => String((init as RequestInit | undefined)?.body ?? "").includes("secret-typed-once"));
+    expect(secretRequest?.[0]).toBe(`/prompt-agent/api/profiles/${profileId}`);
+    expect(JSON.parse(String((secretRequest?.[1] as RequestInit).body))).toEqual({ api_key: "secret-typed-once" });
+    expect(window.__SD_FORGE_NEO_PROMPT_AGENT__).toBeUndefined();
   });
 
   it("switches language from the shadcn dropdown", async () => {
@@ -205,6 +212,37 @@ describe("Svelte profile settings", () => {
     render(ProfileSettings, { open: true, onclose: () => undefined });
     expect(screen.getByRole("tab", { name: "Local" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Connection" })).not.toBeInTheDocument();
+  });
+
+  it("shows effective unsupported capabilities and blocks llama-once activation", () => {
+    const local = useProfileStore.getState().profiles.find((profile) => profile.runtime === "llama-once");
+    expect(local).toBeDefined();
+    useProfileStore.getState().updateProfile(local!.id, { enabled: true });
+    useProfileStore.getState().selectProfile(local!.id);
+    render(ProfileSettings, { open: true, onclose: () => undefined });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Agent chat is unavailable for this runtime");
+    expect(screen.getByRole("status")).toHaveTextContent("Streaming");
+    expect(screen.getByRole("status")).toHaveTextContent("Tool calling");
+    expect(screen.getByRole("status")).toHaveTextContent("Vision input");
+    expect(screen.getByRole("button", { name: "Use model" })).toBeDisabled();
+  });
+
+  it("keeps local paths out of profile state and submits them only on explicit save", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installProfileApi();
+    const local = useProfileStore.getState().profiles.find((profile) => profile.runtime === "llama-once");
+    expect(local).toBeDefined();
+    useProfileStore.getState().selectProfile(local!.id);
+    render(ProfileSettings, { open: true, onclose: () => undefined });
+    await user.click(screen.getByRole("tab", { name: "Local" }));
+
+    await user.type(screen.getByLabelText("GGUF path"), "C:/private/model.gguf");
+
+    expect(JSON.stringify(useProfileStore.getState())).not.toContain("C:/private/model.gguf");
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => String((init as RequestInit | undefined)?.body ?? "").includes("C:/private/model.gguf"))).toBe(true));
   });
 
   it("requires alert-dialog confirmation before deletion", async () => {

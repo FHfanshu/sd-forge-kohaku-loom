@@ -1,3 +1,0 @@
-google-genai>=1.0.0,<2
-# Keep the managed runtime aligned with the required capability-level contract.
-KohakuTerrarium @ git+https://github.com/Kohaku-Lab/KohakuTerrarium.git@f22b739d19785b9a065ac839a83eda457daba030

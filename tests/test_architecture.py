@@ -6,7 +6,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "kohaku_loom"
+PACKAGE = ROOT / "prompt_agent"
 TEXT_SUFFIXES = {".css", ".html", ".js", ".json", ".md", ".py", ".svelte", ".ts", ".txt", ".yaml", ".yml"}
 SKIP_PARTS = {
     ".git",
@@ -20,7 +20,47 @@ SKIP_PARTS = {
 }
 GENERATED_OR_LOCKED = {
     pathlib.Path("frontend/pnpm-lock.yaml"),
-    pathlib.Path("javascript/kohaku_loom_90_ui.js"),
+    pathlib.Path("javascript/prompt_agent_90_ui.js"),
+}
+HISTORICAL_FILES = {
+    pathlib.Path("AUDIT.md"),
+    pathlib.Path("ROADMAP.md"),
+    pathlib.Path("docs/KOHAKU_LOOM_MIGRATION.md"),
+    pathlib.Path("docs/audit-archive-2026-07-19-full.md"),
+    pathlib.Path("docs/audit-archive-2026-07-19.md"),
+    pathlib.Path("docs/current-architecture-audit.md"),
+    pathlib.Path("docs/kt-runtime-migration.md"),
+}
+NAMING_COMPATIBILITY_FILES = {
+    pathlib.Path("frontend/src/storage-migrations.ts"),
+    pathlib.Path("frontend/tests/storage-migrations.test.ts"),
+    pathlib.Path("javascript/prompt_agent_01_i18n.js"),
+    pathlib.Path("tests/test_frontend_svelte_boot.js"),
+    pathlib.Path("tests/test_host_bridge.py"),
+    pathlib.Path("tests/test_kohaku_attribution.py"),
+}
+ARCHIVED_RUNTIME_MARKERS = {
+    "/kohaku-loom/kt",
+    "KT_CONFIG_DIR",
+    "Last-Event-ID",
+    "assistant_sessions.sqlite3",
+    "claimAssistantToolBridge",
+    "releaseAssistantToolBridge",
+    "kohaku_loom.sidecar",
+    "runtime-lock.json",
+    "sidecar_manager",
+}
+ARCHIVED_TECHNICAL_NAME_MARKERS = {
+    "Kohaku Loom",
+    "KohakuLoom",
+    "ForgeNeoQwen3VLPromptTools",
+    "javascript/kohaku_loom",
+    "scripts/kohaku_loom.py",
+    "window.kohakuLoom",
+    "/kohaku-loom",
+    "kohaku-loom-host",
+    "kohaku-loom-svelte-ui",
+    "loom_assistant",
 }
 
 
@@ -39,7 +79,7 @@ def source_files() -> list[pathlib.Path]:
 
 def module_name(path: pathlib.Path) -> str:
     relative = path.relative_to(PACKAGE).with_suffix("")
-    return "kohaku_loom." + ".".join(relative.parts)
+    return "prompt_agent." + ".".join(relative.parts)
 
 
 def package_imports(path: pathlib.Path, known_modules: set[str]) -> set[str]:
@@ -115,16 +155,29 @@ class ArchitectureTests(unittest.TestCase):
         cycle = find_cycle(graph)
         self.assertEqual([], cycle)
 
-    def test_package_modules_do_not_import_generic_facade(self):
-        offenders = []
-        for path in sorted(PACKAGE.rglob("*.py")):
-            if path.name == "generic.py":
+    def test_active_tree_has_no_archived_runtime_execution_markers(self):
+        matches = []
+        for path in source_files():
+            relative = path.relative_to(ROOT)
+            if relative in HISTORICAL_FILES or relative.name == "test_architecture.py":
                 continue
-            deps = package_imports(path, {"kohaku_loom.generic"})
-            if deps:
-                offenders.append(str(path.relative_to(ROOT)))
-        self.assertEqual([], offenders)
+            text = path.read_text(encoding="utf-8")
+            for marker in sorted(ARCHIVED_RUNTIME_MARKERS):
+                if marker in text:
+                    matches.append(f"{relative}: {marker}")
+        self.assertEqual([], matches)
 
+    def test_active_tree_has_no_archived_technical_names(self):
+        matches = []
+        for path in source_files():
+            relative = path.relative_to(ROOT)
+            if relative in HISTORICAL_FILES or relative in NAMING_COMPATIBILITY_FILES or relative.name == "test_architecture.py":
+                continue
+            text = path.read_text(encoding="utf-8")
+            for marker in sorted(ARCHIVED_TECHNICAL_NAME_MARKERS):
+                if marker in text:
+                    matches.append(f"{relative}: {marker}")
+        self.assertEqual([], matches)
 
 if __name__ == "__main__":
     unittest.main()

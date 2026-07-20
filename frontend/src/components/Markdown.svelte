@@ -18,17 +18,17 @@
     if (!markdownElement) return;
     const copyLabel = t("chat.copy", "Copy");
     for (const pre of markdownElement.querySelectorAll("pre")) {
-      const existing = pre.closest<HTMLElement>(".kl-code-block");
+      const existing = pre.closest<HTMLElement>(".pa-code-block");
       if (existing) {
-        const button = existing.querySelector<HTMLButtonElement>("[data-code-copy]");
+        const button = existing.querySelector<HTMLButtonElement>("[data-prompt-agent-code-copy]");
         if (button && !resetTimers.has(button)) button.textContent = copyLabel;
         continue;
       }
       const wrapper = document.createElement("div");
       const button = document.createElement("button");
-      wrapper.className = "kl-code-block";
+      wrapper.className = "pa-code-block";
       button.type = "button";
-      button.className = "kl-code-copy";
+      button.className = "pa-code-copy";
       button.dataset.codeCopy = "";
       button.textContent = copyLabel;
       button.setAttribute("aria-label", copyLabel);
@@ -58,7 +58,7 @@
   }
 
   async function copyCodeBlock(button: HTMLButtonElement): Promise<void> {
-    const code = button.closest(".kl-code-block")?.querySelector("code");
+    const code = button.closest(".pa-code-block")?.querySelector("code");
     if (!code) return;
     try {
       await writeClipboard(code.textContent ?? "");
@@ -87,9 +87,9 @@
 </script>
 
 {#if streaming && !renderStreamingMarkdown}
-  <div class="kl-markdown kl-markdown-streaming">{content}</div>
+  <div class="pa-markdown pa-markdown-streaming">{content}</div>
 {:else if streaming}
-  <div class="kl-markdown kl-markdown-streaming">{@html html}</div>
+  <div class="pa-markdown pa-markdown-streaming">{@html html}</div>
 {:else}
-  <div bind:this={markdownElement} class="kl-markdown">{@html html}</div>
+  <div bind:this={markdownElement} class="pa-markdown">{@html html}</div>
 {/if}

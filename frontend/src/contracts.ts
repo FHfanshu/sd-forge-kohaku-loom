@@ -63,9 +63,6 @@ export const chatMessageSchema = z.object({
     undone: z.boolean().optional(),
   }).optional(),
   attachments: z.array(chatAttachmentSchema).default([]),
-  branchIndex: z.number().int().nonnegative().default(0),
-  branchCount: z.number().int().positive().default(1),
-  branchTurnIndex: z.number().int().nonnegative().optional(),
   createdAt: createdAtSchema,
 });
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
@@ -75,25 +72,9 @@ export const attachmentSchema = chatAttachmentSchema;
 export type ChatAttachment = z.infer<typeof attachmentSchema>;
 export type WireAttachment = ChatAttachment & { dataUrl: string };
 
-export const queuedMessageSchema = z.object({
-  id: z.string().min(1),
-  text: z.string(),
-  attachments: z.array(attachmentSchema).default([]),
-  attachmentCount: z.number().int().nonnegative().default(0),
-  state: z.enum(["pending", "guide_waiting", "running", "claimed", "failed", "cancelled", "delivered"]).optional(),
-  kind: z.enum(["primary", "guide"]).optional(),
-  error: z.string().optional(),
-  turnId: z.string().optional(),
-  sequence: z.number().int().nonnegative().optional(),
-  updatedAt: z.number().finite().optional(),
-  createdAt: createdAtSchema,
-});
-export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
-export type QueuedMessageInput = z.input<typeof queuedMessageSchema>;
-
 export const historyRowSchema = z.object({
   id: z.string().min(1),
-  source: z.enum(["KT", "legacy"]),
+  source: z.literal("prompt-agent"),
   title: z.string().min(1),
   preview: z.string(),
   updatedAt: z.string().min(1),
@@ -111,7 +92,7 @@ export type WindowLayout = z.infer<typeof windowLayoutSchema>;
 
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-export const profileProtocolSchema = z.enum(["gemini-native", "openai-chat-completions"]);
+export const profileProtocolSchema = z.enum(["gemini-native", "anthropic-native", "openai-chat-completions"]);
 export type ProfileProtocol = z.infer<typeof profileProtocolSchema>;
 
 export const profileRuntimeSchema = z.enum(["remote-http", "llama-endpoint", "llama-once"]);
@@ -122,6 +103,10 @@ export const profileCapabilitiesSchema = z.object({
   vision: z.boolean(),
   streaming: z.boolean(),
   reasoning: z.boolean(),
+  attachments: z.boolean().optional(),
+  systemPrompt: z.boolean().optional(),
+  usage: z.boolean().optional(),
+  abort: z.boolean().optional(),
 });
 export type ProfileCapabilities = z.infer<typeof profileCapabilitiesSchema>;
 
@@ -151,6 +136,7 @@ export type ProfileModelInfo = z.infer<typeof profileModelInfoSchema>;
 
 export const profileSchema = z.object({
   id: z.string().min(1),
+  providerId: z.string().min(1).optional(),
   displayName: z.string().min(1),
   modelId: z.string().min(1),
   enabled: z.boolean(),
@@ -158,14 +144,13 @@ export const profileSchema = z.object({
   runtime: profileRuntimeSchema,
   endpoint: z.string(),
   fallbackEndpoints: z.array(z.string()),
-  apiKey: z.string(),
   hasApiKey: z.boolean(),
   capabilities: profileCapabilitiesSchema,
   parameters: profileParametersSchema,
   modelInfo: profileModelInfoSchema,
-  modelPath: z.string(),
-  mmprojPath: z.string(),
-  llamaServerPath: z.string(),
+  localModelConfigured: z.boolean(),
+  mmprojConfigured: z.boolean(),
+  llamaServerConfigured: z.boolean(),
   nCtx: z.number().int().positive(),
   nGpuLayers: z.number().int(),
   thinking: z.boolean(),
@@ -173,6 +158,7 @@ export const profileSchema = z.object({
 export type Profile = z.infer<typeof profileSchema>;
 
 export const profilePatchSchema = z.object({
+  providerId: z.string().optional(),
   displayName: z.string().optional(),
   modelId: z.string().optional(),
   enabled: z.boolean().optional(),
@@ -180,7 +166,6 @@ export const profilePatchSchema = z.object({
   runtime: profileRuntimeSchema.optional(),
   endpoint: z.string().optional(),
   fallbackEndpoints: z.array(z.string()).optional(),
-  apiKey: z.string().optional(),
   hasApiKey: z.boolean().optional(),
   capabilities: profileCapabilitiesSchema.partial().optional(),
   parameters: profileParametersSchema.partial().optional(),
@@ -255,39 +240,6 @@ export interface SendMessageInput {
   attachments: WireAttachment[];
   displayAttachments?: ChatAttachment[];
   reasoning: ReasoningEffort;
-  editOf?: string;
-}
-
-export interface BranchTurn {
-  turnIndex: number;
-  branches: number[];
-  branchCount: number;
-  latestBranch?: number;
-  selectedBranchId?: number;
-  branchStatuses?: Record<string, string>;
-  userGroups?: Array<{ content: string; branches: number[] }>;
-  selectedUserGroupIndex?: number;
-}
-
-export interface BranchMetadata {
-  session_id?: string;
-  branch_view: Record<string, number>;
-  selected_branch_ids?: Record<string, number>;
-  branch_counts?: Record<string, number>;
-  latest_branch_ids?: Record<string, number>;
-  branch_statuses?: Record<string, Record<string, string>>;
-  turns?: BranchTurn[];
-  final_turn_index?: number | null;
-  [key: string]: unknown;
-}
-
-export interface LegacySessionRecord {
-  session_id: string;
-  title?: string;
-  preview?: string;
-  updated_at?: string | number;
-  message_count?: number;
-  [key: string]: unknown;
 }
 
 export interface RuntimeSession {
@@ -297,11 +249,11 @@ export interface RuntimeSession {
 }
 
 export interface MessageSubmission {
-  kind: "turn" | "queued" | "edit" | "local";
+  kind: "local";
   id?: string;
 }
 
-export interface LoomActionHandlers {
+export interface PromptAgentActionHandlers {
   sendMessage(input: SendMessageInput): MessageSubmission | void | Promise<MessageSubmission | void>;
   stopRequest(): void;
   attachFiles(files: File[]): ChatAttachment[] | void | Promise<ChatAttachment[] | void>;
@@ -310,25 +262,11 @@ export interface LoomActionHandlers {
   readPrompt(): void | Promise<void>;
   clearChat(): void;
   copyMessage(message: ChatMessage): void | Promise<void>;
-  regenerate(message: ChatMessage): void | Promise<void>;
   undoToolMutation(message: ChatMessage): void | Promise<void>;
-  changeBranch(message: ChatMessage, branchIndex: number): void | Promise<void>;
-  removeQueuedMessage(id: string): void | Promise<void>;
   selectHistory(row: HistoryRow): void | Promise<void>;
   newSession(): void | Promise<void>;
   openSettings(): void;
-  retryQueuedMessage?(id: string): void | Promise<void>;
-  editQueuedMessage?(id: string, input: SendMessageInput): void | Promise<void>;
 }
-
-export const ktEventSchema = z.object({
-  id: z.string().optional(),
-  event: z.string().min(1),
-  data: z.unknown(),
-  rawData: z.string(),
-  sequence: z.number().int().nonnegative().optional(),
-});
-export type KTEvent = z.infer<typeof ktEventSchema>;
 
 export function parseBoundary<T>(schema: z.ZodType<T>, value: unknown, label: string): T {
   const result = schema.safeParse(value);

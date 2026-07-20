@@ -12,6 +12,7 @@ import {
   type ProfileRuntime,
   type ProfileState,
 } from "./contracts";
+import { supportsAgentChat } from "./providers/profile-capabilities";
 
 type RecordValue = Record<string, unknown>;
 
@@ -23,6 +24,10 @@ const DEFAULT_CAPABILITIES: ProfileCapabilities = {
   vision: true,
   streaming: true,
   reasoning: true,
+  attachments: true,
+  systemPrompt: true,
+  usage: true,
+  abort: true,
 };
 
 const DEFAULT_PARAMETERS: ProfileParameters = {
@@ -84,7 +89,7 @@ function profileId(value: unknown, fallback: string): string {
 }
 
 function normalizeProtocol(value: unknown, fallback: ProfileProtocol): ProfileProtocol {
-  return value === "gemini-native" || value === "openai-chat-completions" ? value : fallback;
+  return value === "gemini-native" || value === "anthropic-native" || value === "openai-chat-completions" ? value : fallback;
 }
 
 function normalizeRuntime(value: unknown, fallback: ProfileRuntime): ProfileRuntime {
@@ -93,11 +98,18 @@ function normalizeRuntime(value: unknown, fallback: ProfileRuntime): ProfileRunt
 
 function normalizeCapabilities(raw: unknown, fallback = DEFAULT_CAPABILITIES): ProfileCapabilities {
   const source = objectValue(raw);
+  const attachmentFallback = source.attachments === undefined && typeof source.vision === "boolean"
+    ? source.vision
+    : fallback.attachments ?? fallback.vision;
   return {
     tools: booleanValue(source, ["tools"], fallback.tools),
     vision: booleanValue(source, ["vision"], fallback.vision),
     streaming: booleanValue(source, ["streaming"], fallback.streaming),
     reasoning: booleanValue(source, ["reasoning"], fallback.reasoning),
+    attachments: booleanValue(source, ["attachments"], attachmentFallback),
+    systemPrompt: booleanValue(source, ["systemPrompt", "system_prompt"], fallback.systemPrompt ?? true),
+    usage: booleanValue(source, ["usage"], fallback.usage ?? true),
+    abort: booleanValue(source, ["abort"], fallback.abort ?? true),
   };
 }
 
@@ -140,8 +152,10 @@ export function normalizeProfile(raw: unknown, fallback?: Partial<Profile>): Pro
     firstValue(source, ["protocol"], base.protocol),
     normalizeProtocol(base.protocol, "openai-chat-completions"),
   );
-  const apiKey = stringValue(source, ["apiKey", "api_key"], "");
   const modelId = stringValue(source, ["modelId", "model_id", "model"], stringValue(base, ["modelId", "model_id", "model"], DEFAULT_MODEL_ID));
+  const providerId = stringValue(source, ["providerId", "provider_id"], stringValue(base, ["providerId", "provider_id"], "")).trim();
+  const modelInfo = normalizeModelInfo(firstValue(source, ["modelInfo", "model_info"]), baseModelInfo);
+  if (providerId && !modelInfo.providerId) modelInfo.providerId = providerId;
   const normalized: Profile = {
     id: profileId(firstValue(source, ["id", "profileId", "profile_id"]), profileId(firstValue(base, ["id", "profileId", "profile_id"]), "profile")),
     displayName: stringValue(source, ["displayName", "display_name", "name"], stringValue(base, ["displayName", "display_name", "name"], "Model profile")).trim() || "Model profile",
@@ -151,19 +165,19 @@ export function normalizeProfile(raw: unknown, fallback?: Partial<Profile>): Pro
     runtime,
     endpoint: stringValue(source, ["endpoint"], stringValue(base, ["endpoint"], runtime === "remote-http" ? "" : DEFAULT_ENDPOINT)).trim().replace(/\/+$/, ""),
     fallbackEndpoints: arrayValue(source, ["fallbackEndpoints", "fallback_endpoints"], arrayValue(base, ["fallbackEndpoints", "fallback_endpoints"])),
-    apiKey,
-    hasApiKey: booleanValue(source, ["hasApiKey", "has_api_key"], Boolean(apiKey) || booleanValue(base, ["hasApiKey", "has_api_key"], false)),
+    hasApiKey: booleanValue(source, ["hasApiKey", "has_api_key"], booleanValue(base, ["hasApiKey", "has_api_key"], false)),
     capabilities: normalizeCapabilities(source.capabilities, baseCapabilities),
     parameters: normalizeParameters(source.parameters, baseParameters),
-    modelInfo: normalizeModelInfo(firstValue(source, ["modelInfo", "model_info"]), baseModelInfo),
-    modelPath: stringValue(source, ["modelPath", "model_path", "localModelPath", "local_model_path"], stringValue(base, ["modelPath", "model_path", "localModelPath", "local_model_path"])),
-    mmprojPath: stringValue(source, ["mmprojPath", "mmproj_path", "visionMmprojPath", "vision_mmproj_path"], stringValue(base, ["mmprojPath", "mmproj_path", "visionMmprojPath", "vision_mmproj_path"])),
-    llamaServerPath: stringValue(source, ["llamaServerPath", "llama_server_path"], stringValue(base, ["llamaServerPath", "llama_server_path"])),
+    modelInfo,
+    localModelConfigured: booleanValue(source, ["localModelConfigured", "local_model_configured"], booleanValue(base, ["localModelConfigured", "local_model_configured"], false)),
+    mmprojConfigured: booleanValue(source, ["mmprojConfigured", "mmproj_configured"], booleanValue(base, ["mmprojConfigured", "mmproj_configured"], false)),
+    llamaServerConfigured: booleanValue(source, ["llamaServerConfigured", "llama_server_configured"], booleanValue(base, ["llamaServerConfigured", "llama_server_configured"], false)),
     nCtx: Math.round(numberValue(source, ["nCtx", "n_ctx", "localNCtx", "local_n_ctx"], numberValue(base, ["nCtx", "n_ctx"], 16384), 1024, 1048576)),
     nGpuLayers: Math.round(numberValue(source, ["nGpuLayers", "n_gpu_layers", "localNGpuLayers", "local_n_gpu_layers"], numberValue(base, ["nGpuLayers", "n_gpu_layers"], -1), -1, 10000)),
     thinking: booleanValue(source, ["thinking", "localTextThinking", "local_text_thinking", "enableThinking"], booleanValue(base, ["thinking"], false)),
   };
-  if (normalized.runtime !== "remote-http" && normalized.protocol === "gemini-native") normalized.protocol = "openai-chat-completions";
+  if (providerId) normalized.providerId = providerId;
+  if (normalized.runtime !== "remote-http" && ["gemini-native", "anthropic-native"].includes(normalized.protocol)) normalized.protocol = "openai-chat-completions";
   if (normalized.runtime === "llama-once") normalized.endpoint = normalized.endpoint || DEFAULT_ENDPOINT;
   return profileSchema.parse(normalized);
 }
@@ -203,7 +217,9 @@ export function normalizeProfileState(raw: unknown): ProfileState {
   if (!profiles.some((profile) => profile.enabled)) profiles[0].enabled = true;
   const enabled = profiles.filter((profile) => profile.enabled);
   const enabledIds = new Set(enabled.map((profile) => profile.id));
-  const firstEnabled = enabled[0]?.id ?? "";
+  const agentProfiles = enabled.filter(supportsAgentChat);
+  const agentIds = new Set(agentProfiles.map((profile) => profile.id));
+  const firstEnabled = agentProfiles[0]?.id ?? "";
   const requestedActive = stringValue(source, ["activeProfileId", "active_profile_id"]);
   const requestedTeacher = stringValue(source, ["teacherProfileId", "teacher_profile_id"]);
   const requestedSession = stringValue(source, ["sessionProfileId", "session_profile_id"]);
@@ -212,8 +228,8 @@ export function normalizeProfileState(raw: unknown): ProfileState {
   const namingIds = enabled.filter((profile) => profile.runtime === "llama-once").map((profile) => profile.id);
   return profileStateSchema.parse({
     version: 2,
-    activeProfileId: enabledIds.has(requestedActive) ? requestedActive : firstEnabled,
-    teacherProfileId: enabledIds.has(requestedTeacher) ? requestedTeacher : (enabledIds.has(firstEnabled) ? firstEnabled : ""),
+    activeProfileId: agentIds.has(requestedActive) ? requestedActive : firstEnabled,
+    teacherProfileId: agentIds.has(requestedTeacher) ? requestedTeacher : firstEnabled,
     sessionProfileId: localIds.includes(requestedSession) ? requestedSession : (localIds.includes("local-llama-endpoint") ? "local-llama-endpoint" : localIds[0] ?? ""),
     namingProfileId: namingIds.includes(requestedNaming) ? requestedNaming : (namingIds.includes("local-llama-once") ? "local-llama-once" : namingIds[0] ?? ""),
     profiles,
@@ -224,7 +240,7 @@ export function toHostProfilePatch(patch: ProfilePatch | Partial<Profile>): Reco
   const source = profilePatchSchema.parse(patch) as RecordValue;
   const result: RecordValue = {};
   const copy = (camel: string, snake: string) => { if (source[camel] !== undefined) result[snake] = source[camel]; };
-  ["displayName", "modelId", "enabled", "protocol", "runtime", "endpoint", "fallbackEndpoints", "apiKey", "hasApiKey", "modelPath", "mmprojPath", "llamaServerPath", "nCtx", "nGpuLayers", "thinking"].forEach((key) => {
+  ["providerId", "displayName", "modelId", "enabled", "protocol", "runtime", "endpoint", "fallbackEndpoints", "hasApiKey", "modelPath", "mmprojPath", "llamaServerPath", "nCtx", "nGpuLayers", "thinking"].forEach((key) => {
     const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
     copy(key, snake);
   });
@@ -235,7 +251,7 @@ export function toHostProfilePatch(patch: ProfilePatch | Partial<Profile>): Reco
     keys.forEach(([from, to]) => { if (nested[from] !== undefined) target[to] = nested[from]; });
     result[targetKey] = target;
   };
-  copyNested("capabilities", "capabilities", [["tools", "tools"], ["vision", "vision"], ["streaming", "streaming"], ["reasoning", "reasoning"]]);
+  copyNested("capabilities", "capabilities", [["tools", "tools"], ["vision", "vision"], ["streaming", "streaming"], ["reasoning", "reasoning"], ["attachments", "attachments"], ["systemPrompt", "system_prompt"], ["usage", "usage"], ["abort", "abort"]]);
   copyNested("parameters", "parameters", [["temperature", "temperature"], ["topP", "top_p"], ["top_p", "top_p"], ["maxTokens", "max_tokens"], ["max_tokens", "max_tokens"], ["reasoningEffort", "reasoning_effort"], ["reasoning_effort", "reasoning_effort"], ["timeout", "timeout"], ["sanitizeSensitive", "sanitize_sensitive"], ["sanitize_sensitive", "sanitize_sensitive"], ["teacherMode", "teacher_mode"], ["teacher_mode", "teacher_mode"]]);
   copyNested("modelInfo", "model_info", [["source", "source"], ["providerId", "provider_id"], ["provider_id", "provider_id"], ["matchedModelId", "matched_model_id"], ["matched_model_id", "matched_model_id"], ["contextLimit", "context_limit"], ["context_limit", "context_limit"], ["outputLimit", "output_limit"], ["output_limit", "output_limit"], ["temperatureSupported", "temperature_supported"], ["temperature_supported", "temperature_supported"], ["reasoningToggle", "reasoning_toggle"], ["reasoning_toggle", "reasoning_toggle"], ["reasoningEfforts", "reasoning_efforts"], ["reasoning_efforts", "reasoning_efforts"], ["syncedAt", "synced_at"], ["synced_at", "synced_at"]]);
   return result;

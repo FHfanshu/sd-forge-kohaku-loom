@@ -6,6 +6,6 @@
   onMount(() => { void useI18nStore.getState().preload(); });
 </script>
 
-<section id="kohaku-loom-svelte-ui">
+<section id="prompt-agent-svelte-ui">
   <Surface />
 </section>

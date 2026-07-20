@@ -34,7 +34,7 @@
       : "");
 </script>
 
-<details class:kl-working-has-reasoning={Boolean(reasoningExcerpt)} class="kl-working-indicator kl-working-{phase}" role="status" aria-live="polite">
-  <summary><span class="kl-working-icon" aria-hidden="true">{#if phase === "submitting"}<Send size={14} />{:else if phase === "cancelling"}<CircleStop size={14} />{:else if phase === "tool"}<Wrench size={14} />{:else if phase === "generating"}<Sparkles size={14} />{:else}<BrainCircuit size={14} />{/if}</span><strong><span>{label}</span>{#if phase === "tool" && tool} <code>{tool}</code>{/if}</strong><span class="kl-working-thread" aria-hidden="true"><i></i></span><ChevronRight class="kl-working-chevron" size={14} aria-hidden="true" /></summary>
-  {#if detail}<small class="kl-working-detail" title={detail}>{detail}</small>{/if}
+<details class:pa-working-has-reasoning={Boolean(reasoningExcerpt)} class="pa-working-indicator pa-working-{phase}" role="status" aria-live="polite">
+  <summary><span class="pa-working-icon" aria-hidden="true">{#if phase === "submitting"}<Send size={14} />{:else if phase === "cancelling"}<CircleStop size={14} />{:else if phase === "tool"}<Wrench size={14} />{:else if phase === "generating"}<Sparkles size={14} />{:else}<BrainCircuit size={14} />{/if}</span><strong><span>{label}</span>{#if phase === "tool" && tool} <code>{tool}</code>{/if}</strong><span class="pa-working-thread" aria-hidden="true"><i></i></span><ChevronRight class="pa-working-chevron" size={14} aria-hidden="true" /></summary>
+  {#if detail}<small class="pa-working-detail" title={detail}>{detail}</small>{/if}
 </details>

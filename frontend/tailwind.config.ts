@@ -2,7 +2,7 @@ import type { Config } from "tailwindcss";
 import animate from "tailwindcss-animate";
 
 export default {
-  prefix: "kl-",
+  prefix: "pa-",
   content: ["./src/**/*.{html,js,svelte,ts}"],
   corePlugins: {
     preflight: false,
@@ -10,40 +10,40 @@ export default {
   theme: {
     extend: {
       colors: {
-        border: "var(--kl-border)",
-        input: "var(--kl-input)",
-        ring: "var(--kl-ring)",
-        background: "var(--kl-background)",
-        foreground: "var(--kl-foreground)",
+        border: "var(--pa-border)",
+        input: "var(--pa-input)",
+        ring: "var(--pa-ring)",
+        background: "var(--pa-background)",
+        foreground: "var(--pa-foreground)",
         primary: {
-          DEFAULT: "var(--kl-primary)",
-          foreground: "var(--kl-primary-foreground)",
+          DEFAULT: "var(--pa-primary)",
+          foreground: "var(--pa-primary-foreground)",
         },
         secondary: {
-          DEFAULT: "var(--kl-secondary)",
-          foreground: "var(--kl-secondary-foreground)",
+          DEFAULT: "var(--pa-secondary)",
+          foreground: "var(--pa-secondary-foreground)",
         },
         destructive: {
-          DEFAULT: "var(--kl-destructive)",
-          foreground: "var(--kl-destructive-foreground)",
+          DEFAULT: "var(--pa-destructive)",
+          foreground: "var(--pa-destructive-foreground)",
         },
         muted: {
-          DEFAULT: "var(--kl-muted)",
-          foreground: "var(--kl-muted-foreground)",
+          DEFAULT: "var(--pa-muted)",
+          foreground: "var(--pa-muted-foreground)",
         },
         accent: {
-          DEFAULT: "var(--kl-accent)",
-          foreground: "var(--kl-accent-foreground)",
+          DEFAULT: "var(--pa-accent)",
+          foreground: "var(--pa-accent-foreground)",
         },
         popover: {
-          DEFAULT: "var(--kl-popover)",
-          foreground: "var(--kl-popover-foreground)",
+          DEFAULT: "var(--pa-popover)",
+          foreground: "var(--pa-popover-foreground)",
         },
       },
       borderRadius: {
-        lg: "var(--kl-radius-lg)",
-        md: "var(--kl-radius-md)",
-        sm: "var(--kl-radius-sm)",
+        lg: "var(--pa-radius-lg)",
+        md: "var(--pa-radius-md)",
+        sm: "var(--pa-radius-sm)",
       },
     },
   },

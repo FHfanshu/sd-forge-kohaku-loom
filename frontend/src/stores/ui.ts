@@ -1,5 +1,12 @@
 import { createStore } from "./store";
 import { windowLayoutSchema, type WindowLayout } from "../contracts";
+import {
+  LEGACY_STORAGE_KEYS,
+  PROMPT_AGENT_STORAGE_KEYS,
+  readMigratedStorageValue,
+  removePromptAgentStorageValue,
+  writePromptAgentStorageValue,
+} from "../storage-migrations";
 
 export type LayoutViewport = "desktop" | "mobilePortrait" | "mobileLandscape";
 
@@ -20,15 +27,15 @@ const DEFAULT_PROFILE_LAYOUTS: Record<LayoutViewport, WindowLayout> = {
   mobileLandscape: { left: 16, top: 16, width: 460, height: 280 },
 };
 
-const LAYOUT_STORAGE_KEY = "kohaku-loom:ui-layouts:v1";
-const PROFILE_LAYOUT_STORAGE_KEY = "kohaku-loom:profile-layouts:v2";
-const LAUNCHER_POSITION_STORAGE_KEY = "kohaku-loom:launcher-position:v1";
+const LAYOUT_STORAGE_KEY = PROMPT_AGENT_STORAGE_KEYS.uiLayouts;
+const PROFILE_LAYOUT_STORAGE_KEY = PROMPT_AGENT_STORAGE_KEYS.profileLayouts;
+const LAUNCHER_POSITION_STORAGE_KEY = PROMPT_AGENT_STORAGE_KEYS.launcherPosition;
 
 function readStoredLayouts(): Record<LayoutViewport, WindowLayout> {
   const storage = getStorage();
   if (!storage) return DEFAULT_LAYOUTS;
   try {
-    const value: unknown = JSON.parse(storage.getItem(LAYOUT_STORAGE_KEY) ?? "null");
+    const value: unknown = JSON.parse(readMigratedStorageValue(storage, LAYOUT_STORAGE_KEY, LEGACY_STORAGE_KEYS.uiLayouts) ?? "null");
     if (!value || typeof value !== "object") return DEFAULT_LAYOUTS;
     const candidate = value as Partial<Record<LayoutViewport, unknown>>;
     return {
@@ -51,7 +58,7 @@ function readStoredProfileLayouts(): Record<LayoutViewport, WindowLayout> {
   const storage = getStorage();
   if (!storage) return DEFAULT_PROFILE_LAYOUTS;
   try {
-    const value: unknown = JSON.parse(storage.getItem(PROFILE_LAYOUT_STORAGE_KEY) ?? "null");
+    const value: unknown = JSON.parse(readMigratedStorageValue(storage, PROFILE_LAYOUT_STORAGE_KEY, LEGACY_STORAGE_KEYS.profileLayouts) ?? "null");
     if (!value || typeof value !== "object") return DEFAULT_PROFILE_LAYOUTS;
     const candidate = value as Partial<Record<LayoutViewport, unknown>>;
     return {
@@ -74,7 +81,7 @@ function readStoredLauncherPosition(): LauncherPosition | null {
   const storage = getStorage();
   if (!storage) return null;
   try {
-    const value: unknown = JSON.parse(storage.getItem(LAUNCHER_POSITION_STORAGE_KEY) ?? "null");
+    const value: unknown = JSON.parse(readMigratedStorageValue(storage, LAUNCHER_POSITION_STORAGE_KEY, LEGACY_STORAGE_KEYS.launcherPosition) ?? "null");
     if (!value || typeof value !== "object") return null;
     const candidate = value as Partial<LauncherPosition>;
     return Number.isFinite(candidate.left) && Number.isFinite(candidate.top)
@@ -100,7 +107,7 @@ export function persistLayouts(layouts: Record<LayoutViewport, WindowLayout>): v
   const storage = getStorage();
   if (!storage) return;
   try {
-    storage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layouts));
+      writePromptAgentStorageValue(storage, LAYOUT_STORAGE_KEY, LEGACY_STORAGE_KEYS.uiLayouts, JSON.stringify(layouts));
   } catch {
     // Storage can be unavailable in embedded or private browsing contexts.
   }
@@ -110,7 +117,7 @@ export function persistProfileLayouts(layouts: Record<LayoutViewport, WindowLayo
   const storage = getStorage();
   if (!storage) return;
   try {
-    storage.setItem(PROFILE_LAYOUT_STORAGE_KEY, JSON.stringify(layouts));
+      writePromptAgentStorageValue(storage, PROFILE_LAYOUT_STORAGE_KEY, LEGACY_STORAGE_KEYS.profileLayouts, JSON.stringify(layouts));
   } catch {
     // Storage can be unavailable in embedded or private browsing contexts.
   }
@@ -120,8 +127,8 @@ export function persistLauncherPosition(position: LauncherPosition | null): void
   const storage = getStorage();
   if (!storage) return;
   try {
-    if (position) storage.setItem(LAUNCHER_POSITION_STORAGE_KEY, JSON.stringify(position));
-    else storage.removeItem(LAUNCHER_POSITION_STORAGE_KEY);
+    if (position) writePromptAgentStorageValue(storage, LAUNCHER_POSITION_STORAGE_KEY, LEGACY_STORAGE_KEYS.launcherPosition, JSON.stringify(position));
+    else removePromptAgentStorageValue(storage, LAUNCHER_POSITION_STORAGE_KEY, LEGACY_STORAGE_KEYS.launcherPosition);
   } catch {
     // Storage can be unavailable in embedded or private browsing contexts.
   }

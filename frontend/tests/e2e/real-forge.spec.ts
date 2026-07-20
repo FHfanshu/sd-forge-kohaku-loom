@@ -12,22 +12,22 @@ const promptSelector = "#txt2img_prompt textarea, #txt2img_prompt input";
 async function runPromptTool(page: import("@playwright/test").Page, tool: string, argumentsValue: Record<string, unknown>): Promise<PromptToolResult> {
   return page.evaluate(async ({ tool, argumentsValue }) => {
     const api = (window as Window & {
-      kohakuLoom?: { hostApi?: { executeAssistantTool?: (value: unknown) => Promise<PromptToolResult> } };
-    }).kohakuLoom?.hostApi;
-    if (typeof api?.executeAssistantTool !== "function") throw new Error("Kohaku Loom host tool bridge is unavailable");
+      __SD_FORGE_NEO_PROMPT_AGENT__?: { hostApi?: { executeAssistantTool?: (value: unknown) => Promise<PromptToolResult> } };
+    }).__SD_FORGE_NEO_PROMPT_AGENT__?.hostApi;
+    if (typeof api?.executeAssistantTool !== "function") throw new Error("Prompt Agent host tool bridge is unavailable");
     return await api.executeAssistantTool({ tool, arguments: argumentsValue });
   }, { tool, argumentsValue });
 }
 
-test("changes and restores a real Forge txt2img prompt through Loom", async ({ page }) => {
+test("changes and restores a real Forge txt2img prompt through Prompt Agent", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#tabs")).toBeVisible();
   const prompt = page.locator(promptSelector).first();
   await expect(prompt).toBeVisible();
-  await expect(page.getByRole("button", { name: /Kohaku Loom/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Prompt Agent/i })).toBeVisible();
 
   const original = await prompt.inputValue();
-  const marker = `local_ci_loom_${Date.now()}`;
+  const marker = `local_ci_prompt-agent_${Date.now()}`;
   let changed = false;
 
   try {
@@ -75,15 +75,15 @@ test.describe("real tablet model path", () => {
     const prompt = page.locator(promptSelector).first();
     await expect(prompt).toBeVisible();
     const original = await prompt.inputValue();
-    const marker = `model_e2e_loom_${Date.now()}`;
+    const marker = `model_e2e_prompt-agent_${Date.now()}`;
     let directMode = false;
 
     try {
-      await page.getByRole("button", { name: /Kohaku Loom/i }).click();
-      const chat = page.getByRole("dialog", { name: /Kohaku Loom|助手/i });
+      await page.getByRole("button", { name: /Prompt Agent/i }).click();
+      const chat = page.getByRole("dialog", { name: /Prompt Agent|助手/i });
       await expect(chat).toBeVisible();
-      await chat.locator(".kl-header-controls .kl-header-icon").nth(2).click();
-      const settings = page.locator(".kl-profile-window");
+      await chat.locator(".pa-header-controls .pa-header-icon").nth(2).click();
+      const settings = page.locator(".pa-profile-window");
       await expect(settings).toBeVisible();
       await expect(chat).toBeVisible();
       await expect(settings.getByRole("button", { name: /Resize profile window|调整模型配置窗口大小/i })).toBeVisible();
@@ -93,34 +93,31 @@ test.describe("real tablet model path", () => {
       expect(settingsBox!.height).toBeLessThan(1180);
 
       if (profileId) {
-        const selected = await page.evaluate((id) => {
-          const store = (window.kohakuLoom?.hostApi as { profileStore?: {
-            load(): unknown;
-            setActive(id: string): unknown;
-          } } | undefined)?.profileStore;
-          const state = store?.load() as { profiles?: Array<{ id?: string; display_name?: string; displayName?: string }> } | undefined;
-          const profile = state?.profiles?.find((item) => item.id === id);
-          if (!profile || !store?.setActive) return "";
-          store.setActive(id);
+        const selected = await page.evaluate(async (id) => {
+          const response = await fetch("/prompt-agent/api/profiles");
+          const state = await response.json() as { profiles?: Array<{ id?: string; display_name?: string; displayName?: string }> };
+          const profile = state.profiles?.find((item) => item.id === id);
+          if (!profile) return "";
+          await fetch("/prompt-agent/api/profile-routes/default", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: "active", profile_id: id }) });
           return String(profile.display_name || profile.displayName || id);
         }, profileId);
         if (!selected) throw new Error(`FORGE_MODEL_PROFILE_ID does not match an available profile: ${profileId}`);
         await page.reload();
-        await page.getByRole("button", { name: /Kohaku Loom/i }).click();
-        await page.getByRole("dialog", { name: /Kohaku Loom|助手/i }).locator(".kl-header-controls .kl-header-icon").nth(2).click();
+        await page.getByRole("button", { name: /Prompt Agent/i }).click();
+        await page.getByRole("dialog", { name: /Prompt Agent|助手/i }).locator(".pa-header-controls .pa-header-icon").nth(2).click();
       }
 
-      const currentSettings = page.locator(".kl-profile-window");
-      await currentSettings.locator(".kl-profile-summary-actions [data-slot='button']").first().click();
-      await expect(currentSettings.locator(".kl-profile-status")).toContainText(/Connection successful|连接成功/, { timeout: 65_000 });
-      await expect(currentSettings.locator(".kl-profile-status")).toContainText(/Route:|连接路径：/);
-      await currentSettings.locator(".kl-profile-window-actions .kl-header-icon").last().click();
+      const currentSettings = page.locator(".pa-profile-window");
+      await currentSettings.locator(".pa-profile-summary-actions [data-slot='button']").first().click();
+      await expect(currentSettings.locator(".pa-profile-status")).toContainText(/Connection successful|连接成功/, { timeout: 65_000 });
+      await expect(currentSettings.locator(".pa-profile-status")).toContainText(/Route:|连接路径：/);
+      await currentSettings.locator(".pa-profile-window-actions .pa-header-icon").last().click();
 
-      const currentChat = page.getByRole("dialog", { name: /Kohaku Loom|助手/i });
-      const permission = currentChat.locator(".kl-permission-toggle");
+      const currentChat = page.getByRole("dialog", { name: /Prompt Agent|助手/i });
+      const permission = currentChat.locator(".pa-permission-toggle");
       if (await permission.getAttribute("aria-pressed") !== "true") {
         await permission.click();
-        await page.locator(".kl-dialog-confirm").click();
+        await page.locator(".pa-dialog-confirm").click();
         directMode = true;
       }
 
@@ -142,7 +139,7 @@ test.describe("real tablet model path", () => {
         });
         expect(restore.ok, restore.error).toBe(true);
       }
-      const permission = page.locator(".kl-permission-toggle");
+      const permission = page.locator(".pa-permission-toggle");
       if (directMode && await permission.isVisible().catch(() => false) && await permission.getAttribute("aria-pressed") === "true") await permission.click();
       await expect(prompt).toHaveValue(original);
     }

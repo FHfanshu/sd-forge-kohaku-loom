@@ -74,7 +74,7 @@ checks, the Vite build, bundle budget, and browser syntax checks.
 
 ## Phase 1: Audit And Migration Contract
 
-Status: in progress.
+Status: complete.
 
 Deliverables:
 
@@ -90,6 +90,8 @@ Exit criteria:
 - the roadmap no longer requires the archived runtime on `main`.
 
 ## Phase 2: New Skeleton
+
+Status: complete.
 
 Create and compile:
 
@@ -112,6 +114,8 @@ Exit criteria:
 
 ## Phase 3: Minimal Pi Loop
 
+Status: complete.
+
 Integrate pinned, mutually compatible versions of:
 
 ```text
@@ -130,7 +134,12 @@ Exit criteria:
 - failed requests produce a terminal runtime state;
 - runtime destroy aborts work and removes subscribers.
 
+Verified by focused runtime/controller tests and mock-host browser coverage for
+success, provider failure, abort, later-submission recovery, and destroy.
+
 ## Phase 4: Thin Python Provider Proxy
+
+Status: complete.
 
 Implement provider/profile reads, encrypted secret injection, streaming
 forwarding, cancellation propagation, health tests, request IDs, and sanitized
@@ -143,7 +152,13 @@ Exit criteria:
 - disconnect and abort close upstream work;
 - logs exclude authorization and sensitive bodies.
 
+Verified with fake upstream transports covering text, reasoning, tool calls,
+usage, malformed streams, HTTP failures, cancellation, cleanup, request IDs,
+and sanitized logging.
+
 ## Phase 5: Provider Adapters
+
+Status: complete.
 
 Add frontend adapters for:
 
@@ -164,7 +179,15 @@ Exit criteria:
 - each adapter has contract tests for text, tools, errors, and abort;
 - unsupported capabilities are explicit in the UI.
 
+The supported llama.cpp adapter targets its OpenAI-compatible endpoint. The
+separate `llama-once` profile runtime remains explicitly unsupported for agent
+streaming and teacher requests rather than silently starting another loop.
+Effective unsupported capabilities are shown in profile settings, and profiles
+without streaming cannot become the active or teacher agent profile.
+
 ## Phase 6: Forge Agent Tools
+
+Status: complete.
 
 Migrate, in order:
 
@@ -192,7 +215,15 @@ Exit criteria:
 - stale prompt mutations remain hash guarded;
 - failed or aborted tools do not leave the runtime blocked.
 
+Frontend TypeBox schemas and Python validation cover every listed tool. Prompt
+and generation mutations are freshness guarded, nested patch and generation
+values are revalidated, catalog output is a logical-ID allowlist, and teacher
+errors use a sanitized public projection. Browser-host prompt and generation
+tools call the Python validation boundary before reading or mutating Forge DOM.
+
 ## Phase 7: Profiles
+
+Status: complete.
 
 Make Python profile storage authoritative and expose list, read, create, update,
 delete, duplicate, set-default, models, and connection-test APIs.
@@ -204,7 +235,12 @@ Exit criteria:
 - frontend caches contain no secret values;
 - old profile import is isolated and idempotent.
 
+The compatibility importer accepts an explicit snapshot only and performs no
+legacy file discovery or `.loom` access.
+
 ## Phase 8: IndexedDB Sessions
+
+Status: complete.
 
 Create database `sd-forge-neo-prompt-agent` with versioned stores for sessions,
 messages, attachments, runtime preferences, and profile cache.
@@ -218,7 +254,15 @@ Exit criteria:
 - no old stream or tool call resumes after refresh;
 - multi-tab behavior is informational only.
 
+Database version 2 covers sessions, messages, attachments, preferences, and a
+secret/path-free profile cache. Refresh interruption and stable streaming
+upserts are covered by repository tests. Browser E2E also verifies durable
+partial content, interruption after reload, no provider/tool replay, and a
+usable composer for the next submission.
+
 ## Phase 9: Remove Archived Runtime
+
+Status: complete.
 
 Delete from `main` after dependency searches are empty:
 
@@ -237,7 +281,15 @@ Exit criteria:
 - default build and launch do not create or inspect `.loom`;
 - rollback remains available through `kt` and `kt-final`.
 
+The active dependency audit found no archived runtime import, route, build,
+test, or startup path. A startup sentinel also confirmed API registration does
+not create or inspect `.loom`. An architecture regression test rejects archived
+KT proxy, sidecar, claim/release, replay, runtime-lock, and old session-store
+execution markers from active files.
+
 ## Phase 10: Complete Naming Migration
+
+Status: technical migration complete; distribution remains blocked by licensing decision.
 
 Use these active identifiers:
 
@@ -252,16 +304,24 @@ PromptAgentRuntime
 window.__SD_FORGE_NEO_PROMPT_AGENT__
 ```
 
-Old names may remain only in Git history, migration documentation, and isolated
+Old names remain only in Git history, migration documentation, legal
+attribution, negative architecture assertions, and isolated one-time storage
 compatibility constants. Release under the new name remains gated by the
 licensing decision documented in `docs/kt-runtime-migration.md`.
+
+The runtime, API, Python package, Forge script, browser namespace, generated
+asset names, bridge contracts, DOM/CSS identifiers, tests, and active
+documentation use Prompt Agent identifiers. The technical migration does not
+change the root license or satisfy its naming clause; distributable branding
+and remote repository naming remain gated until permission or independent
+licensing evidence exists.
 
 ## Quality Gates
 
 Run the smallest complete set covering every changed layer:
 
 ```powershell
-python -m compileall -q backend scripts install.py tools
+python -m compileall -q backend prompt_agent scripts install.py tools
 python -m unittest discover -s tests
 
 cd frontend

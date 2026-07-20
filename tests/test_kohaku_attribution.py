@@ -7,12 +7,15 @@ class KohakuAttributionTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         license_text = (root / "LICENSE").read_text(encoding="utf-8")
         readme = (root / "README.md").read_text(encoding="utf-8")
+        notices = (root / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
         frontend = (root / "frontend" / "src" / "components" / "ProfileSettings.svelte").read_text(encoding="utf-8")
         official_url = "https://github.com/Kohaku-Lab/KohakuTerrarium"
 
         self.assertIn("KohakuTerrarium License", license_text)
         self.assertIn("KohakuTerrarium", readme)
         self.assertIn(official_url, readme)
+        self.assertIn("@earendil-works/pi-agent-core", notices)
+        self.assertIn("dependency licenses do not replace", notices)
         self.assertIn("Powered by", frontend)
         self.assertIn(official_url, frontend)
 

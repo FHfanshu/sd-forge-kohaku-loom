@@ -1,36 +1,56 @@
 import base64
+import contextlib
+import runpy
+import sys
 import tempfile
+import types
 import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from kohaku_loom import image_payloads, model_paths
+from fastapi import FastAPI
+
+from prompt_agent import image_payloads, model_paths
+from prompt_agent.reference_image import _reference_image_messages
 
 
 class SecurityBoundaryTests(unittest.TestCase):
-    def test_browser_has_no_legacy_assistant_controller_route(self):
-        javascript = Path(__file__).resolve().parents[1] / "javascript"
-        source = "\n".join(path.read_text(encoding="utf-8") for path in javascript.glob("kohaku_loom*.js"))
-        for forbidden in (
-            '"/kohaku-loom/assistant"',
-            '"/kohaku-loom/assistant-stream"',
-            '"/kohaku-loom/assistant-cancel"',
-            "runAssistantSessionLoop || runAssistantLoop",
-            "cancelAssistantSessionRun || cancelAssistantRun",
-        ):
-            self.assertNotIn(forbidden, source)
-
-    def test_forge_script_registers_no_legacy_assistant_controller_route(self):
-        script = Path(__file__).resolve().parents[1] / "scripts" / "kohaku_loom.py"
+    def test_forge_script_registers_prompt_agent_api(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "prompt_agent.py"
         source = script.read_text(encoding="utf-8")
-        for forbidden in (
-            "/kohaku-loom/assistant",
-            "/kohaku-loom/assistant-stream",
-            "/kohaku-loom/assistant-cancel",
-            "AssistantSessionService",
-        ):
-            self.assertNotIn(forbidden, source)
+        self.assertIn("register_prompt_agent_api(app)", source)
+        self.assertIn("script_callbacks.on_app_started", source)
+
+    def test_forge_script_import_and_registration_do_not_create_dot_loom(self):
+        root = Path(__file__).resolve().parents[1]
+        marker = root / ".loom"
+        callbacks = []
+        gradio = types.ModuleType("gradio")
+        gradio.Blocks = object
+        modules = types.ModuleType("modules")
+        modules.call_queue = types.SimpleNamespace(queue_lock=contextlib.nullcontext())
+        modules.script_callbacks = types.SimpleNamespace(
+            on_app_started=lambda callback, name=None: callbacks.append((callback, name))
+        )
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            "os.environ",
+            {"SD_FORGE_NEO_PROMPT_AGENT_DATA": directory},
+            clear=False,
+        ), patch.dict(sys.modules, {"gradio": gradio, "modules": modules}):
+            self.assertFalse(marker.exists())
+            runpy.run_path(str(root / "scripts" / "prompt_agent.py"), run_name="prompt_agent_startup_test")
+            self.assertEqual(1, len(callbacks))
+            self.assertEqual("prompt-agent-api", callbacks[0][1])
+            callbacks[0][0](None, FastAPI())
+            self.assertFalse(marker.exists())
+
+    def test_reference_image_messages_import_and_include_image(self):
+        image = MagicMock()
+        with patch("prompt_agent.reference_image._image_data_url", return_value="data:image/jpeg;base64,AA=="):
+            messages = _reference_image_messages(image)
+        self.assertEqual("system", messages[0]["role"])
+        self.assertEqual("image_url", messages[1]["content"][1]["type"])
 
     def test_llama_server_path_must_be_server_configured(self):
         with tempfile.TemporaryDirectory() as directory:

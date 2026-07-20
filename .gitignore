@@ -11,5 +11,3 @@ coverage-python.xml
 htmlcov/
 data/
 .playwright-mcp/
-.loom/
-legacy-session-sample.json

@@ -10,8 +10,8 @@ describe("Svelte cutover shell", () => {
     expect(UI_READY).toBe(true);
     expect(mountSvelteUi()).not.toBeNull();
     expect(mountSvelteUi()).not.toBeNull();
-    expect(document.querySelectorAll("#kohaku-loom-svelte-mount")).toHaveLength(1);
-    expect(document.querySelector('[data-kohaku-loom-surface="true"]')).not.toBeNull();
-    expect(document.querySelector('button[aria-label="Open Kohaku Loom"]')).not.toBeNull();
+    expect(document.querySelectorAll("#prompt-agent-svelte-mount")).toHaveLength(1);
+    expect(document.querySelector('[data-prompt-agent-surface="true"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Open Prompt Agent"]')).not.toBeNull();
   });
 });

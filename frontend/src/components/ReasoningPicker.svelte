@@ -80,24 +80,24 @@
   });
 </script>
 
-<div class="kl-reasoning-picker" bind:this={anchor}>
-  <button type="button" class="kl-reasoning-picker-trigger" disabled={!supported} aria-label={t("reasoning_picker.change", "Change reasoning effort")} aria-haspopup="dialog" aria-expanded={open} onclick={togglePicker}>
+<div class="pa-reasoning-picker" bind:this={anchor}>
+  <button type="button" class="pa-reasoning-picker-trigger" disabled={!supported} aria-label={t("reasoning_picker.change", "Change reasoning effort")} aria-haspopup="dialog" aria-expanded={open} onclick={togglePicker}>
     <Brain size={15} aria-hidden="true" />
     <span>{label(value)}</span>
     <ChevronDown size={13} aria-hidden="true" />
   </button>
 
   {#if open}
-    <div bind:this={popover} use:floatingPopover={() => anchor} class="kl-reasoning-picker-popover" role="dialog" tabindex="-1" aria-label={t("profiles.reasoning_effort", "Reasoning effort")}>
-      <div class="kl-reasoning-picker-heading"><strong>{t("profiles.reasoning_effort", "Reasoning effort")}</strong><span>{label(value)}</span></div>
-      <div class="kl-reasoning-picker-slider" style={`--kl-reasoning-progress: ${options.length > 1 ? index / (options.length - 1) * 100 : 0}%`}>
-        <div class="kl-reasoning-picker-rail" aria-hidden="true"><span></span></div>
-        <div class="kl-reasoning-picker-ticks" aria-hidden="true">
+    <div bind:this={popover} use:floatingPopover={() => anchor} class="pa-reasoning-picker-popover" role="dialog" tabindex="-1" aria-label={t("profiles.reasoning_effort", "Reasoning effort")}>
+      <div class="pa-reasoning-picker-heading"><strong>{t("profiles.reasoning_effort", "Reasoning effort")}</strong><span>{label(value)}</span></div>
+      <div class="pa-reasoning-picker-slider" style={`--pa-reasoning-progress: ${options.length > 1 ? index / (options.length - 1) * 100 : 0}%`}>
+        <div class="pa-reasoning-picker-rail" aria-hidden="true"><span></span></div>
+        <div class="pa-reasoning-picker-ticks" aria-hidden="true">
           {#each options as option (option)}<i class:is-active={option === value}></i>{/each}
         </div>
         <input type="range" min="0" max={Math.max(0, options.length - 1)} step="1" value={index} aria-label={t("profiles.reasoning_effort", "Reasoning effort")} oninput={(event) => chooseIndex(event.currentTarget.value)} />
       </div>
-      <div class="kl-reasoning-picker-labels" aria-hidden="true">
+      <div class="pa-reasoning-picker-labels" aria-hidden="true">
         {#each options as option (option)}<span class:is-active={option === value}>{label(option)}</span>{/each}
       </div>
     </div>

@@ -1,16 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function capture(page: Page, name: string): Promise<void> {
-  const directory = process.env.KL_VISUAL_DIR;
+  const directory = process.env.PROMPT_AGENT_VISUAL_DIR;
   if (directory) await page.screenshot({ path: `${directory}/${name}.png` });
 }
 
 async function installMockHost(page: Page, hostDelayMs = 0): Promise<void> {
   await page.addInitScript((delay) => {
     const capabilities = [
-      "forge-availability", "prompt-target", "forge-state", "tool-execution",
-      "profile-store", "tool-bridge-lease", "assistant-config", "session-runtime",
-      "legacy-sessions", "locale-hints",
+      "forge-availability", "prompt-target", "forge-state", "tool-execution", "locale-hints",
     ];
     const profiles = [
       {
@@ -34,137 +32,100 @@ async function installMockHost(page: Page, hostDelayMs = 0): Promise<void> {
       naming_profile_id: "mock-local",
       profiles,
     };
-    const profileById = (id: string) => state.profiles.find((profile) => profile.id === id) ?? state.profiles[0];
-    const profileStore = {
-      load: () => structuredClone(state),
-      current: () => structuredClone(profileById(state.active_profile_id)),
-      teacher: () => structuredClone(profileById(state.teacher_profile_id)),
-      session: () => structuredClone(profileById(state.session_profile_id)),
-      add: (profile: Record<string, unknown>) => {
-        const next = { ...structuredClone(state.profiles[0]), ...profile, id: String(profile.id ?? `profile-${state.profiles.length + 1}`) };
-        state.profiles.push(next);
-        return structuredClone(next);
-      },
-      duplicate: (id: string) => {
-        const source = profileById(id);
-        const next = { ...structuredClone(source), id: `${id}-copy`, display_name: `${source.display_name} copy` };
-        state.profiles.push(next);
-        return structuredClone(next);
-      },
-      update: (id: string, patch: Record<string, unknown>) => {
-        const profile = profileById(id);
-        Object.assign(profile, patch);
-        if (patch.capabilities) profile.capabilities = { ...profile.capabilities, ...patch.capabilities as object };
-        if (patch.parameters) profile.parameters = { ...profile.parameters, ...patch.parameters as object };
-        return structuredClone(profile);
-      },
-      delete: (id: string) => {
-        const index = state.profiles.findIndex((profile) => profile.id === id);
-        if (index >= 0 && state.profiles.length > 1) state.profiles.splice(index, 1);
-        return structuredClone(profileById(state.active_profile_id));
-      },
-      setActive: (id: string) => { state.active_profile_id = id; return structuredClone(profileById(id)); },
-      setTeacher: (id: string) => { state.teacher_profile_id = id; return structuredClone(profileById(id)); },
-      setSession: (id: string) => { state.session_profile_id = id; return structuredClone(profileById(id)); },
-      setNaming: (id: string) => { state.naming_profile_id = id; return structuredClone(profileById(id)); },
-      restoreDefaults: () => structuredClone(state),
-      requestProjection: (id?: string) => structuredClone(profileById(id ?? state.active_profile_id)),
-    };
     const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
       status,
       headers: { "Content-Type": "application/json" },
     });
     const empty = () => new Response(null, { status: 204 });
-    const browserState = window as Window & { __mockRequestBodies?: unknown[]; __revokedObjectUrls?: string[] };
+    const browserState = window as Window & {
+      __mockRequestBodies?: unknown[];
+      __mockRevokedObjectUrls?: string[];
+      __mockStreamRequestCount?: number;
+      __mockToolExecutionCount?: number;
+    };
     browserState.__mockRequestBodies = [];
-    browserState.__revokedObjectUrls = [];
+    browserState.__mockRevokedObjectUrls = [];
+    browserState.__mockStreamRequestCount = Number(sessionStorage.getItem("mock-stream-request-count") ?? "0");
+    browserState.__mockToolExecutionCount = Number(sessionStorage.getItem("mock-tool-execution-count") ?? "0");
     const nativeRevokeObjectUrl = URL.revokeObjectURL.bind(URL);
     URL.revokeObjectURL = (value: string) => {
-      browserState.__revokedObjectUrls?.push(value);
+      browserState.__mockRevokedObjectUrls?.push(value);
       nativeRevokeObjectUrl(value);
     };
-    let queued = false;
-    let cancelTurn = () => undefined;
-    const queuedMessage = () => ({ message_id: "queued-1", display_content: "Queued follow-up", content: "Queued follow-up", attachments: [], state: "pending", created_at: Date.now() / 1000 });
-    const sse = (slow: boolean, signal?: AbortSignal | null) => {
+    const nativeFetch = window.fetch.bind(window);
+    const promptAgentStream = (slow: boolean, signal?: AbortSignal | null) => {
       const encoder = new TextEncoder();
       let closed = false;
       const timers: number[] = [];
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
-          cancelTurn = () => {
-            if (closed) return;
-            closed = true;
-            timers.forEach(window.clearTimeout);
-            controller.enqueue(encoder.encode(`id: 3\nevent: message\ndata: ${JSON.stringify({ type: "turn_ended", payload: { turn_id: "turn-1", status: "interrupted", text: "Mock assistant " } })}\n\n`));
-            controller.close();
-          };
-          const emit = (delay: number, frame: string, close = false) => {
+          const emit = (delay: number, event: Record<string, unknown>, close = false) => {
             timers.push(window.setTimeout(() => {
               if (closed) return;
-              controller.enqueue(encoder.encode(frame));
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
               if (close) { closed = true; controller.close(); }
             }, delay));
           };
-          emit(60, `id: 1\nevent: message\ndata: ${JSON.stringify({ type: "text_delta", payload: { turn_id: "turn-1", text: "Mock assistant " } })}\n\n`);
-          emit(slow ? 10_000 : 160, `id: 2\nevent: message\ndata: ${JSON.stringify({ type: "turn_ended", payload: { turn_id: "turn-1", status: "completed", text: "Mock assistant reply", usage: { input_tokens: 12, output_tokens: 4, latency_ms: 160 } } })}\n\n`, true);
-          signal?.addEventListener("abort", () => {
+          emit(0, { type: "start" });
+          emit(60, { type: "text_start", contentIndex: 0 });
+          emit(80, { type: "text_delta", contentIndex: 0, delta: "Mock assistant " });
+          emit(slow ? 10_000 : 160, { type: "text_delta", contentIndex: 0, delta: "reply" });
+          emit(slow ? 10_100 : 180, { type: "text_end", contentIndex: 0 });
+          emit(slow ? 10_120 : 200, { type: "done", reason: "stop", usage: { input: 12, output: 4, totalTokens: 16, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } }, true);
+          const cancelTurn = () => {
             if (closed) return;
             closed = true;
             timers.forEach(window.clearTimeout);
             try { controller.close(); } catch { /* already cancelled */ }
-          }, { once: true });
+          };
+          signal?.addEventListener("abort", cancelTurn, { once: true });
         },
         cancel() { closed = true; timers.forEach(window.clearTimeout); },
       });
       return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
     };
-    const nativeFetch = window.fetch.bind(window);
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : null;
       const url = new URL(request?.url ?? String(input), window.location.href);
       const method = String(init?.method ?? request?.method ?? "GET").toUpperCase();
       const signal = init?.signal ?? request?.signal;
-      if (url.pathname === "/kohaku-loom/i18n/locale") {
+      if (url.pathname === "/prompt-agent/api/i18n/locale") {
         return json({ locale: "en", fallback_locale: "en", supported_locales: ["en", "zh-CN"], content_version: "e2e", metadata: { code: "en", label: "English", direction: "ltr", source: "python-runtime", content_version: "e2e" } });
       }
-      if (url.pathname === "/kohaku-loom/i18n") {
+      if (url.pathname === "/prompt-agent/api/i18n") {
         const locale = url.searchParams.get("locale") === "zh-CN" ? "zh-CN" : "en";
         return json({ locale, fallback_locale: "en", content_version: "e2e", messages: {}, metadata: { code: locale, label: locale === "zh-CN" ? "简体中文" : "English", direction: "ltr", source: "python-runtime", content_version: "e2e" } });
       }
-      if (url.pathname === "/kohaku-loom/kt/sessions" && method === "GET") {
-        return json({ sessions: [{ session_id: "archived-1", title: "Mock archived chat", preview: "A previous prompt review", modified_at: 1_700_000_000, message_count: 2 }] });
+      if (url.pathname === "/prompt-agent/api/profiles" && method === "GET") return json(state);
+      if (url.pathname === "/prompt-agent/api/profiles/restore-defaults" && method === "POST") return json(state);
+      if (url.pathname.startsWith("/prompt-agent/api/profiles/") && url.pathname.endsWith("/connection-test")) return json({ ok: true, transport: "mock provider" });
+      if (url.pathname.startsWith("/prompt-agent/api/profiles/") && method === "PATCH") {
+        const profile = state.profiles.find((item) => url.pathname.includes(`/${item.id}`)) ?? state.profiles[0];
+        const patch = JSON.parse(String(init?.body ?? request?.body ?? "{}")) as Record<string, unknown>;
+        Object.assign(profile, patch);
+        if (patch.capabilities) profile.capabilities = { ...profile.capabilities, ...patch.capabilities as object };
+        if (patch.parameters) profile.parameters = { ...profile.parameters, ...patch.parameters as object };
+        return json(profile);
       }
-      if (url.pathname === "/kohaku-loom/kt/runtime") return json({ active_session: null, turn_event_sequence: 0, tool_event_sequence: 0, messages: queued ? [queuedMessage()] : [] });
-      if (url.pathname === "/kohaku-loom/kt/sessions/open" && method === "POST") return json({ session: { session_id: "mock-session", profile_id: "mock-remote" } });
-      if (url.pathname === "/kohaku-loom/kt/sessions/close" && method === "POST") return empty();
-      if (url.pathname === "/kohaku-loom/kt/sessions/mock-session" && method === "GET") return json({ messages: [], queue: [], branches: null });
-      if (url.pathname === "/kohaku-loom/kt/turns/events") return sse(Boolean((window as Window & { __mockSlowTurn?: boolean }).__mockSlowTurn), signal);
-      if (url.pathname === "/kohaku-loom/kt/tools/events") return new Response(": ready\n\n", { headers: { "Content-Type": "text/event-stream" } });
-      if (url.pathname === "/kohaku-loom/kt/turns" && method === "POST") {
+      if (url.pathname === "/prompt-agent/api/profile-routes/default" && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? request?.body ?? "{}")) as { role?: string; profile_id?: string };
+        if (body.role && body.profile_id) (state as Record<string, unknown>)[`${body.role}_profile_id`] = body.profile_id;
+        return json(state);
+      }
+      if (url.pathname === "/prompt-agent/api/stream" && method === "POST") {
         browserState.__mockRequestBodies?.push(JSON.parse(String(init?.body ?? request?.body ?? "{}")));
-        return json({ turn_id: "turn-1" });
+        browserState.__mockStreamRequestCount = (browserState.__mockStreamRequestCount ?? 0) + 1;
+        sessionStorage.setItem("mock-stream-request-count", String(browserState.__mockStreamRequestCount));
+        return promptAgentStream(Boolean((window as Window & { __mockSlowTurn?: boolean }).__mockSlowTurn), signal);
       }
-      if (url.pathname === "/kohaku-loom/kt/sessions/mock-session/messages" && method === "POST") {
-        queued = true;
-        return json({ message: queuedMessage() });
-      }
-      if (url.pathname === "/kohaku-loom/kt/sessions/mock-session/messages/queued-1/cancel" && method === "POST") {
-        queued = false;
-        return json({ message: { ...queuedMessage(), state: "cancelled" } });
-      }
-       if (url.pathname === "/kohaku-loom/kt/turns/turn-1/cancel" && method === "POST") {
-         cancelTurn();
-         return json({ status: "accepted" });
-       }
       return nativeFetch(input, init);
     };
-    const bridgeResponse = (request: { client?: string; apiVersion?: number }) => request.client === "kohaku-loom-svelte-ui" && request.apiVersion === 1
-      ? { ok: true, bridge: "kohaku-loom-svelte-ui", apiVersion: 1, version: "1.0.0", capabilities }
-      : { ok: false, bridge: "kohaku-loom-svelte-ui", apiVersion: 1, reason: "client-mismatch" };
+    const bridgeResponse = (request: { client?: string; apiVersion?: number }) => request.client === "prompt-agent-ui" && request.apiVersion === 1
+      ? { ok: true, bridge: "prompt-agent-ui", apiVersion: 1, version: "1.0.0", capabilities }
+      : { ok: false, bridge: "prompt-agent-ui", apiVersion: 1, reason: "client-mismatch" };
     const namespace = {
       hostApi: {
-        name: "kohaku-loom-host", version: "1.0.0", apiVersion: 1, capabilities,
+        name: "prompt-agent-host", version: "1.0.0", apiVersion: 1, capabilities,
         handshake: bridgeResponse,
         isForgeAvailable: () => true,
         activePromptTarget: () => "txt2img",
@@ -172,43 +133,35 @@ async function installMockHost(page: Page, hostDelayMs = 0): Promise<void> {
         captureForgeState: () => ({ prompt: "portrait, window light" }),
         restoreForgeState: () => true,
         executeTool: async () => ({ ok: true }),
-        executeAssistantTool: async () => ({ ok: true }),
-        assistantConfig: () => ({ profile_id: "mock-remote", timeout: 30, parameters: { timeout: 30 } }),
-        profileStore,
-         claimToolBridge: async () => ({ owned: true, bridge_id: "mock-bridge", pending_requests: [] }),
-         releaseToolBridge: async () => ({ released: true }),
-         claimAssistantToolBridge: async () => ({ owned: true, bridge_id: "mock-bridge", pending_requests: [] }),
-         releaseAssistantToolBridge: async () => ({ released: true }),
-         syncProfiles: async () => ({}),
-        profileChat: async () => ({ text: "OK" }),
-        listLegacySessions: async () => ({ sessions: [{ id: "legacy-1", title: "Legacy prompt session", preview: "Imported history", message_count: 1, modified_at: 1_690_000_000 }] }),
-        getLegacySession: async () => ({ events: [{ event_type: "user_message", message: { content: "Legacy message" } }] }),
-        ktBaseUrl: "/kohaku-loom/kt",
+        executeAssistantTool: async () => {
+          browserState.__mockToolExecutionCount = (browserState.__mockToolExecutionCount ?? 0) + 1;
+          sessionStorage.setItem("mock-tool-execution-count", String(browserState.__mockToolExecutionCount));
+          return { ok: true };
+        },
         getLocaleHints: () => ({ locale: "en", supported_locales: ["en", "zh-CN"], source: "forge-metadata" }),
         subscribeLocaleHints: () => () => undefined,
         openSettings: () => undefined,
       },
     };
-    if (delay > 0) window.setTimeout(() => { window.kohakuLoom = namespace; }, delay);
-    else window.kohakuLoom = namespace;
+    if (delay > 0) window.setTimeout(() => { window.__SD_FORGE_NEO_PROMPT_AGENT__ = namespace; }, delay);
+    else window.__SD_FORGE_NEO_PROMPT_AGENT__ = namespace;
   }, hostDelayMs);
 }
 
 test("module loading alone does not bypass the Forge boot callback", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("#tabs")).toHaveAttribute("data-legacy-owned", "true");
-  await expect(page.locator("#txt2img_prompt")).toHaveAttribute("data-legacy-owned", "true");
-  await expect(page.locator("#kohaku-loom-svelte-mount")).toHaveCount(0);
+  await expect(page.locator("#tabs")).toHaveAttribute("data-prompt-agent-host-owned", "true");
+  await expect(page.locator("#txt2img_prompt")).toHaveAttribute("data-prompt-agent-host-owned", "true");
+  await expect(page.locator("#prompt-agent-svelte-mount")).toHaveCount(0);
 });
 
 test("connects when the Svelte bundle loads before the Forge host", async ({ page }) => {
   await installMockHost(page, 2_500);
   await page.goto("/?mount=1");
-  await expect(page.getByRole("button", { name: "Open Kohaku Loom" })).toBeVisible();
-  await page.getByRole("button", { name: "Open Kohaku Loom" }).click();
-  await expect(page.getByRole("dialog", { name: "Kohaku Loom chat" })).toBeVisible();
-  await expect(page.getByText("Connecting to Forge runtime…", { exact: true })).toBeVisible();
-  await expect(page.getByText("Connecting to Forge runtime…", { exact: true })).toBeHidden({ timeout: 5_000 });
+  await expect(page.getByRole("button", { name: "Open Prompt Agent" })).toBeVisible();
+  await page.getByRole("button", { name: "Open Prompt Agent" }).click();
+  await expect(page.getByRole("dialog", { name: "Prompt Agent chat" })).toBeVisible();
+  await expect(page.getByText("Connecting to Forge runtime…", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Active model" })).toHaveText("Mock Qwen");
 });
 
@@ -216,11 +169,11 @@ test("mounted desktop UI exercises chat, history, profiles, and attachments", as
   test.setTimeout(20_000);
   await installMockHost(page);
   await page.goto("/?mount=1");
-  await expect(page.locator("#kohaku-loom-svelte-mount")).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "Open Kohaku Loom" })).toBeVisible();
-  await page.getByRole("button", { name: "Open Kohaku Loom" }).click();
-  await expect(page.getByRole("dialog", { name: "Kohaku Loom chat" })).toBeVisible();
-  const composer = page.getByRole("textbox", { name: "Message Kohaku Loom" });
+  await expect(page.locator("#prompt-agent-svelte-mount")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Open Prompt Agent" })).toBeVisible();
+  await page.getByRole("button", { name: "Open Prompt Agent" }).click();
+  await expect(page.getByRole("dialog", { name: "Prompt Agent chat" })).toBeVisible();
+  const composer = page.getByRole("textbox", { name: "Message Prompt Agent" });
   const singleLineHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
   await composer.fill("one\ntwo\nthree");
   const multiLineHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
@@ -245,9 +198,9 @@ test("mounted desktop UI exercises chat, history, profiles, and attachments", as
     };
   }));
   expect(pickerButtonBorders).toEqual(expect.arrayContaining([
-    expect.objectContaining({ className: "kl-model-picker-add", top: "0px", right: "0px", bottom: "0px", left: "0px" }),
-    expect.objectContaining({ className: "kl-model-picker-row-main", top: "0px", right: "0px", bottom: "0px", left: "0px" }),
-    expect.objectContaining({ className: "kl-model-picker-star is-favorite", top: "0px", right: "0px", bottom: "0px", left: "0px" }),
+    expect.objectContaining({ className: "pa-model-picker-add", top: "0px", right: "0px", bottom: "0px", left: "0px" }),
+    expect.objectContaining({ className: "pa-model-picker-row-main", top: "0px", right: "0px", bottom: "0px", left: "0px" }),
+    expect.objectContaining({ className: "pa-model-picker-star is-favorite", top: "0px", right: "0px", bottom: "0px", left: "0px" }),
   ]));
   await page.keyboard.press("Escape");
 
@@ -266,8 +219,8 @@ test("mounted desktop UI exercises chat, history, profiles, and attachments", as
   await capture(page, "reasoning-popover");
 
   await page.getByRole("button", { name: "Open chat history" }).click();
-  await expect(page.getByRole("option", { name: "Mock archived chat" })).toBeVisible();
-  await expect(page.getByRole("option", { name: "Legacy prompt session" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "New conversation" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Mock archived chat" })).toHaveCount(0);
   await page.getByRole("button", { name: "Open chat history" }).click();
 
   const fileInput = page.locator('input[type="file"][multiple]');
@@ -279,23 +232,24 @@ test("mounted desktop UI exercises chat, history, profiles, and attachments", as
   await expect(page.getByRole("dialog", { name: "Image preview" })).toBeVisible();
   await page.getByRole("button", { name: "Close preview" }).click();
 
-  await page.getByRole("textbox", { name: "Message Kohaku Loom" }).fill("Review this composition");
+  await page.getByRole("textbox", { name: "Message Prompt Agent" }).fill("Review this composition");
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByText("Review this composition", { exact: true })).toBeVisible();
   await expect(page.getByText("Mock assistant reply", { exact: true })).toBeVisible();
   const attachmentWireState = await page.evaluate(() => {
-    const state = window as Window & { __mockRequestBodies?: unknown[]; __revokedObjectUrls?: string[] };
-    return { bodies: state.__mockRequestBodies ?? [], revoked: state.__revokedObjectUrls ?? [] };
+    const state = window as Window & { __mockRequestBodies?: unknown[]; __mockRevokedObjectUrls?: string[] };
+    return { bodies: state.__mockRequestBodies ?? [], revoked: state.__mockRevokedObjectUrls ?? [] };
   });
   expect(attachmentWireState.bodies).toHaveLength(1);
   expect(attachmentWireState.bodies[0]).not.toHaveProperty("attachments");
   const wireJson = JSON.stringify(attachmentWireState.bodies[0]);
-  expect(wireJson.match(/data:image\/png;base64,/g)).toHaveLength(1);
-  expect(attachmentWireState.revoked).toHaveLength(0);
-  await expect(page.getByText("12 in · 4 out · 0.2s", { exact: true })).toBeVisible();
-  const userMessage = page.locator(".kl-message-user").filter({ hasText: "Review this composition" });
+  expect(wireJson.match(/bW9jay1pbWFnZQ==/g)).toHaveLength(1);
+  expect(wireJson).toContain('"mimeType":"image/png"');
+  await expect.poll(async () => page.evaluate(() => (window as Window & { __mockRevokedObjectUrls?: string[] }).__mockRevokedObjectUrls?.length ?? 0)).toBe(1);
+  await expect(page.getByText("12 in · 4 out", { exact: true })).toBeVisible();
+  const userMessage = page.locator(".pa-message-user").filter({ hasText: "Review this composition" });
   await expect(userMessage).toBeVisible();
-  await expect(userMessage.getByRole("button", { name: "Preview reference.png" }).locator("img")).toHaveAttribute("src", /^blob:/);
+  await expect(userMessage.locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
   const userMessageStyle = await userMessage.evaluate((element) => {
     const style = getComputedStyle(element);
     return { alignSelf: style.alignSelf, backgroundColor: style.backgroundColor };
@@ -323,13 +277,13 @@ test("mounted desktop UI exercises chat, history, profiles, and attachments", as
   await expect(settings.getByRole("tab", { name: "路由" })).toBeVisible();
 });
 
-test("active turns queue follow-ups and cancel locally", async ({ page }) => {
+test("active turns abort and restore a usable composer", async ({ page }) => {
   test.setTimeout(20_000);
   await installMockHost(page);
   await page.addInitScript(() => { (window as Window & { __mockSlowTurn?: boolean }).__mockSlowTurn = true; });
   await page.goto("/?mount=1");
-  await page.getByRole("button", { name: "Open Kohaku Loom" }).click();
-  const input = page.getByRole("textbox", { name: "Message Kohaku Loom" });
+  await page.getByRole("button", { name: "Open Prompt Agent" }).click();
+  const input = page.getByRole("textbox", { name: "Message Prompt Agent" });
   await input.fill("Start a slow response");
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(input).toHaveValue("");
@@ -337,14 +291,90 @@ test("active turns queue follow-ups and cancel locally", async ({ page }) => {
   await expect(page.getByText("Mock assistant", { exact: true })).toBeVisible();
   await expect(page.getByText("Generating response…", { exact: true })).toBeVisible();
   await capture(page, "assistant-working");
-  await input.fill("Queued follow-up");
-  await page.getByRole("button", { name: "Queue message" }).click();
-  await expect(page.getByLabel("Queued messages")).toContainText("Queued follow-up");
   await page.getByRole("button", { name: "Stop response" }).click();
-  await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Stop response" })).toHaveCount(0);
-  await page.getByRole("button", { name: /Remove queued message/ }).click();
-  await expect(page.getByLabel("Queued messages")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
+});
+
+test("refresh preserves partial content, interrupts unfinished work, and never resumes it", async ({ page }) => {
+  test.setTimeout(20_000);
+  await installMockHost(page);
+  await page.addInitScript(() => { (window as Window & { __mockSlowTurn?: boolean }).__mockSlowTurn = true; });
+  await page.goto("/?mount=1");
+  await page.getByRole("button", { name: "Open Prompt Agent" }).click();
+  const composer = page.getByRole("textbox", { name: "Message Prompt Agent" });
+  await composer.fill("Persist this partial response");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Mock assistant", { exact: true })).toBeVisible();
+
+  await expect.poll(async () => page.evaluate(async () => {
+    const request = indexedDB.open("sd-forge-neo-prompt-agent", 2);
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      const transaction = database.transaction("messages", "readonly");
+      const messages = await new Promise<any[]>((resolve, reject) => {
+        const all = transaction.objectStore("messages").getAll();
+        all.onsuccess = () => resolve(all.result);
+        all.onerror = () => reject(all.error);
+      });
+      return messages.some((record) => record.status === "streaming"
+        && JSON.stringify(record.message).includes("Mock assistant"));
+    } finally {
+      database.close();
+    }
+  })).toBe(true);
+
+  await page.evaluate(async () => {
+    const request = indexedDB.open("sd-forge-neo-prompt-agent", 2);
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      const read = database.transaction("messages", "readonly");
+      const messages = await new Promise<any[]>((resolve, reject) => {
+        const all = read.objectStore("messages").getAll();
+        all.onsuccess = () => resolve(all.result);
+        all.onerror = () => reject(all.error);
+      });
+      const unfinished = messages.find((record) => record.status === "streaming"
+        && record.message?.role === "assistant");
+      if (!unfinished) throw new Error("streaming assistant record was not persisted");
+      unfinished.message.content.push({ type: "toolCall", id: "stale-tool", name: "read_prompt", arguments: {} });
+      const write = database.transaction("messages", "readwrite");
+      write.objectStore("messages").put(unfinished);
+      await new Promise<void>((resolve, reject) => {
+        write.oncomplete = () => resolve();
+        write.onerror = () => reject(write.error);
+        write.onabort = () => reject(write.error);
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: "Open Prompt Agent" }).click();
+  await expect(page.getByText("Mock assistant", { exact: true })).toBeVisible();
+  await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
+  await page.waitForTimeout(300);
+  const resumed = await page.evaluate(() => {
+    const state = window as Window & { __mockStreamRequestCount?: number; __mockToolExecutionCount?: number; __mockSlowTurn?: boolean };
+    state.__mockSlowTurn = false;
+    return { streams: state.__mockStreamRequestCount ?? 0, tools: state.__mockToolExecutionCount ?? 0 };
+  });
+  expect(resumed).toEqual({ streams: 1, tools: 0 });
+
+  const restoredComposer = page.getByRole("textbox", { name: "Message Prompt Agent" });
+  await restoredComposer.fill("Continue after refresh");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Mock assistant reply", { exact: true })).toBeVisible();
+  await expect.poll(async () => page.evaluate(() => (
+    window as Window & { __mockStreamRequestCount?: number }
+  ).__mockStreamRequestCount ?? 0)).toBe(2);
 });
 
 test.describe("mobile layout", () => {
@@ -353,15 +383,15 @@ test.describe("mobile layout", () => {
   test("portrait and landscape windows remain inside the viewport", async ({ page }) => {
     await installMockHost(page);
     await page.goto("/?mount=1");
-    await page.getByRole("button", { name: "Open Kohaku Loom" }).click();
-    const chat = page.getByRole("dialog", { name: "Kohaku Loom chat" });
+    await page.getByRole("button", { name: "Open Prompt Agent" }).click();
+    const chat = page.getByRole("dialog", { name: "Prompt Agent chat" });
     const portrait = await chat.boundingBox();
     expect(portrait).not.toBeNull();
     expect(portrait!.x).toBeGreaterThanOrEqual(0);
     expect(portrait!.y).toBeGreaterThanOrEqual(0);
     expect(portrait!.x + portrait!.width).toBeLessThanOrEqual(390);
     expect(portrait!.y + portrait!.height).toBeLessThanOrEqual(844);
-    const composer = await page.getByRole("textbox", { name: "Message Kohaku Loom" }).boundingBox();
+    const composer = await page.getByRole("textbox", { name: "Message Prompt Agent" }).boundingBox();
     expect(composer).not.toBeNull();
     expect(composer!.x).toBeGreaterThanOrEqual(portrait!.x);
     expect(composer!.x + composer!.width).toBeLessThanOrEqual(portrait!.x + portrait!.width);
@@ -388,7 +418,7 @@ test.describe("mobile layout", () => {
     await expect(chat).toHaveCount(0);
     const settings = page.getByRole("dialog", { name: "Model profiles" });
     await expect(settings).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open Kohaku Loom" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Open Prompt Agent" })).toHaveCount(0);
     await expect(settings.getByRole("button", { name: "Resize profile window" })).toHaveCount(0);
     const settingsBox = await settings.boundingBox();
     expect(settingsBox).not.toBeNull();
@@ -398,7 +428,7 @@ test.describe("mobile layout", () => {
     expect(settingsBox!.height).toBe(390);
     await capture(page, "settings-mobile");
     await settings.getByRole("button", { name: "Close" }).click();
-    await expect(page.getByRole("dialog", { name: "Kohaku Loom chat" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Prompt Agent chat" })).toBeVisible();
   });
 });
 
@@ -408,9 +438,9 @@ test.describe("tablet layout", () => {
   test("keeps chat and settings as bounded floating windows", async ({ page }) => {
     await installMockHost(page);
     await page.goto("/?mount=1");
-    await page.getByRole("button", { name: "Open Kohaku Loom" }).click();
-    const chat = page.getByRole("dialog", { name: "Kohaku Loom chat" });
-    const tabletComposer = chat.getByRole("textbox", { name: "Message Kohaku Loom" });
+    await page.getByRole("button", { name: "Open Prompt Agent" }).click();
+    const chat = page.getByRole("dialog", { name: "Prompt Agent chat" });
+    const tabletComposer = chat.getByRole("textbox", { name: "Message Prompt Agent" });
     await tabletComposer.fill("Touch copy check");
     await expect(chat.getByRole("button", { name: "Resize chat window" })).toHaveCount(0);
     await chat.getByRole("button", { name: "Send message" }).tap();
@@ -418,7 +448,7 @@ test.describe("tablet layout", () => {
     await expect(chat.getByText("Mock assistant reply", { exact: true })).toBeVisible();
     await expect(chat.getByRole("button", { name: "Copy" }).first()).toBeVisible();
     await expect(chat.getByRole("button", { name: /Permission mode/ })).toHaveCount(0);
-    expect(await page.locator("body > .kl-dialog-layer").count()).toBe(0);
+    expect(await page.locator("body > .pa-dialog-layer").count()).toBe(0);
     await page.getByRole("button", { name: "Open settings" }).click();
     const settings = page.getByRole("dialog", { name: "Model profiles" });
 

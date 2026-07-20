@@ -56,8 +56,8 @@ describe("runtime i18n contract", () => {
     });
     const result = await preloadPythonBundles(fetchImpl as unknown as typeof fetch);
     expect(requested).toEqual([
-      "/kohaku-loom/i18n?locale=en",
-      "/kohaku-loom/i18n?locale=zh-CN",
+      "/prompt-agent/api/i18n?locale=en",
+      "/prompt-agent/api/i18n?locale=zh-CN",
     ]);
     expect(result.bundles.en.content_version).toBe("sha256:en");
     expect(result.bundles["zh-CN"].content_version).toBe("sha256:zh");

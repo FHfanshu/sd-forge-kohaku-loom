@@ -2,22 +2,17 @@ import { z } from "zod";
 
 export const BRIDGE_API_VERSION = 1 as const;
 export const BRIDGE_VERSION = "1.0.0" as const;
-export const BRIDGE_NAME = "kohaku-loom-svelte-ui" as const;
-export const HOST_API_NAME = "kohaku-loom-host" as const;
+export const BRIDGE_NAME = "prompt-agent-ui" as const;
+export const HOST_API_NAME = "prompt-agent-host" as const;
 const bridgeCapabilities = [
   "forge-availability",
   "prompt-target",
   "forge-state",
   "tool-execution",
-  "profile-store",
-  "tool-bridge-lease",
-  "assistant-config",
-  "session-runtime",
-  "legacy-sessions",
   "locale-hints",
 ] as const;
 export type BridgeCapability = (typeof bridgeCapabilities)[number];
-const coreCapabilities = ["profile-store", "tool-bridge-lease", "assistant-config", "session-runtime"] as const;
+const coreCapabilities = ["forge-availability", "prompt-target", "tool-execution"] as const;
 
 export const bridgeHandshakeRequestSchema = z.object({
   client: z.string().min(1),
@@ -46,7 +41,7 @@ export interface BridgeHandshakeRejected {
 
 export type BridgeHandshakeResponse = BridgeHandshakeAccepted | BridgeHandshakeRejected;
 
-export interface KohakuLoomHostApi {
+export interface PromptAgentHostApi {
   readonly name: typeof HOST_API_NAME;
   readonly version: typeof BRIDGE_VERSION;
   readonly apiVersion: typeof BRIDGE_API_VERSION;
@@ -59,103 +54,56 @@ export interface KohakuLoomHostApi {
   restoreForgeState(snapshot: unknown): boolean;
   executeTool(tool: unknown, signal?: AbortSignal): Promise<unknown>;
   executeAssistantTool(tool: unknown, signal?: AbortSignal): Promise<unknown>;
-  assistantConfig(routeOverride?: string): unknown;
-  profileStore: KohakuLoomProfileStoreFacade;
-  claimToolBridge(): Promise<unknown>;
-  releaseToolBridge(): Promise<unknown>;
-  claimAssistantToolBridge(): Promise<unknown>;
-  releaseAssistantToolBridge(): Promise<unknown>;
-  syncProfiles(): Promise<unknown>;
-  profileChat(profileId: string, messages: unknown[], signal?: AbortSignal, timeout?: number): Promise<unknown>;
-  listLegacySessions(limit?: number): Promise<unknown>;
-  getLegacySession(sessionId: string, limit?: number): Promise<unknown>;
-  readonly ktBaseUrl?: string;
   getLocaleHints(): unknown;
   subscribeLocaleHints(listener: (hints: unknown) => void): () => void;
   openSettings(): unknown;
 }
 
-export type KohakuLoomBridgeApi = KohakuLoomHostApi;
+export type PromptAgentBridgeApi = PromptAgentHostApi;
 
-export interface KohakuLoomProfileStoreFacade {
-  load(): unknown;
-  current(): unknown;
-  teacher(): unknown;
-  session(): unknown;
-  add(profile: unknown): unknown;
-  duplicate(id: string): unknown;
-  update(id: string, patch: unknown): unknown;
-  delete(id: string): unknown;
-  setActive(id: string): unknown;
-  setTeacher(id: string): unknown;
-  setSession(id: string): unknown;
-  setNaming(id: string): unknown;
-  restoreDefaults(): unknown;
-  requestProjection(id?: string): unknown;
-}
-
-export interface KohakuLoomNamespace {
+export interface PromptAgentNamespace {
   hostApi?: unknown;
-  svelteUiBridge?: unknown;
+  ui?: unknown;
   forgeLocale?: unknown;
-  loomForgeLocale?: unknown;
-  loomActiveLocale?: unknown;
+  activeLocale?: unknown;
   [key: string]: unknown;
 }
 
+export type PromptAgentWindow = Window;
+
 const capabilities = bridgeCapabilities;
-const facadeCache = new WeakMap<object, KohakuLoomHostApi>();
+const facadeCache = new WeakMap<object, PromptAgentHostApi>();
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
 }
 
 function assertFunction(value: unknown, name: string): void {
-  if (typeof value !== "function") throw new Error(`Kohaku Loom host API missing ${name}`);
+  if (typeof value !== "function") throw new Error(`Prompt Agent host API missing ${name}`);
 }
 
-export function validateHostApi(value: unknown): KohakuLoomHostApi {
-  if (!isObject(value)) throw new Error("Kohaku Loom host API is unavailable");
+export function validateHostApi(value: unknown): PromptAgentHostApi {
+  if (!isObject(value)) throw new Error("Prompt Agent host API is unavailable");
   if (value.name !== HOST_API_NAME || value.apiVersion !== BRIDGE_API_VERSION || value.version !== BRIDGE_VERSION) {
-    throw new Error("Kohaku Loom host API version is unsupported");
+    throw new Error("Prompt Agent host API version is unsupported");
   }
   const hostCapabilities = value.capabilities;
   if (!Array.isArray(hostCapabilities) || !coreCapabilities.every((item) => hostCapabilities.includes(item))) {
-    throw new Error("Kohaku Loom host API core capabilities are incomplete");
+    throw new Error("Prompt Agent host API core capabilities are incomplete");
   }
-  const profileStore = value.profileStore;
   [
     "handshake",
+    "isForgeAvailable",
+    "activePromptTarget",
     "captureForgeState",
     "restoreForgeState",
     "executeAssistantTool",
-    "assistantConfig",
-    "claimToolBridge",
-    "releaseToolBridge",
-    "syncProfiles",
     "openSettings",
   ].forEach((name) => assertFunction(value[name], name));
-  if (!isObject(profileStore)) throw new Error("Kohaku Loom host API profile store is unavailable");
-  [
-    "load",
-    "current",
-    "teacher",
-    "session",
-    "add",
-    "duplicate",
-    "update",
-    "delete",
-    "setActive",
-    "setTeacher",
-    "setSession",
-    "setNaming",
-    "restoreDefaults",
-    "requestProjection",
-  ].forEach((name) => assertFunction((profileStore as Record<string, unknown>)?.[name], `profileStore.${name}`));
-  return value as unknown as KohakuLoomHostApi;
+  return value as unknown as PromptAgentHostApi;
 }
 
-function createBridgeFacade(host: KohakuLoomHostApi): KohakuLoomHostApi {
+function createBridgeFacade(host: PromptAgentHostApi): PromptAgentHostApi {
   const cached = facadeCache.get(host);
   if (cached) return cached;
   const value = host as unknown as Record<string, unknown>;
@@ -165,18 +113,13 @@ function createBridgeFacade(host: KohakuLoomHostApi): KohakuLoomHostApi {
   const executeAssistantTool = bind("executeAssistantTool", async () => {
     throw new Error("Forge tool execution is unavailable");
   });
-  const facade: KohakuLoomHostApi = {
+  const facade: PromptAgentHostApi = {
     ...host,
     isForgeAvailable: bind("isForgeAvailable", () => true),
     activePromptTarget: bind("activePromptTarget", () => "active"),
     readPrompt: bind("readPrompt", async () => { throw new Error("Forge prompt reading is unavailable"); }),
     executeAssistantTool,
     executeTool: bind("executeTool", executeAssistantTool),
-    claimAssistantToolBridge: bind("claimAssistantToolBridge", host.claimToolBridge.bind(host)),
-    releaseAssistantToolBridge: bind("releaseAssistantToolBridge", host.releaseToolBridge.bind(host)),
-    profileChat: bind("profileChat", async () => { throw new Error("Profile connection testing is unavailable"); }),
-    listLegacySessions: bind("listLegacySessions", async () => ({ sessions: [] })),
-    getLegacySession: bind("getLegacySession", async () => { throw new Error("Legacy session archive is unavailable"); }),
     getLocaleHints: bind("getLocaleHints", () => ({ locale: typeof navigator === "undefined" ? "en" : navigator.language || "en" })),
     subscribeLocaleHints: bind("subscribeLocaleHints", () => () => undefined),
     handshake(request) {
@@ -204,12 +147,16 @@ function createBridgeFacade(host: KohakuLoomHostApi): KohakuLoomHostApi {
   return facade;
 }
 
-export function getHostApi(namespace: KohakuLoomNamespace | undefined): KohakuLoomHostApi | null {
+export function getHostApi(namespace: PromptAgentNamespace | undefined): PromptAgentHostApi | null {
   try {
     return createBridgeFacade(validateHostApi(namespace?.hostApi));
   } catch (_error) {
     return null;
   }
+}
+
+export function promptAgentNamespace(globalWindow: PromptAgentWindow): PromptAgentNamespace | undefined {
+  return globalWindow.__SD_FORGE_NEO_PROMPT_AGENT__;
 }
 
 export interface WaitForHostOptions {
@@ -237,9 +184,9 @@ function wait(delay: number, signal?: AbortSignal): Promise<void> {
 }
 
 export async function waitForHostApi(
-  namespace: () => KohakuLoomNamespace | undefined,
+  namespace: () => PromptAgentNamespace | undefined,
   options: WaitForHostOptions = {},
-): Promise<KohakuLoomHostApi> {
+): Promise<PromptAgentHostApi> {
   const timeoutMs = options.timeoutMs ?? 15_000;
   const intervalMs = options.intervalMs ?? 100;
   const deadline = Date.now() + timeoutMs;
@@ -254,20 +201,19 @@ export async function waitForHostApi(
     await wait(intervalMs, options.signal);
   }
   const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
-  throw new Error(`Kohaku Loom host API did not become ready${detail}`);
+  throw new Error(`Prompt Agent host API did not become ready${detail}`);
 }
 
-// Kept as a compatibility name; it validates the host and never installs a bridge.
-export function installBridge(namespace: KohakuLoomNamespace): KohakuLoomHostApi {
+export function installBridge(namespace: PromptAgentNamespace): PromptAgentHostApi {
   return createBridgeFacade(validateHostApi(namespace.hostApi));
 }
 
-export function createBridgeApi(value?: unknown): KohakuLoomHostApi {
+export function createBridgeApi(value?: unknown): PromptAgentHostApi {
   return createBridgeFacade(validateHostApi(value));
 }
 
-export function handshakeWithLoom(
-  namespace: KohakuLoomNamespace,
+export function handshakeWithPromptAgent(
+  namespace: PromptAgentNamespace,
   request: BridgeHandshakeRequest,
 ): BridgeHandshakeResponse {
   const host = getHostApi(namespace);

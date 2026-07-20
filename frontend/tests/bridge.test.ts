@@ -4,17 +4,13 @@ import {
   BRIDGE_CAPABILITIES,
   BRIDGE_NAME,
   HOST_API_NAME,
-  handshakeWithLoom,
+  handshakeWithPromptAgent,
   installBridge,
   validateHostApi,
   waitForHostApi,
 } from "../src/bridge";
 
 function hostApi() {
-  const profileStore = Object.fromEntries([
-    "load", "current", "teacher", "session", "add", "duplicate", "update", "delete",
-    "setActive", "setTeacher", "setSession", "setNaming", "restoreDefaults", "requestProjection",
-  ].map((name) => [name, vi.fn()]));
   return {
     name: HOST_API_NAME,
     version: "1.0.0",
@@ -35,23 +31,13 @@ function hostApi() {
     restoreForgeState: vi.fn(),
     executeTool: vi.fn(),
     executeAssistantTool: vi.fn(),
-    assistantConfig: vi.fn(),
-    profileStore,
-    claimToolBridge: vi.fn(),
-    releaseToolBridge: vi.fn(),
-    claimAssistantToolBridge: vi.fn(),
-    releaseAssistantToolBridge: vi.fn(),
-    syncProfiles: vi.fn(),
-    profileChat: vi.fn(),
-    listLegacySessions: vi.fn(),
-    getLegacySession: vi.fn(),
     openSettings: vi.fn(),
     getLocaleHints: vi.fn(),
     subscribeLocaleHints: vi.fn(),
   };
 }
 
-describe("Kohaku Loom bridge handshake", () => {
+describe("Prompt Agent bridge handshake", () => {
   afterEach(() => vi.useRealTimers());
   it("accepts the host-owned API without replacing legacy keys", () => {
     const legacy = vi.fn();
@@ -69,7 +55,7 @@ describe("Kohaku Loom bridge handshake", () => {
 
   it("rejects a missing or incompatible host instead of installing a fake bridge", () => {
     expect(() => installBridge({})).toThrow(/host API/);
-    expect(handshakeWithLoom({}, { client: BRIDGE_NAME, apiVersion: BRIDGE_API_VERSION })).toMatchObject({
+    expect(handshakeWithPromptAgent({}, { client: BRIDGE_NAME, apiVersion: BRIDGE_API_VERSION })).toMatchObject({
       ok: false,
       reason: "host-unavailable",
     });
@@ -100,18 +86,14 @@ describe("Kohaku Loom bridge handshake", () => {
     await expect(waiting).resolves.toMatchObject({ name: HOST_API_NAME });
   });
 
-  it("degrades legacy history and locale hints without disabling the core host", async () => {
+  it("degrades locale hints without disabling the core host", () => {
     const host = hostApi();
-    host.capabilities = host.capabilities.filter((item) => !["legacy-sessions", "locale-hints"].includes(item));
-    delete (host as Partial<typeof host>).listLegacySessions;
-    delete (host as Partial<typeof host>).getLegacySession;
+    host.capabilities = host.capabilities.filter((item) => item !== "locale-hints");
     delete (host as Partial<typeof host>).getLocaleHints;
     delete (host as Partial<typeof host>).subscribeLocaleHints;
 
     const bridge = installBridge({ hostApi: host });
 
-    await expect(bridge.listLegacySessions()).resolves.toEqual({ sessions: [] });
-    await expect(bridge.getLegacySession("missing")).rejects.toThrow("unavailable");
     expect(bridge.getLocaleHints()).toMatchObject({ locale: expect.any(String) });
     expect(bridge.subscribeLocaleHints(() => undefined)()).toBeUndefined();
   });

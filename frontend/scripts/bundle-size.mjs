@@ -2,8 +2,8 @@ import { gzipSync } from "node:zlib";
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const bundlePath = resolve(process.cwd(), "../javascript/kohaku_loom_90_ui.js");
-const maxGzipBytes = Number(process.env.KOHAKU_LOOM_MAX_GZIP_BYTES ?? 350_000);
+const bundlePath = resolve(process.cwd(), "../javascript/prompt_agent_90_ui.js");
+const maxGzipBytes = Number(process.env.PROMPT_AGENT_MAX_GZIP_BYTES ?? 350_000);
 const source = await readFile(bundlePath);
 const compressed = gzipSync(source, { level: 9 });
 const file = await stat(bundlePath);
