@@ -1,16 +1,8 @@
 # Third-Party Notices
 
-This repository includes and depends on third-party software. Each component
-remains subject to its own license; dependency licenses do not replace or
-relicense the repository's root `LICENSE`.
-
-## KohakuTerrarium
-
-- Project: KohakuTerrarium
-- Repository: https://github.com/Kohaku-Lab/KohakuTerrarium
-- License: KohakuTerrarium License 1.0, reproduced in `LICENSE`
-- Notice: this repository retains visible attribution and historical migration
-  records for code derived from or migrated from KohakuTerrarium.
+This repository depends on third-party software. Each component remains subject
+to its own license; dependency licenses do not replace the repository root
+`LICENSE`.
 
 ## Pi
 

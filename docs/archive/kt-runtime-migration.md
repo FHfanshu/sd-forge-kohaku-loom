@@ -105,33 +105,21 @@ or pin both packages to an API-compatible release. Package versions and imports
 must be changed together because the newer Pi provider subpaths differ from
 the older API.
 
-## Licensing Gate
+## Licensing
 
-The archived root license is the KohakuTerrarium License 1.0. Its naming clause
-requires products that incorporate or are substantially derived from that work
-to include `Kohaku` or `Terrarium` in primary branding.
+The active product on `main` is MIT-licensed. Branch `kt` and tag `kt-final`
+preserve the archived Terrarium-era tree as a frozen historical lesson only.
+They are not required for normal development or release of Prompt Agent.
 
-The technical migration removes the Terrarium runtime and preserves legal
-attribution in the UI, README, root license, this document, and Git history.
-The active package, route, browser, DOM, CSS, test, and generated-asset names
-now use Prompt Agent identifiers. That rename does not relicense the remaining
-implementation or waive the root license's naming clause. Before distributing
-a release under only `SD Forge Neo Prompt Agent`, changing the root license to
-MIT, or renaming the remote repository as a released product, the maintainer
-must obtain permission from the relevant copyright holder or establish that
-the distributed implementation is independently licensable. Pi and TypeBox are
-MIT-licensed dependencies, but their licenses cover those dependencies only.
-This is a release gate, not a reason to preserve the old runtime architecture.
+## Historical Checkout
 
-## Rollback
-
-Before the new architecture becomes the default Forge extension, rollback is:
+The archived tree remains available for comparison:
 
 ```text
 git switch kt
 ```
 
-After a release, rollback must not point both versions at the same writable
+Do not point the archived runtime and Prompt Agent at the same writable
 session store. The old runtime owns `.loom` and `.kohakutr`; the new runtime
-owns the `sd-forge-neo-prompt-agent` IndexedDB database and its new Python
-storage paths.
+owns the `sd-forge-neo-prompt-agent` IndexedDB database and its Python storage
+paths.

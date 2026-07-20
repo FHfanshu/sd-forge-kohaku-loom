@@ -25,11 +25,11 @@ GENERATED_OR_LOCKED = {
 HISTORICAL_FILES = {
     pathlib.Path("AUDIT.md"),
     pathlib.Path("ROADMAP.md"),
-    pathlib.Path("docs/KOHAKU_LOOM_MIGRATION.md"),
-    pathlib.Path("docs/audit-archive-2026-07-19-full.md"),
-    pathlib.Path("docs/audit-archive-2026-07-19.md"),
-    pathlib.Path("docs/current-architecture-audit.md"),
-    pathlib.Path("docs/kt-runtime-migration.md"),
+    pathlib.Path("docs/archive/KOHAKU_LOOM_MIGRATION.md"),
+    pathlib.Path("docs/archive/audit-archive-2026-07-19-full.md"),
+    pathlib.Path("docs/archive/audit-archive-2026-07-19.md"),
+    pathlib.Path("docs/archive/current-architecture-audit.md"),
+    pathlib.Path("docs/archive/kt-runtime-migration.md"),
 }
 NAMING_COMPATIBILITY_FILES = {
     pathlib.Path("frontend/src/storage-migrations.ts"),
@@ -37,7 +37,6 @@ NAMING_COMPATIBILITY_FILES = {
     pathlib.Path("javascript/prompt_agent_01_i18n.js"),
     pathlib.Path("tests/test_frontend_svelte_boot.js"),
     pathlib.Path("tests/test_host_bridge.py"),
-    pathlib.Path("tests/test_kohaku_attribution.py"),
 }
 ARCHIVED_RUNTIME_MARKERS = {
     "/kohaku-loom/kt",

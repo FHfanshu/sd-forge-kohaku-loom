@@ -11,3 +11,7 @@ coverage-python.xml
 htmlcov/
 data/
 .playwright-mcp/
+
+# Detailed migration history kept locally; Git branches/tags retain the source history.
+/docs/archive/KOHAKU_LOOM_MIGRATION.md
+/docs/archive/audit-archive-2026-07-19-full.md

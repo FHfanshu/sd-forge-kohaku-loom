@@ -39,7 +39,8 @@ class I18nTests(unittest.TestCase):
         self.assertEqual("Open Prompt Agent", english["assistant.open"])
         self.assertEqual("向 Prompt Agent 发送消息", chinese["assistant.input.label"])
         self.assertEqual("打开 Prompt Agent", chinese["assistant.open"])
-        self.assertEqual("Powered by KohakuTerrarium", english["profiles.powered_by"])
+        self.assertNotIn("profiles.powered_by", english)
+        self.assertNotIn("profiles.powered_by", chinese)
 
     def test_python_ui_contract_has_exact_locale_parity_and_metadata_probe_shape(self):
         self.assertEqual(set(TRANSLATIONS["en"]), set(TRANSLATIONS["zh-CN"]))

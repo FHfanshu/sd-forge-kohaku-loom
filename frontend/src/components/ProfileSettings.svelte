@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Activity, Brain, Check, Copy, ExternalLink, Grip, KeyRound, Languages, MoreHorizontal, Plus, RefreshCw, RotateCcw, Save, ServerCog, ShieldAlert, Trash2, X } from "lucide-svelte";
+  import { Activity, Brain, Check, Copy, Grip, KeyRound, Languages, MoreHorizontal, Plus, RefreshCw, RotateCcw, Save, ServerCog, ShieldAlert, Trash2, X } from "lucide-svelte";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import { NativeSelect } from "$lib/components/ui/native-select";
@@ -220,7 +220,7 @@
         </button>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger aria-label={t("profiles.more", "More settings actions")} class="pa-header-icon"><MoreHorizontal size={16} /></DropdownMenu.Trigger>
-          <DropdownMenu.Portal><DropdownMenu.Content class="pa-dropdown-content"><DropdownMenu.Item class="pa-dropdown-item" onclick={() => $useUiStore.resetWindowLayouts()}><RotateCcw size={13} />{t("profiles.interface.reset", "Reset window layouts")}</DropdownMenu.Item><DropdownMenu.Item class="pa-dropdown-item" onclick={() => window.open("https://github.com/Kohaku-Lab/KohakuTerrarium", "_blank", "noopener,noreferrer")}><ExternalLink size={13} />{t("profiles.powered_by", "Powered by KohakuTerrarium")}</DropdownMenu.Item><DropdownMenu.Item class="pa-dropdown-item pa-profile-danger-text" onclick={() => confirm = "restore"}><RotateCcw size={13} />{t("profiles.restore", "Restore defaults")}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal>
+          <DropdownMenu.Portal><DropdownMenu.Content class="pa-dropdown-content"><DropdownMenu.Item class="pa-dropdown-item" onclick={() => $useUiStore.resetWindowLayouts()}><RotateCcw size={13} />{t("profiles.interface.reset", "Reset window layouts")}</DropdownMenu.Item><DropdownMenu.Item class="pa-dropdown-item pa-profile-danger-text" onclick={() => confirm = "restore"}><RotateCcw size={13} />{t("profiles.restore", "Restore defaults")}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal>
         </DropdownMenu.Root>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger aria-label={t("settings.locale", "Language")} class="pa-header-icon"><Languages size={16} /></DropdownMenu.Trigger>

@@ -1,8 +1,9 @@
 # Active Audit Log
 
-Historical migration entries through 2026-07-19 are preserved in
-`docs/audit-archive-2026-07-19-full.md`. The shorter archive index is in
-`docs/audit-archive-2026-07-19.md`.
+Historical migration implementation remains available on branch `kt` and tag
+`kt-final`. The concise archive index is in
+`docs/archive/audit-archive-2026-07-19.md`; detailed working notes are
+local-only under `docs/archive/`.
 
 ## 2026-07-19 Phase 9 Runtime Removal
 
@@ -139,3 +140,89 @@ Historical migration entries through 2026-07-19 are preserved in
   running external services and credentials. GitHub repository rename, default
   branch changes, and old remote branch handling require repository admin
   access. No migration change has been committed or pushed.
+
+## 2026-07-20 Minimalist Frontend Refresh
+
+- Root cause: `frontend/src/styles.css` carried two competing visual systems —
+  a decorative glass/warm-tone layer and a later Forge-native override block —
+  defining the same selectors twice, with hard-coded light/translucent colors
+  hostile to dark themes and the file at the 1000-line source limit.
+- Consolidated `styles.css` into a single token-first Forge-native stylesheet
+  (1000 -> ~540 lines): all colors map to Gradio/Forge variables, one accent
+  (`--primary-500`), removed dead rules for unused classes (legacy reasoning
+  slider/popover, queue strip, risk pills, brand orb, profile quick/advanced
+  cards, and similar), and merged the three responsive blocks.
+- `selector-styles.css` now consumes shared radius/shadow tokens; no Svelte
+  markup changes were required (verified every used `pa-*` class is styled).
+- Changed files: `frontend/src/styles.css`, `frontend/src/selector-styles.css`,
+  regenerated `javascript/prompt_agent_90_ui.js`.
+- Verification: `pnpm run check` 0 errors/0 warnings; `pnpm run test` 123
+  passed across 21 files (includes the two CSS-string assertions);
+  `pnpm run build` succeeded (741 kB bundle); `node --check` passed for all
+  Prompt Agent browser scripts; `python -m unittest discover -s tests` 79
+  passed. Light/dark Forge theme smoke check in a live UI remains a manual
+  follow-up.
+
+## 2026-07-20 Repository Hygiene
+
+- Root cause: ignored Python bytecode, coverage data, frontend dependencies,
+  package caches, and Playwright results had accumulated in the working tree;
+  two detailed historical migration documents also duplicated history already
+  retained by `kt`, `kt-final`, and the concise tracked archive.
+- Removed local generated and test artifacts while preserving `data/`, which
+  contains local profile and secret state. Kept all active source, runtime,
+  build, and test directories.
+- Changed `.gitignore`; stopped tracking `docs/KOHAKU_LOOM_MIGRATION.md` and
+  `docs/audit-archive-2026-07-19-full.md` while retaining both local copies.
+- Verification: `PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s
+  tests` passed 79 tests, the focused architecture suite passed 4 tests,
+  staged and scoped `git diff --check` passed, and the final ignored-artifact
+  dry run was empty outside the preserved local files. Standard `git gc`
+  reduced loose-object storage from 12.60 MiB to 235 bytes without integrity
+  errors.
+
+## 2026-07-20 MIT Relicense And Attribution Cleanup
+
+- Root cause: the active tree no longer ships the KT/Terrarium runtime, but
+  root `LICENSE`, README, UI attribution, and `test_kohaku_attribution.py`
+  still enforced KohakuTerrarium naming and visible attribution as a release
+  gate.
+- Decision: relicense the active product under MIT as repository owner; keep
+  branch `kt` and tag `kt-final` as a frozen historical lesson without
+  rewriting Git history.
+- Changed `LICENSE` to MIT; rewrote `THIRD_PARTY_NOTICES.md` for Pi and TypeBox
+  only; updated README, ROADMAP Phase 10, and `docs/kt-runtime-migration.md`
+  licensing text; removed the Profile Settings "Powered by KohakuTerrarium"
+  menu item; dropped `profiles.powered_by` locale strings; deleted
+  `tests/test_kohaku_attribution.py` and its architecture allowlist entry.
+- Verification: `python -m unittest tests.test_i18n tests.test_architecture -v`
+  passed 10 tests; full `python -m unittest discover -s tests` passed 78 tests;
+  frontend `pnpm install --frozen-lockfile`, `pnpm run build`, and
+  `pnpm run check` passed (0 errors/warnings; regenerated
+  `javascript/prompt_agent_90_ui.js`); `node --check` passed for browser
+  scripts. Active tree no longer contains KohakuTerrarium attribution strings
+  in LICENSE, README, Profile Settings, or locale catalogs. Branch `kt` and tag
+  `kt-final` were intentionally kept.
+
+## 2026-07-20 Docs And Tools Layout Cleanup
+
+- Root cause: active docs mixed product guides with KT migration history, and a
+  one-file `tools/` package only held the skip-budget test runner.
+- Moved historical docs into `docs/archive/` with a short index README; kept
+  active `docs/SESSION_SYSTEM_DESIGN.md` and `docs/DANBOORU_TAGS_AGENT.md`.
+  Local-only detailed archives remain gitignored under `docs/archive/`.
+- Moved `tools/test_runner.py` to `tests/run_suite.py` and removed empty
+  `tools/`; updated README, CI compile/test commands, ROADMAP phase-1 paths,
+  and architecture historical-file allowlist.
+- Verification: `python -m compileall -q backend prompt_agent scripts install.py
+  tests` passed; `python tests/run_suite.py --max-skips 20` passed 78 tests with
+  0 skipped; `python -m unittest tests.test_architecture -v` passed 4 tests.
+
+## 2026-07-20 README Tools List And Partial CI
+
+- Updated README with layout, the 12 agent-exposed Forge tools, and tiered
+  local verification commands (fast / frontend / full).
+- CI path filters: backend jobs skip when only frontend changes and vice versa.
+  PR backend matrix is Python 3.12 only; main/manual keep 3.11–3.13. Coverage
+  artifacts stay main/manual. Browser-script syntax merged into the frontend
+  job. Concurrency cancels superseded runs.

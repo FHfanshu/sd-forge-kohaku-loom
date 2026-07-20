@@ -1,92 +1,135 @@
 # SD Forge Neo Prompt Agent
 
-SD Forge Neo Prompt Agent is a single-agent prompt assistant embedded in Forge Neo. The browser owns the Pi agent loop and IndexedDB chat history; Python provides profile authority, protected provider credentials, provider streaming, local-model lifecycle, and privileged Forge integrations.
+Single-agent prompt assistant for Forge Neo. The browser owns the Pi agent loop
+and IndexedDB chat history; Python owns profiles, secrets, provider streaming,
+local-model lifecycle, and privileged Forge tools.
 
-Image reverse prompting is intentionally separate. Install or enable the sibling `sd_forge_reverse_prompt` extension for the WD Tagger workbench, captioning, natural-language reverse prompts, and inline refine/expand/stylize actions.
+Image reverse prompting is a separate sibling extension:
+`sd_forge_reverse_prompt`.
 
 ## Features
 
-- Floating prompt assistant for composition, character layout, spatial relationships, and prompt rewriting.
-- Frontend Pi runtime with streaming, reasoning display, cancellation, and terminal failure recovery.
-- Python-authoritative Model Profiles for remote HTTP and local llama.cpp runtimes.
-- Visible effective-capability limits; unsupported runtimes cannot be selected for agent chat.
-- Secrets protected by the server and never returned to browser profile state.
-- IndexedDB-owned sessions and messages with interrupted-stream recovery after refresh.
-- Hash-guarded positive and negative txt2img/img2img prompt reads and edits.
-- Installed Wildcard, WebUI Style, and LoRA discovery.
-- Danbooru tag search, inspection, and related-tag lookup.
-- Local reference-image analysis through a configured llama.cpp VLM.
+- Floating assistant for composition, layout, and prompt rewriting
+- Frontend Pi runtime: stream, reason, tool calls, abort, terminal recovery
+- Python-authoritative Model Profiles (HTTP + local llama.cpp)
+- Server-owned secrets; browser never receives plaintext keys or local paths
+- IndexedDB sessions with interrupted-message recovery after refresh
+- Hash-guarded positive/negative prompt reads and edits
+- Forge resource discovery: styles, wildcards, LoRAs, checkpoints, embeddings
+- Local reference-image analysis via a configured llama.cpp VLM
 
 ## Architecture
 
-The active assistant API is `/prompt-agent/api`.
+API prefix: `/prompt-agent/api`.
 
-The browser owns:
+| Layer | Owns |
+| --- | --- |
+| Browser | `PromptAgentRuntime`, UI, IndexedDB sessions, profile selection |
+| Python | Extension registration, profiles, secrets, provider proxy, llama.cpp, Forge tools |
 
-- `PromptAgentRuntime` and Pi generation state;
-- streaming, reasoning, tool-call, and abort UI;
-- IndexedDB session history and preferences;
-- profile and model selection.
+No managed sidecar, server-owned chat session, execution lease, or refresh-time
+tool replay. Refresh keeps partial content, marks unfinished messages
+`interrupted`, and never re-runs an old request.
 
-Python owns:
+### Layout
 
-- Forge extension registration and privileged operations;
-- profile storage under `data/prompt-agent/` or `SD_FORGE_NEO_PROMPT_AGENT_DATA`;
-- protected provider secrets and request authorization;
-- provider stream proxying;
-- local model paths and llama.cpp process lifecycle.
+```text
+backend/prompt_agent/   # API, profiles, provider proxy, Forge tool validation
+prompt_agent/           # shared leaf modules (i18n, resources, llama helpers)
+scripts/                # Forge extension entry
+frontend/               # Svelte 5 source (build only)
+javascript/             # Forge-loaded browser scripts (incl. generated UI)
+tests/                  # Python + small host-script checks; tests/run_suite.py
+docs/                   # active product docs
+docs/archive/           # KT migration history (not product surface)
+data/                   # local runtime state (gitignored)
+```
 
-There is no managed assistant process, server-owned chat session, execution ownership protocol, follow-up message queue, or refresh-time execution replay. Refresh restores persisted content, marks unfinished messages interrupted, and never re-executes an earlier request.
+## Agent tools
 
-## Model Profiles
+The model only sees these Forge tools (frontend registry + Python validation):
 
-Profiles define the model ID, protocol, runtime, endpoint, capabilities, generation parameters, and local runtime configuration. API keys and local filesystem paths are server-owned. Public responses expose only safe status fields such as whether a key or local path is configured.
+| Tool | Access | Purpose |
+| --- | --- | --- |
+| `read_prompt` | read | Read positive prompt + hash |
+| `edit_prompt` | write | Patch positive prompt with current hash |
+| `read_negative_prompt` | read | Read negative prompt + hash |
+| `edit_negative_prompt` | write | Patch negative prompt with current hash |
+| `read_generation_parameters` | read | Read allowlisted generation controls + hash |
+| `apply_generation_parameters` | write | Apply allowlisted generation controls with hash |
+| `list_resources` | read | List styles / wildcards / LoRAs (logical IDs) |
+| `read_resource_metadata` | read | Bounded metadata for one resource |
+| `list_models` | read | Checkpoint IDs/labels (no filesystem paths) |
+| `list_loras` | read | LoRA IDs/labels |
+| `list_embeddings` | read | Embedding IDs/labels |
+| `ask_teacher` | read | One-shot question to a selected teacher profile |
 
-Local one-shot profiles use a server-configured `llama-server.exe`. Set `LLAMA_SERVER_EXE` to configure a trusted backend path. Browser requests cannot supply executable or model paths to generation endpoints.
+Write tools require a fresh hash from a prior read. Browser arguments are
+revalidated by Python before any Forge DOM access. Resource listing is
+read-only until an explicit apply/edit tool runs.
 
-## Prompt Tools
+## Model profiles
 
-Forge prompt mutations are guarded by a current-state hash. A mutation must read the live Forge state before editing and is rejected if the user changed the field in between. Browser-host prompt and generation tool arguments are revalidated by Python before Forge DOM access. Resource discovery is read-only until an explicit apply request.
+Profiles define model ID, protocol, runtime, endpoint, capabilities, generation
+parameters, and local runtime config. Public APIs only expose safe status flags
+(for example “has API key / has local path configured”).
 
-## Reference Images
+Local one-shot profiles use a server-configured `llama-server.exe` via
+`LLAMA_SERVER_EXE`. Browser requests cannot inject executable or model paths
+into generation endpoints.
 
-Attached images can be analyzed locally by the configured VLM. Local model files, binaries, logs, caches, and generated image payloads are not committed.
+## License
 
-## Attribution
+[MIT License](LICENSE). Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Powered by [KohakuTerrarium](https://github.com/Kohaku-Lab/KohakuTerrarium). This distribution includes the [KohakuTerrarium License 1.0](LICENSE). The archived KohakuTerrarium-based runtime is retained only in Git branch `kt` and tag `kt-final`; it is not part of the active startup path.
-
-## License Status
-
-The repository remains distributed under the root [KohakuTerrarium License 1.0](LICENSE). The technical runtime and identifiers have moved to Prompt Agent, but that license includes naming and visible-attribution terms. A release whose primary branding omits `Kohaku` and `Terrarium`, or a change to MIT, requires permission from the relevant copyright holder or evidence that the remaining implementation is independently licensable. The MIT licenses of the Pi and TypeBox dependencies do not relicense this repository. See [Third-Party Notices](THIRD_PARTY_NOTICES.md) and the [migration licensing gate](docs/kt-runtime-migration.md#licensing-gate).
+Historical KT/Terrarium runtime remains only on branch `kt` / tag `kt-final`.
 
 ## Verification
 
-Use the repository-pinned Node `22.17.0` and pnpm `10.12.4` toolchain.
+Pinned frontend toolchain: Node `22.17.0`, pnpm `10.12.4`.
+
+### Fast local loop
 
 ```powershell
-python -m compileall -q backend prompt_agent scripts install.py tools
-python tools/test_runner.py --max-skips 20
-python -m coverage run --branch -m unittest discover -s tests
-python -m coverage report --fail-under=70
-node --test tests/test_frontend_*.js
+python -m compileall -q backend prompt_agent scripts install.py tests
+python tests/run_suite.py --max-skips 20
 node --check javascript/prompt_agent.js
 node --check javascript/prompt_agent_01_i18n.js
 node --check javascript/prompt_agent_02_resources.js
 node --check javascript/prompt_agent_07_host.js
 node --check javascript/prompt_agent_90_ui.js
 node --check javascript/prompt_agent_99_boot.js
+```
+
+### Frontend (when UI/source changes)
+
+```powershell
+npx --yes --package node@22.17.0 --package pnpm@10.12.4 pnpm --dir frontend install --frozen-lockfile
 npx --yes --package node@22.17.0 --package pnpm@10.12.4 pnpm --dir frontend run check
-npx --yes --package node@22.17.0 --package pnpm@10.12.4 pnpm --dir frontend run test:coverage
+npx --yes --package node@22.17.0 --package pnpm@10.12.4 pnpm --dir frontend run test
 npx --yes --package node@22.17.0 --package pnpm@10.12.4 pnpm --dir frontend run build
 npx --yes --package node@22.17.0 --package pnpm@10.12.4 pnpm --dir frontend run bundle:size
+```
+
+### Full / CI-equivalent
+
+```powershell
+python -m coverage run --branch -m unittest discover -s tests
+python -m coverage report --fail-under=70
+node --test tests/test_frontend_*.js
+npx --yes --package node@22.17.0 --package pnpm@10.12.4 pnpm --dir frontend run test:coverage
 npx --yes --package node@22.17.0 --package pnpm@10.12.4 pnpm --dir frontend run test:e2e
 ```
 
-The local-only real Forge check requires an already-running Forge Neo instance:
+CI runs path-filtered jobs (backend / frontend / e2e) so unrelated changes skip
+heavy steps. `workflow_dispatch` and pushes to `main` run the full set.
+
+### Real Forge (local only)
+
+Requires an already-running Forge Neo instance:
 
 ```powershell
 npx --yes --package node@22.17.0 --package pnpm@10.12.4 pnpm --dir frontend run test:e2e:forge
 ```
 
-Use `FORGE_BASE_URL`, optional HTTP basic-auth variables, and `FORGE_MODEL_PROFILE_ID` to select the real target. The test does not start another Forge process.
+Optional: `FORGE_BASE_URL`, HTTP basic-auth vars, `FORGE_MODEL_PROFILE_ID`.

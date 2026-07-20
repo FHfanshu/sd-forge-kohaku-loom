@@ -78,10 +78,10 @@ Status: complete.
 
 Deliverables:
 
-- `docs/current-architecture-audit.md`;
-- `docs/kt-runtime-migration.md`;
+- `docs/archive/current-architecture-audit.md`;
+- `docs/archive/kt-runtime-migration.md`;
 - old runtime call chains, schemas, build flow, and deletion dependencies;
-- explicit Pi version and licensing gates.
+- explicit Pi version and licensing notes.
 
 Exit criteria:
 
@@ -279,7 +279,7 @@ Exit criteria:
 - no active import, route, build step, test, or startup path references the old
   runtime;
 - default build and launch do not create or inspect `.loom`;
-- rollback remains available through `kt` and `kt-final`.
+- historical comparison remains available through `kt` and `kt-final`.
 
 The active dependency audit found no archived runtime import, route, build,
 test, or startup path. A startup sentinel also confirmed API registration does
@@ -289,7 +289,7 @@ execution markers from active files.
 
 ## Phase 10: Complete Naming Migration
 
-Status: technical migration complete; distribution remains blocked by licensing decision.
+Status: complete.
 
 Use these active identifiers:
 
@@ -304,24 +304,17 @@ PromptAgentRuntime
 window.__SD_FORGE_NEO_PROMPT_AGENT__
 ```
 
-Old names remain only in Git history, migration documentation, legal
-attribution, negative architecture assertions, and isolated one-time storage
-compatibility constants. Release under the new name remains gated by the
-licensing decision documented in `docs/kt-runtime-migration.md`.
-
-The runtime, API, Python package, Forge script, browser namespace, generated
-asset names, bridge contracts, DOM/CSS identifiers, tests, and active
-documentation use Prompt Agent identifiers. The technical migration does not
-change the root license or satisfy its naming clause; distributable branding
-and remote repository naming remain gated until permission or independent
-licensing evidence exists.
+Old names remain only in Git history, migration documentation, negative
+architecture assertions, and isolated one-time storage compatibility constants.
+The root license is MIT. Branch `kt` and tag `kt-final` keep the archived
+runtime as a frozen historical lesson and are not part of the active product.
 
 ## Quality Gates
 
 Run the smallest complete set covering every changed layer:
 
 ```powershell
-python -m compileall -q backend prompt_agent scripts install.py tools
+python -m compileall -q backend prompt_agent scripts install.py tests
 python -m unittest discover -s tests
 
 cd frontend
