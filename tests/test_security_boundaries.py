@@ -20,22 +20,26 @@ from quality.acceptance import acceptance
 class SecurityBoundaryTests(unittest.TestCase):
     def test_extension_backend_namespace_does_not_shadow_forge_backend(self):
         root = Path(__file__).resolve().parents[1]
-        forge_root = root.parents[1]
-        self.assertFalse((root / "backend" / "__init__.py").exists())
-        script = """
+        with tempfile.TemporaryDirectory() as directory:
+            forge_root = Path(directory)
+            forge_backend = forge_root / "backend"
+            forge_backend.mkdir()
+            (forge_backend / "args.py").write_text("import argparse\nparser = argparse.ArgumentParser(prog='forge')\n", encoding="utf-8")
+            self.assertFalse((root / "backend" / "__init__.py").exists())
+            script = """
 import sys
 sys.path = [sys.argv[1], sys.argv[2]] + sys.path
 from backend.args import parser
 from backend.prompt_agent import API_PREFIX
 print(parser.prog, API_PREFIX)
 """
-        completed = subprocess.run(
-            [sys.executable, "-c", script, str(root), str(forge_root)],
-            text=True,
-            capture_output=True,
-        )
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertIn("/prompt-agent/api", completed.stdout)
+            completed = subprocess.run(
+                [sys.executable, "-c", script, str(root), str(forge_root)],
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            self.assertIn("forge /prompt-agent/api", completed.stdout)
 
     def test_forge_script_registers_prompt_agent_api(self):
         script = Path(__file__).resolve().parents[1] / "scripts" / "prompt_agent.py"

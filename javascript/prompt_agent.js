@@ -124,6 +124,45 @@
         return promptFieldRootForTarget(target, "positive");
     }
 
+    function promptFieldControl(item) {
+        if (!item || !item.root) return null;
+        return item.root.querySelector("textarea") || item.root.querySelector("input");
+    }
+
+    function numericControlValue(selector) {
+        const root = promptAgentApp().querySelector(selector);
+        const control = root && (root.matches?.("input") ? root : root.querySelector("input"));
+        const value = control ? Number(control.value) : NaN;
+        return Number.isFinite(value) ? value : null;
+    }
+
+    function promptFieldActivation(target) {
+        const positiveItem = promptFieldRootForTarget(target || "active", "positive");
+        const negativeItem = promptFieldRootForTarget(positiveItem.target, "negative");
+        const positiveControl = promptFieldControl(positiveItem), negativeControl = promptFieldControl(negativeItem);
+        const cfgScale = numericControlValue(`#${positiveItem.target}_cfg_scale`);
+        const disabledByField = Boolean(negativeControl && (
+            negativeControl.disabled || negativeControl.readOnly || negativeControl.getAttribute?.("aria-disabled") === "true"
+            || negativeItem.root?.getAttribute?.("aria-disabled") === "true"
+            || negativeItem.root?.classList?.contains("disabled")
+        ));
+        const disabledByCfg = cfgScale !== null && cfgScale <= 1;
+        const negativeEnabled = negativeControl ? !disabledByField && !disabledByCfg : null;
+        const inactiveReason = negativeControl
+            ? negativeEnabled
+                ? ""
+                : disabledByCfg
+                    ? "cfg_scale_lte_1"
+                    : "field_disabled"
+            : "field_unavailable";
+        const state = { positive_enabled: positiveControl ? !Boolean(positiveControl.disabled || positiveControl.readOnly) : null,
+            negative_prompt_enabled: negativeEnabled, negative_inactive_reason: inactiveReason,
+            activation_source: negativeControl ? "live_field" : "unknown", cfg_scale: cfgScale };
+        state.negative_state_hash = promptHash(JSON.stringify({ enabled: state.negative_prompt_enabled,
+            reason: state.negative_inactive_reason, cfg_scale: state.cfg_scale }));
+        return state;
+    }
+
     function normalizedLabelText(value) {
         return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
     }
@@ -303,16 +342,23 @@
         const negativeItem = promptFieldRootForTarget(positiveItem.target, "negative");
         const positive = textboxValue(positiveItem.root);
         const negative = textboxValue(negativeItem.root);
+        const activation = promptFieldActivation(positiveItem.target);
         const styles = styleSelector === undefined ? styleSelectorValue(positiveItem.target) : String(styleSelector || "");
         const forgePreset = currentForgePreset();
         const checkpoint = currentCheckpoint();
-        const contextHash = promptHash(JSON.stringify({ positive, negative, styles, forgePreset, checkpoint }));
+        const contextHash = promptHash(JSON.stringify({ positive, negative, styles, forgePreset, checkpoint, negativeEnabled: activation.negative_prompt_enabled }));
         return {
             target: positiveItem.target,
             positive: positive,
             negative: negative,
             positive_hash: promptHash(positive),
             negative_hash: promptHash(negative),
+            positive_enabled: activation.positive_enabled,
+            negative_prompt_enabled: activation.negative_prompt_enabled,
+            negative_inactive_reason: activation.negative_inactive_reason,
+            negative_state_hash: activation.negative_state_hash,
+            activation_source: activation.activation_source,
+            cfg_scale: activation.cfg_scale,
             context_hash: contextHash,
             style_selector: styles,
             forge_preset: forgePreset,
@@ -331,6 +377,12 @@
             negative: context.negative,
             positive_hash: context.positive_hash,
             negative_hash: context.negative_hash,
+            positive_enabled: context.positive_enabled,
+            negative_prompt_enabled: context.negative_prompt_enabled,
+            negative_inactive_reason: context.negative_inactive_reason,
+            negative_state_hash: context.negative_state_hash,
+            activation_source: context.activation_source,
+            cfg_scale: context.cfg_scale,
             context_hash: context.context_hash,
             style_selector: context.style_selector,
             at: Date.now()
@@ -344,6 +396,12 @@
             negative_prompt: context.negative,
             positive_prompt_hash: context.positive_hash,
             negative_prompt_hash: context.negative_hash,
+            positive_enabled: context.positive_enabled,
+            negative_prompt_enabled: context.negative_prompt_enabled,
+            negative_inactive_reason: context.negative_inactive_reason,
+            negative_state_hash: context.negative_state_hash,
+            activation_source: context.activation_source,
+            cfg_scale: context.cfg_scale,
             context_hash: context.context_hash,
             forge_preset: context.forge_preset,
             checkpoint: context.checkpoint,
@@ -788,6 +846,7 @@
         const fieldHash = field === "negative" ? "negative_hash" : "positive_hash";
         const fieldText = field === "negative" ? "negative" : "positive";
         const baseHash = String(args.base_hash || args.prompt_hash || "").trim();
+        const negativeStateHash = String(args.negative_state_hash || "").trim();
         const patchSource = args.patches !== undefined ? args.patches : args.operations !== undefined ? args.operations : args.patch !== undefined ? args.patch : patches;
         let patchList;
         if (args.diff && typeof args.diff === "object" && !Array.isArray(args.diff)) {
@@ -803,6 +862,10 @@
         }
         if (baseHash !== readState[fieldHash]) {
             return { ok: false, target: item.target, field: field, error: "base_hash does not match the latest read_prompt result; read again", last_read_hash: readState[fieldHash] };
+        }
+        const liveActivation = promptFieldActivation(item.target);
+        if (field === "negative" && negativeStateHash && negativeStateHash !== liveActivation.negative_state_hash) {
+            return { ok: false, target: item.target, field: field, error: "negative prompt activation changed since read_prompt; read again", last_negative_state_hash: liveActivation.negative_state_hash };
         }
         const currentText = String(readState[fieldText] || "");
         const hasDiffOrPatches = Array.isArray(patchList) && patchList.length > 0;
@@ -829,6 +892,22 @@
             const current = promptContextSnapshot(item.target);
             readState.context_hash = current.context_hash;
             readState.style_selector = current.style_selector;
+            readState.positive_enabled = current.positive_enabled;
+            readState.negative_prompt_enabled = current.negative_prompt_enabled;
+            readState.negative_inactive_reason = current.negative_inactive_reason;
+            readState.negative_state_hash = current.negative_state_hash;
+            readState.activation_source = current.activation_source;
+            readState.cfg_scale = current.cfg_scale;
+            result.before_prompt = currentText;
+            result.after_prompt = rawResult.prompt || "";
+            result.before_hash = baseHash;
+            result.field_enabled = field === "negative" ? current.negative_prompt_enabled : current.positive_enabled;
+            result.negative_prompt_enabled = current.negative_prompt_enabled;
+            result.negative_inactive_reason = current.negative_inactive_reason;
+            result.negative_state_hash = current.negative_state_hash;
+            result.activation_source = current.activation_source;
+            result.cfg_scale = current.cfg_scale;
+            result.effective = field === "negative" ? current.negative_prompt_enabled === true : current.positive_enabled !== false;
             readState.at = Date.now();
         }
         return Object.assign({ target: item.target, field: field, context_hash: readState.context_hash }, result);
@@ -849,7 +928,9 @@
             const selected = Object.assign({}, result, {
                 field: field,
                 prompt: field === "negative" ? result.negative_prompt : result.positive_prompt,
-                prompt_hash: field === "negative" ? result.negative_prompt_hash : result.positive_prompt_hash
+                prompt_hash: field === "negative" ? result.negative_prompt_hash : result.positive_prompt_hash,
+                field_enabled: field === "negative" ? result.negative_prompt_enabled : result.positive_enabled,
+                inactive_reason: field === "negative" ? result.negative_inactive_reason || undefined : undefined
             });
             delete selected.positive_prompt;
             delete selected.negative_prompt;
@@ -881,6 +962,7 @@
         assistantState,
         activePromptTarget,
         promptFieldRootForTarget,
+        promptFieldActivation,
         promptRootForTarget,
         normalizedLabelText,
         visibleText,

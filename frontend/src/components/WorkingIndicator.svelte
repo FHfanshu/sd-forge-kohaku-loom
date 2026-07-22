@@ -17,7 +17,9 @@
     : phase === "cancelling"
       ? t("assistant.working.cancelling", "Stopping response…")
       : phase === "retrying"
-        ? t("assistant.working.retrying", "Retrying with tool feedback…")
+        ? statusDetail?.startsWith("Provider request")
+          ? t("assistant.working.provider_retrying", "Retrying provider request…")
+          : t("assistant.working.retrying", "Retrying with tool feedback…")
       : phase === "tool"
         ? t("assistant.working.tool", "Running tool…")
         : phase === "generating"

@@ -41,7 +41,7 @@ describe("Svelte chat surface", () => {
   it("renders markdown, tools, reasoning, and usage without branch controls", async () => {
     const { container } = render(Surface, { initialOpen: true, messages: mockMessages, actions: {} });
     expect(await screen.findByRole("dialog", { name: "Prompt Agent chat" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open Prompt Agent" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Prompt Agent" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("middle third is carrying too many competing details")).toBeInTheDocument();
     expect(screen.getAllByText("read_prompt").length).toBeGreaterThan(0);
     expect(screen.getByText(/642 in/)).toBeInTheDocument();
@@ -52,25 +52,131 @@ describe("Svelte chat surface", () => {
     expect(tool.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("keeps tool results and reasoning folded with a one-line reasoning preview", async () => {
+  acceptanceTest("UI-FEEDBACK-001@3", "process", "keeps one final response primary while recovered tool failures stay scoped", async () => {
     const user = userEvent.setup();
-    const { container } = render(Surface, { initialOpen: true, messages: mockMessages, actions: {} });
+    const messages = [
+      mockMessages[0],
+      { ...mockMessages[2], id: "intermediate", content: "Checking Forge state before answering.", reasoning: "First pass" },
+      mockMessages[1],
+      mockMessages[2],
+    ];
+    const { container } = render(Surface, { initialOpen: true, messages, actions: {} });
+
+    const process = container.querySelector<HTMLDetailsElement>("[data-prompt-agent-process='true']");
+    expect(process).not.toBeNull();
+    expect(process?.open).toBe(false);
+    expect(container.querySelectorAll(".pa-message-assistant")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Copy" })).toHaveLength(2);
+    expect(screen.getByText("middle third is carrying too many competing details")).toBeInTheDocument();
 
     const toolResult = container.querySelector<HTMLDetailsElement>("[data-prompt-agent-tool-result='true']");
     expect(toolResult).not.toBeNull();
     expect(toolResult?.open).toBe(false);
+    await user.click(process!.querySelector(":scope > summary")!);
+    expect(process?.open).toBe(true);
     await user.click(toolResult!.querySelector("summary")!);
     expect(toolResult?.open).toBe(true);
 
-    const reasoning = container.querySelector<HTMLDetailsElement>(".pa-reasoning");
+    const reasoning = container.querySelector<HTMLDetailsElement>(".pa-process-reasoning");
     expect(reasoning).not.toBeNull();
     expect(reasoning?.open).toBe(false);
-    expect(reasoning?.querySelector(".pa-reasoning-preview")).toHaveTextContent(mockMessages[2].reasoning!);
+    await user.click(reasoning!.querySelector("summary")!);
+    expect(reasoning).toHaveTextContent("First pass");
 
     await user.click(screen.getByRole("button", { name: "Collapse response" }));
     expect(screen.queryByText("middle third is carrying too many competing details")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Expand response" }));
     expect(screen.getByText("middle third is carrying too many competing details")).toBeInTheDocument();
+  });
+
+  acceptanceTest("PROMPT-DIFF-001@1", "confirmed-diff,negative-disabled", "keeps a confirmed red-green prompt diff visible before the final answer and marks disabled negative text", async () => {
+    const user = userEvent.setup();
+    const mutationTool = {
+      ...mockMessages[1],
+      id: "negative-prompt-edit",
+      content: "RAW_EDIT_RESULT_SHOULD_STAY_COMPACT",
+      tool: {
+        name: "edit_prompt",
+        status: "complete" as const,
+        detail: "Negative prompt updated · disabled · +1 -1 ↕0",
+        mutation: {
+          version: 1 as const,
+          target: "txt2img" as const,
+          field: "negative" as const,
+          beforeHash: "before",
+          afterHash: "after",
+          fieldEnabled: false,
+          effective: false,
+          inactiveReason: "cfg_scale_lte_1",
+          changes: [
+            { kind: "removed" as const, pool: "tags" as const, before: "low quality", reason: "removed" },
+            { kind: "added" as const, pool: "tags" as const, after: "bad anatomy", reason: "added" },
+            { kind: "added" as const, pool: "tags" as const, after: "extra fingers", reason: "added" },
+            { kind: "added" as const, pool: "natural_language" as const, after: "Soft window light shapes the portrait.", reason: "added" },
+          ],
+          summary: { added: 3, removed: 1, moved: 0, normalized: 0, preservedUnknown: 0 },
+        },
+      },
+    };
+    const { container } = render(Surface, { initialOpen: true, messages: [mutationTool, mockMessages[2]], actions: {} });
+
+    const changeCard = container.querySelector<HTMLDetailsElement>("[data-prompt-change='true']");
+    expect(changeCard).not.toBeNull();
+    expect(changeCard?.open).toBe(false);
+    expect(changeCard?.querySelector(":scope > summary")).toHaveTextContent("Negative prompt updated");
+    expect(changeCard?.querySelector(".pa-diff-count-added")).toHaveTextContent("3");
+    expect(changeCard?.querySelector(".pa-diff-count-removed")).toHaveTextContent("1");
+    expect(changeCard?.closest("[data-prompt-agent-process='true']")).toBeNull();
+    expect(screen.queryByText("RAW_EDIT_RESULT_SHOULD_STAY_COMPACT")).not.toBeInTheDocument();
+
+    await user.click(changeCard!.querySelector(":scope > summary")!);
+    expect(changeCard).toHaveTextContent("currently disabled and will not affect generation");
+    expect(changeCard?.querySelector("del")).toHaveTextContent("low quality");
+    expect(changeCard?.querySelector("ins")).toHaveTextContent("bad anatomy");
+    const pools = changeCard!.querySelectorAll(".pa-prompt-diff-pool");
+    expect(pools[0]).toHaveTextContent("Tags");
+    expect(pools[0].querySelector(".pa-prompt-diff-tags")).toHaveTextContent("bad anatomy,extra fingers");
+    expect(pools[0].querySelector(".pa-prompt-diff-tag")).toHaveClass("pa-prompt-diff-value");
+    expect(pools[1]).toHaveTextContent("Natural language");
+    expect(pools[1]).toHaveTextContent("Soft window light shapes the portrait.");
+    const finalText = screen.getByText("middle third is carrying too many competing details");
+    expect(changeCard!.compareDocumentPosition(finalText) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps a recovered turn neutral while marking only the failed tool", () => {
+    const failedTool = {
+      ...mockMessages[1],
+      id: "failed-tool",
+      content: "The first lookup timed out.",
+      tool: { ...mockMessages[1].tool!, status: "error" as const },
+    };
+    const { container } = render(Surface, {
+      initialOpen: true,
+      messages: [mockMessages[0], failedTool, mockMessages[2]],
+      actions: {},
+    });
+
+    const process = container.querySelector<HTMLDetailsElement>("[data-prompt-agent-process='true']");
+    expect(process).not.toBeNull();
+    expect(process).not.toHaveClass("pa-process-error");
+    expect(process?.querySelector(":scope > summary")).toHaveTextContent("1 failed");
+    expect(container.querySelector(".pa-tool-status-error")).toHaveTextContent("failed");
+  });
+
+  it("marks a genuinely failed turn red and labels the terminal failure", () => {
+    const { container } = render(Surface, {
+      initialOpen: true,
+      messages: [
+        mockMessages[0],
+        mockMessages[1],
+        { ...mockMessages[2], id: "failed-turn", status: "error", content: "The request could not be completed." },
+      ],
+      actions: {},
+    });
+
+    const process = container.querySelector<HTMLDetailsElement>("[data-prompt-agent-process='true']");
+    expect(process).toHaveClass("pa-process-error");
+    expect(process?.querySelector(":scope > summary")).toHaveTextContent("Execution failed");
   });
 
   it("defers Markdown parsing while an assistant message is streaming", () => {
@@ -112,8 +218,20 @@ describe("Svelte chat surface", () => {
     const user = userEvent.setup();
     render(Surface, { initialOpen: true, actions: {} });
     expect(screen.getByText("Start with the current prompt")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Prompt Agent" })).toHaveAttribute("aria-expanded", "true");
     await user.click(screen.getByRole("button", { name: "Close Prompt Agent" }));
     expect(screen.getByRole("button", { name: "Open Prompt Agent" })).toHaveTextContent("Prompt Agent");
+  });
+
+  acceptanceTest("UI-WINDOW-001@3", "launcher", "keeps the launcher available while chat and model profiles are both open", async () => {
+    const user = userEvent.setup();
+    render(Surface, { initialOpen: true, actions: {} });
+
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+
+    expect(screen.getByRole("dialog", { name: "Prompt Agent chat" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Model profiles" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Prompt Agent" })).toBeInTheDocument();
   });
 
   it("moves the launcher without opening the chat", async () => {
@@ -171,7 +289,7 @@ describe("Svelte chat surface", () => {
     }
   });
 
-  it("restores the floating window after a virtual keyboard viewport closes", async () => {
+  it("keeps the floating window stable while a virtual keyboard viewport opens and closes", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 1400 });
     const visualViewport = Object.assign(new EventTarget(), {
@@ -191,10 +309,14 @@ describe("Svelte chat surface", () => {
     composer.focus();
     visualViewport.height = 260;
     visualViewport.dispatchEvent(new Event("resize"));
-    await waitFor(() => expect(dialog).toHaveStyle({ height: "244px" }));
+    await waitFor(() => expect(dialog).toHaveStyle({ height: "752px" }));
+    expect(dialog).toHaveClass("pa-keyboard-overflow");
 
     composer.blur();
-    await waitFor(() => expect(dialog).toHaveStyle({ height: "752px" }));
+    visualViewport.height = 768;
+    visualViewport.dispatchEvent(new Event("resize"));
+    await waitFor(() => expect(dialog).not.toHaveClass("pa-keyboard-overflow"));
+    expect(dialog).toHaveStyle({ height: "752px" });
     expect(useUiStore.getState().layouts.desktop.height).toBe(1200);
   });
 
@@ -224,6 +346,25 @@ describe("Svelte chat surface", () => {
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "Refine this prompt", reasoning: "low" }));
     expect(screen.getByRole("textbox", { name: "Message Prompt Agent" })).toHaveValue("");
     expect(screen.queryByRole("button", { name: /Permission mode/ })).not.toBeInTheDocument();
+  });
+
+  it("sends with Enter while preserving modified Enter behavior", async () => {
+    const user = userEvent.setup();
+    const sendMessage = vi.fn();
+    render(Surface, { initialOpen: true, actions: { sendMessage } });
+    const composer = screen.getByRole("textbox", { name: "Message Prompt Agent" });
+
+    await user.type(composer, "First line{shift>}{enter}{/shift}Second line");
+    expect(composer).toHaveValue("First line\nSecond line");
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    await fireEvent.keyDown(composer, { key: "Enter", ctrlKey: true });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(composer).toHaveValue("First line\nSecond line");
+
+    await user.type(composer, "{enter}");
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "First line\nSecond line" }));
+    expect(composer).toHaveValue("");
   });
 
   it("restores user-message edit and resend without losing the existing draft", async () => {
@@ -448,7 +589,7 @@ describe("Svelte chat surface", () => {
     expect(stopRequest).toHaveBeenCalledOnce();
   });
 
-  acceptanceTest("UI-FEEDBACK-001@1", "loading", "shows the current assistant working phase", async () => {
+  acceptanceTest("UI-FEEDBACK-001@3", "loading,recovery", "shows the current assistant working phase", async () => {
     useChatStore.getState().beginRequest("active");
     useRuntimeStore.getState().setWorking("submitting");
     render(Surface, { initialOpen: true, actions: {} });
@@ -463,6 +604,7 @@ describe("Svelte chat surface", () => {
     useChatStore.getState().appendMessage({ id: "assistant-active", role: "assistant", content: "", reasoning: "draft rationale", status: "streaming" });
     useRuntimeStore.getState().setWorking("generating");
     expect(await screen.findByText("Generating response…")).toBeInTheDocument();
+    expect(screen.queryByText("Generating", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByText("Reasoning: draft rationale")).toBeInTheDocument();
     useRuntimeStore.getState().setWorking("tool", "edit_prompt");
     expect((await screen.findByText("Running tool…")).closest("details")).not.toHaveAttribute("open");
@@ -475,7 +617,7 @@ describe("Svelte chat surface", () => {
     await waitFor(() => expect(screen.queryByText("Running tool…")).not.toBeInTheDocument());
   });
 
-  acceptanceTest("UI-WINDOW-001@1", "focus", "keeps desktop chat input usable while settings is open", async () => {
+  acceptanceTest("UI-WINDOW-001@3", "focus", "keeps desktop chat input usable while settings is open", async () => {
     const user = userEvent.setup();
     render(Surface, { initialOpen: true, actions: {} });
 
@@ -559,6 +701,8 @@ describe("Svelte chat surface", () => {
 
   it("switches the active model from the composer", async () => {
     const user = userEvent.setup();
+    const profiles = useProfileStore.getState().profiles;
+    useProfileStore.getState().setProfiles(profiles.map((profile) => profile.id === "openai-compatible" ? { ...profile, enabled: true } : profile));
     render(Surface, { initialOpen: true, actions: {} });
     const next = useProfileStore.getState().profiles.find((profile) => profile.enabled && profile.id !== useProfileStore.getState().activeProfileId);
     expect(next).toBeDefined();

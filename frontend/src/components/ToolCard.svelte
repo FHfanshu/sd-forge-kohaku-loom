@@ -12,13 +12,16 @@
   }
 
   const detail = $derived(message.tool?.detail ?? "");
-  const content = $derived(message.content && message.content !== detail ? message.content : "");
+  const compactResult = $derived(Boolean(message.tool?.mutation || message.tool?.name === "prompt_toolkit"));
+  const content = $derived(!compactResult && message.content && message.content !== detail ? message.content : "");
+  const status = $derived(message.tool?.status ?? "complete");
+  const statusLabel = $derived(t(`chat.tool_status.${status}`, status === "error" ? "failed" : status));
 </script>
 
 <details class="pa-tool-card" data-prompt-agent-tool-result="true">
   <summary>
      <span class="pa-tool-title"><ChevronRight size={14} aria-hidden="true" /><strong>{message.tool?.name ?? t("chat.tool_call", "Tool call")}</strong></span>
-     <span class:pa-tool-status-error={message.tool?.status === "error"} class="pa-tool-status">{t(`chat.tool_status.${message.tool?.status ?? "complete"}`, message.tool?.status ?? "complete")}</span>
+     <span class:pa-tool-status-error={status === "error"} class="pa-tool-status">{statusLabel}</span>
   </summary>
    <div class="pa-tool-result">
     {#if detail}<p>{detail}</p>{/if}

@@ -13,6 +13,7 @@ export interface AgentInput {
   images?: ImageContent[];
   reasoningLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   requirePromptMutation?: boolean;
+  requirePromptToolkit?: boolean;
   requireBackgroundLookup?: boolean;
 }
 
@@ -58,7 +59,7 @@ const runtimeError = (error: unknown): AgentRuntimeError => ({
   cause: error,
 });
 
-const PROMPT_MUTATION_CORRECTION = "The user requested an actual rewrite of the current Forge prompt, but no edit_prompt call has succeeded. Do not finish with advice or claim the prompt changed. Read the current prompt again if needed, then call edit_prompt with the latest base_hash and corrected arguments. Finish only after edit_prompt succeeds; if Forge reports a non-retryable blocker, explain that blocker clearly.";
+const PROMPT_MUTATION_CORRECTION = "The user requested an actual rewrite of the current Forge prompt, but no edit_prompt call has succeeded. Do not finish with advice or claim the prompt changed. Read the current prompt again if needed. For deduplication, sorting, normalization, validation, or pool composition, call prompt_toolkit on the exact current prompt and pass its recommended_patch to edit_prompt. Then call edit_prompt with the latest base_hash and corrected arguments. Finish only after edit_prompt succeeds; if Forge reports a non-retryable blocker, explain that blocker clearly.";
 const MAX_PROMPT_MUTATION_CORRECTIONS = 2;
 const BACKGROUND_LOOKUP_CORRECTION = "The user asked for background information about a named entity. Your previous text-only answer is not acceptable and must not be shown. Character trigger words are stored in Forge style templates: first call search_resources with kind=style and the entity as query, then inspect_resource with kind=style for the best matching ID. If no style matches, fall back to inspect_danbooru_tags with include_wiki=true or search_danbooru_tags. Do not claim who or what the entity is from memory. Only answer after a successful inspection, and identify whether the source was a local Forge style or Danbooru.";
 const MAX_BACKGROUND_LOOKUP_CORRECTIONS = 2;
@@ -90,6 +91,8 @@ export class PiPromptAgentRuntime implements PromptAgentRuntime {
   private promptMutationRequired = false;
   private promptMutationSucceeded = false;
   private promptMutationCorrections = 0;
+  private promptToolkitRequired = false;
+  private promptToolkitSucceeded = false;
   private backgroundLookupRequired = false;
   private backgroundLookupSucceeded = false;
   private backgroundLookupCorrections = 0;
@@ -118,7 +121,12 @@ export class PiPromptAgentRuntime implements PromptAgentRuntime {
       transformContext: options.transformContext
         ? (messages, signal) => options.transformContext!(normalizeControlMessages(messages), signal)
         : undefined,
-      beforeToolCall: options.beforeToolCall,
+      beforeToolCall: async (context, signal) => {
+        if (context.toolCall.name === "edit_prompt" && this.promptToolkitRequired && !this.promptToolkitSucceeded) {
+          return { block: true, reason: "This prompt cleanup requires prompt_toolkit first. Read the exact current prompt, run the requested deterministic toolkit action, then pass recommended_patch to edit_prompt." };
+        }
+        return options.beforeToolCall?.(context, signal);
+      },
       afterToolCall: options.afterToolCall,
       toolExecution: "sequential",
     });
@@ -133,6 +141,7 @@ export class PiPromptAgentRuntime implements PromptAgentRuntime {
       if (event.type === "message_update") status = "streaming";
       if (event.type === "tool_execution_start" || event.type === "tool_execution_update") status = "tool-calling";
       if (event.type === "tool_execution_end") {
+        if (event.toolName === "prompt_toolkit" && !event.isError) this.promptToolkitSucceeded = true;
         if (event.toolName === "edit_prompt" && !event.isError) this.promptMutationSucceeded = true;
         if (!event.isError) this.recordBackgroundLookup(event.toolName, event.result.details);
         if (event.isError) this.lastTurnHadToolError = true;
@@ -177,6 +186,8 @@ export class PiPromptAgentRuntime implements PromptAgentRuntime {
     this.promptMutationRequired = input.requirePromptMutation === true;
     this.promptMutationSucceeded = false;
     this.promptMutationCorrections = 0;
+    this.promptToolkitRequired = input.requirePromptToolkit === true;
+    this.promptToolkitSucceeded = false;
     this.backgroundLookupRequired = input.requireBackgroundLookup === true;
     this.backgroundLookupSucceeded = false;
     this.backgroundLookupCorrections = 0;
@@ -232,6 +243,8 @@ export class PiPromptAgentRuntime implements PromptAgentRuntime {
     this.promptMutationRequired = false;
     this.promptMutationSucceeded = false;
     this.promptMutationCorrections = 0;
+    this.promptToolkitRequired = false;
+    this.promptToolkitSucceeded = false;
     this.backgroundLookupRequired = false;
     this.backgroundLookupSucceeded = false;
     this.backgroundLookupCorrections = 0;
@@ -250,6 +263,8 @@ export class PiPromptAgentRuntime implements PromptAgentRuntime {
     this.promptMutationRequired = false;
     this.promptMutationSucceeded = false;
     this.promptMutationCorrections = 0;
+    this.promptToolkitRequired = false;
+    this.promptToolkitSucceeded = false;
     this.backgroundLookupRequired = false;
     this.backgroundLookupSucceeded = false;
     this.backgroundLookupCorrections = 0;

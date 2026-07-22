@@ -1,5 +1,5 @@
 import { createDefaultProfileState } from "../src/profile-adapter";
-import { PromptAgentController, userRequestedBackgroundLookup, userRequestedPromptMutation } from "../src/agent/controller";
+import { PromptAgentController, userRequestedBackgroundLookup, userRequestedPromptMutation, userRequestedPromptToolkit } from "../src/agent/controller";
 import { useChatStore } from "../src/stores/chat";
 import { useProfileStore } from "../src/stores/profiles";
 import { useRuntimeStore } from "../src/stores/runtime";
@@ -70,6 +70,56 @@ describe("PromptAgentController recovery", () => {
     controller.destroy();
   });
 
+  it("keeps the IndexedDB-backed controller usable when server sync is offline", async () => {
+    installFetch();
+    const offlineRepository = {
+      ...repository,
+      syncWithServer: vi.fn(async () => { throw new Error("offline"); }),
+    };
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const controller = new PromptAgentController(offlineRepository);
+
+    await expect(controller.mount()).resolves.toBeUndefined();
+
+    expect(useRuntimeStore.getState().startup).toBe("ready");
+    expect(useRuntimeStore.getState().sessionId).toBeTruthy();
+    expect(warning).toHaveBeenCalledWith("Prompt Agent session sync is temporarily unavailable", expect.any(Error));
+    controller.destroy();
+  });
+
+  acceptanceTest("MODEL-PROFILE-001@3", "hot-reload", "rebinds the current conversation to the latest active profile before sending", async () => {
+    const profiles = createDefaultProfileState();
+    const original = profiles.profiles.find((profile) => profile.id === profiles.activeProfileId)!;
+    const grok = { ...original, id: "grok", displayName: "Grok", modelId: "grok-4", providerId: "openai-compatible" };
+    profiles.profiles.push(grok);
+    const bodies: Array<Record<string, any>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/prompt-agent/api/profiles") return new Response(JSON.stringify(profiles), { status: 200 });
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response([
+        'data: {"type":"start"}',
+        'data: {"type":"text_start","contentIndex":0}',
+        'data: {"type":"text_delta","contentIndex":0,"delta":"Done"}',
+        'data: {"type":"text_end","contentIndex":0}',
+        'data: {"type":"done","reason":"stop"}',
+        "",
+      ].join("\n\n"), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    }));
+    const controller = new PromptAgentController(repository);
+    await controller.mount();
+
+    useProfileStore.getState().activateProfile(grok.id);
+    await controller.actions.sendMessage({ text: "Hello Grok", attachments: [], reasoning: "none" });
+
+    expect(bodies.find((body) => body.context)).toMatchObject({ profile_id: grok.id });
+    expect(repository.putSession).toHaveBeenCalledWith(expect.objectContaining({
+      profileId: grok.id,
+      modelId: grok.modelId,
+    }));
+    controller.destroy();
+  });
+
   it("serializes runtime writes against the session that produced them", async () => {
     installFetch();
     let releaseFirst: (() => void) | undefined;
@@ -92,7 +142,7 @@ describe("PromptAgentController recovery", () => {
     controller.destroy();
   });
 
-  acceptanceTest("SESSION-LIFECYCLE-001@1", "failure,recovery", "restores the composer after a terminal provider failure", async () => {
+  acceptanceTest("SESSION-LIFECYCLE-001@2", "failure,recovery", "restores the composer after a terminal provider failure", async () => {
     installFetch(() => new Response([
       'data: {"type":"start"}',
       'data: {"type":"error","reason":"error","errorMessage":"provider unavailable"}',
@@ -110,7 +160,7 @@ describe("PromptAgentController recovery", () => {
     controller.destroy();
   });
 
-  acceptanceTest("SESSION-LIFECYCLE-001@1", "abort,recovery", "aborts the provider request and restores the composer", async () => {
+  acceptanceTest("SESSION-LIFECYCLE-001@2", "abort,recovery", "aborts the provider request and restores the composer", async () => {
     let requestAborted = false;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), "http://localhost");
@@ -163,10 +213,13 @@ describe("PromptAgentController recovery", () => {
       "search_danbooru_tags",
       "inspect_danbooru_tags",
       "related_danbooru_tags",
+      "prompt_toolkit",
     ]);
     expect(runtime.getSystemPrompt()).toContain("read prompts or generation parameters before changing them");
     expect(runtime.getSystemPrompt()).toContain("correct the arguments or refresh stale Forge state");
     expect(runtime.getSystemPrompt()).toContain("search_danbooru_tags");
+    expect(runtime.getSystemPrompt()).toContain("natural-language descriptions and Danbooru-style tags are both first-class");
+    expect(runtime.getSystemPrompt()).toContain("Text in a disabled negative field is editable but not effective");
     controller.destroy();
   });
 
@@ -175,6 +228,13 @@ describe("PromptAgentController recovery", () => {
     expect(userRequestedPromptMutation("Rewrite the current prompt with stronger rim light")).toBe(true);
     expect(userRequestedPromptMutation("这个提示词应该怎么改？")).toBe(false);
     expect(userRequestedPromptMutation("Review the composition and suggest improvements")).toBe(false);
+  });
+
+  it("requires the deterministic toolkit for prompt cleanup operations", () => {
+    expect(userRequestedPromptToolkit("把当前提示词去重并按标签类别排序")).toBe(true);
+    expect(userRequestedPromptToolkit("Normalize this negative prompt")).toBe(true);
+    expect(userRequestedPromptToolkit("把当前提示词改写成雨夜霓虹场景")).toBe(false);
+    expect(userRequestedPromptToolkit("解释一下 Danbooru tag 是什么")).toBe(false);
   });
 
   it("requires lookup for named-entity background questions without hijacking routine searches", () => {

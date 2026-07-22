@@ -23,10 +23,10 @@ const patchSchema = Type.Object({
     Type.Literal("insert_after"),
     Type.Literal("insert_before"),
   ])),
-  find: Type.Optional(Type.String({ maxLength: 20_000 })),
-  replace: Type.Optional(Type.String({ maxLength: 20_000 })),
-  text: Type.Optional(Type.String({ maxLength: 20_000 })),
-  replacement: Type.Optional(Type.String({ maxLength: 20_000 })),
+  find: Type.Optional(Type.String({ maxLength: 50_000 })),
+  replace: Type.Optional(Type.String({ maxLength: 50_000 })),
+  text: Type.Optional(Type.String({ maxLength: 50_000 })),
+  replacement: Type.Optional(Type.String({ maxLength: 50_000 })),
   separator: Type.Optional(Type.String({ maxLength: 32 })),
   count: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
   allow_multiple: Type.Optional(Type.Boolean()),
@@ -36,6 +36,7 @@ const promptEditSchema = Type.Object({
   target: targetSchema,
   field: promptFieldSchema,
   base_hash: Type.String({ minLength: 1, maxLength: 128 }),
+  negative_state_hash: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
   prompt: Type.Optional(Type.String({ maxLength: 50_000 })),
   diff: Type.Optional(Type.String({ maxLength: 50_000 })),
   patches: Type.Optional(Type.Array(patchSchema, { maxItems: 32 })),
@@ -291,11 +292,11 @@ function createForgeTool<T extends TSchema>(
 
 export function createForgeAgentTools(options: ForgeToolFactoryOptions = {}): ForgeAgentTool[] {
   return [
-    createForgeTool("read_prompt", "Read prompt", "Read the current Forge positive or negative prompt and its latest hash. Set field to positive or negative.", FORGE_TOOL_SCHEMAS.read_prompt, "read", options),
+    createForgeTool("read_prompt", "Read prompt", "Read the current Forge positive or negative prompt, latest hash, and whether negative prompting is currently enabled. Set field to positive or negative.", FORGE_TOOL_SCHEMAS.read_prompt, "read", options),
     createForgeTool(
       "edit_prompt",
       "Edit prompt",
-      "Edit the positive or negative prompt after read_prompt. Use patches/diff when non-empty; full prompt overwrite only when empty.",
+      "Edit the positive or negative prompt after read_prompt. Use patches/diff when non-empty; full prompt overwrite only when empty. For negative edits pass negative_state_hash when available and report effective=false truthfully when the field is disabled.",
       FORGE_TOOL_SCHEMAS.edit_prompt,
       "write",
       options,

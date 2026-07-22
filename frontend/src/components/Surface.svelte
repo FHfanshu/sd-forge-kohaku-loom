@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
-    AlertTriangle, Bot, Check, ChevronLeft, ChevronRight,
+    AlertTriangle, Bot, Check, ChevronDown, ChevronLeft, ChevronRight,
     CircleStop, Clipboard, Clock3, Copy, FileCog, Grip, History,
     ImagePlus, Pencil, Plus, RefreshCw, Search, Send, Settings2,
     Sparkles, SquarePen, Trash2, UserRound, X,
@@ -36,6 +36,7 @@
   import Markdown from "./Markdown.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import ProfileSettings from "./ProfileSettings.svelte";
+  import ProcessDrawer from "./ProcessDrawer.svelte";
   import ReasoningPicker from "./ReasoningPicker.svelte";
   import ToolCard from "./ToolCard.svelte";
   import WorkingIndicator from "./WorkingIndicator.svelte";
@@ -69,7 +70,7 @@
   let launcherDragged = $state(false);
   let mobileHintDismissed = $state(false);
   let stableViewport = readViewportRect();
-  let viewportRecovering = false;
+  let viewportRecovering = $state(false);
   let kind = $state<LayoutViewport>(viewportKind(stableViewport));
   let viewport = $state(stableViewport);
   let fileInput = $state<HTMLInputElement>();
@@ -105,20 +106,36 @@
   const workingPhase = $derived($useRuntimeStore.workingPhase);
   const workingReasoning = $derived([...visibleMessages].reverse().find((message) => message.role === "assistant" && message.status === "streaming" && message.reasoning)?.reasoning ?? "");
   const runtimeStarting = $derived($useRuntimeStore.startup === "starting");
+  const hasVisibleTerminalError = $derived(visibleMessages.some((message) => message.role === "assistant" && message.status === "error"));
+  const visibleAlert = $derived(hasVisibleTerminalError ? null : notice || $useRuntimeStore.error);
   const renderMessages = $derived.by(() => {
-    const groups: Array<{ message: ChatMessage; tools: ChatMessage[] }> = [];
+    const groups: Array<{ message: ChatMessage; tools: ChatMessage[]; intermediateMessages: ChatMessage[] }> = [];
     const pendingTools: ChatMessage[] = [];
+    let response: { message: ChatMessage; tools: ChatMessage[]; intermediateMessages: ChatMessage[] } | null = null;
 
     for (const message of visibleMessages) {
       if (message.role === "tool") {
         pendingTools.push(message);
         continue;
       }
-      const group = { message, tools: [] as ChatMessage[] };
-      if (message.role === "assistant" && pendingTools.length) {
-        group.tools.push(...pendingTools.splice(0));
+      if (message.role === "assistant") {
+        if (response) {
+          response.intermediateMessages.push(response.message);
+          response.message = message;
+          response.tools.push(...pendingTools.splice(0));
+        } else {
+          response = { message, tools: pendingTools.splice(0), intermediateMessages: [] };
+        }
+        continue;
       }
-      groups.push(group);
+      if (response) groups.push(response);
+      response = null;
+      groups.push({ message, tools: [], intermediateMessages: [] });
+    }
+
+    if (response) {
+      response.tools.push(...pendingTools.splice(0));
+      groups.push(response);
     }
 
     return { groups, pendingTools };
@@ -582,13 +599,13 @@
 </script>
 
 <div class="pa-surface pa-viewport-{kind}" data-prompt-agent-surface="true">
-  {#if !$useUiStore.shellOpen && !$useUiStore.profileSettingsOpen}
     <button
       class:pa-launcher-interacting={launcherInteracting}
+      class:pa-launcher-active={$useUiStore.shellOpen || $useUiStore.profileSettingsOpen}
       class="pa-launcher"
       type="button"
        aria-label={t("assistant.open", "Open Prompt Agent")}
-      aria-expanded="false"
+      aria-expanded={$useUiStore.shellOpen}
       title={t("assistant.drag", "Drag to move")}
       style:left={$useUiStore.launcherPosition ? `${$useUiStore.launcherPosition.left}px` : undefined}
       style:top={$useUiStore.launcherPosition ? `${$useUiStore.launcherPosition.top}px` : undefined}
@@ -600,11 +617,11 @@
       <Sparkles size={15} />
        <span>{t("assistant.launcher", "Prompt Agent")}</span>
     </button>
-  {/if}
 
   {#if $useUiStore.shellOpen}
     <div
       class:pa-window-interacting={interacting}
+      class:pa-keyboard-overflow={viewportRecovering}
       class="pa-window"
       style:left="{currentLayout.left}px"
       style:top="{currentLayout.top}px"
@@ -648,7 +665,7 @@
 
         <div class="pa-window-body">
         {#if connectionState === "connecting"}<div class="pa-inline-alert" role="status" aria-live="polite"><RefreshCw size={15} /><span>Connecting to Forge runtime…</span></div>{:else if connectionState === "failed"}<div class="pa-inline-alert" role="alert"><AlertTriangle size={15} /><span>{connectionError}</span><button type="button" onclick={() => void ensureControllerReady().catch(() => undefined)}>Retry</button></div>{:else if runtimeStarting}<div class="pa-inline-alert" role="status" aria-live="polite"><RefreshCw size={15} /><span>{t("assistant.runtime.retry", "Prompt Agent is starting or unavailable. Retry or check Model profiles.")}</span></div>{/if}
-        {#if $useRuntimeStore.error || notice}<div class="pa-inline-alert" role="alert"><AlertTriangle size={15} /><span>{runtimeErrorText(notice || $useRuntimeStore.error || "")}</span>{#if notice}<button type="button" onclick={() => notice = null} aria-label={t("common.dismiss_message", "Dismiss message")}><X size={14} /></button>{/if}</div>{/if}
+        {#if visibleAlert}<div class="pa-inline-alert" role="alert"><AlertTriangle size={15} /><span>{runtimeErrorText(visibleAlert)}</span>{#if notice}<button type="button" onclick={() => notice = null} aria-label={t("common.dismiss_message", "Dismiss message")}><X size={14} /></button>{/if}</div>{/if}
         <div bind:this={messageScroll} class="pa-message-scroll" role="log" aria-live="polite" aria-busy={Boolean($useChatStore.activeRequestId)} onscroll={updateFollowLatest}>
            {#if visibleMessages.length > 0}
              {#each renderMessages.groups as group (group.message.id)}
@@ -667,23 +684,16 @@
                    {#if message.role === "user"}<UserRound size={15} />{:else if message.role === "error"}<XCircle size={15} />{:else if message.role === "assistant"}<Bot size={15} />{:else}<FileCog size={15} />{/if}
                   {roleLabel(message)}
                 </span><span class="pa-message-meta">
-                  {#if message.status === "streaming"}<span class="pa-status-marker pa-status-streaming">{t("chat.status.partial", "Generating")}</span>{:else if message.status === "cancelled"}<span class="pa-status-marker pa-status-cancelled"><XCircle size={12} /> {t("chat.status.cancelled", "Cancelled")}</span>{:else if message.status === "error"}<span class="pa-status-marker pa-status-error">{t("chat.status.error", "Error")}</span>{/if}
-                  {#if message.usage}<span class="pa-usage"><Clipboard size={11} /> {[message.usage.inputTokens !== undefined ? `${message.usage.inputTokens} in` : "", message.usage.outputTokens !== undefined ? `${message.usage.outputTokens} out` : "", message.usage.latencyMs !== undefined ? `${(message.usage.latencyMs / 1000).toFixed(1)}s` : ""].filter(Boolean).join(" · ")}</span>{/if}
-                  {#if message.role === "assistant"}<button type="button" class="pa-message-collapse" onclick={() => toggleMessage(message.id)} aria-label={collapsedMessageIds.has(message.id) ? t("chat.expand", "Expand response") : t("chat.collapse", "Collapse response")}>{#if collapsedMessageIds.has(message.id)}<ChevronRight size={14} />{:else}<ChevronLeft size={14} />{/if}</button>{/if}
+                  {#if message.status === "cancelled"}<span class="pa-status-marker pa-status-cancelled"><XCircle size={12} /> {t("chat.status.cancelled", "Cancelled")}</span>{:else if message.status === "error"}<span class="pa-status-marker pa-status-error">{t("chat.status.error", "Error")}</span>{/if}
+                  {#if message.usage && (message.role !== "assistant" || (!group.tools.length && !group.intermediateMessages.some((item) => Boolean(item.content.trim() || item.reasoning)) && !message.reasoning))}<span class="pa-usage"><Clipboard size={11} /> {[message.usage.inputTokens !== undefined ? `${message.usage.inputTokens} in` : "", message.usage.outputTokens !== undefined ? `${message.usage.outputTokens} out` : "", message.usage.latencyMs !== undefined ? `${(message.usage.latencyMs / 1000).toFixed(1)}s` : ""].filter(Boolean).join(" · ")}</span>{/if}
+                  {#if message.role === "assistant"}<button type="button" class="pa-message-collapse" onclick={() => toggleMessage(message.id)} aria-label={collapsedMessageIds.has(message.id) ? t("chat.expand", "Expand response") : t("chat.collapse", "Collapse response")}>{#if collapsedMessageIds.has(message.id)}<ChevronRight size={14} />{:else}<ChevronDown size={14} />{/if}</button>{/if}
                 </span></div>
-                  {#if group.tools.length}<div class="pa-message-tools" aria-label={t("chat.tool_results", "Tool results")}>{#each group.tools as tool (tool.id)}<ToolCard message={tool} onundo={undoToolMutation} />{/each}</div>{/if}
-                  {#if collapsedMessageIds.has(message.id)}<button type="button" class="pa-message-collapsed-preview" onclick={() => toggleMessage(message.id)}>{reasoningPreview(message.content)}</button>{:else}<Markdown content={message.content} streaming={message.status === "streaming"} />{/if}
-                {#if message.reasoning && !collapsedMessageIds.has(message.id)}
-                  <details class:pa-reasoning-streaming={message.status === "streaming"} class="pa-reasoning">
-                    <summary>
-                      <span class="pa-reasoning-label">{t("chat.reasoning_trace", "Reasoning trace")}</span>
-                      <span class="pa-reasoning-preview" title={reasoningPreview(message.reasoning)}>{reasoningPreview(message.reasoning)}</span>
-                    </summary>
-                     <div class="pa-reasoning-content"><Markdown content={message.reasoning} streaming={message.status === "streaming"} renderStreamingMarkdown={true} /></div>
-                  </details>
-                 {/if}
+                  {#if collapsedMessageIds.has(message.id)}<button type="button" class="pa-message-collapsed-preview" onclick={() => toggleMessage(message.id)}>{reasoningPreview(message.content)}</button>{:else}
+                    {#if message.role === "assistant"}<ProcessDrawer finalMessage={message} intermediateMessages={group.intermediateMessages} tools={group.tools} onundo={undoToolMutation} />{/if}
+                    <Markdown content={message.content} streaming={message.status === "streaming"} />
+                  {/if}
                 {#if message.attachments.length && !collapsedMessageIds.has(message.id)}<div class="pa-message-attachments" aria-label={tf("assistant.reference_images", "{count} reference images", { count: message.attachments.length })}>{#each message.attachments as attachment, index (attachment.id)}<button type="button" class="pa-message-attachment" onclick={() => lightbox = { attachments: message.attachments, index }} aria-label={tf("assistant.preview_named", "Preview {name}", { name: attachment.name })}><img src={attachmentPreviewUrl(attachment)} alt={attachment.name} width="58" height="48" loading="lazy" /></button>{/each}</div>{/if}
-                  <div class="pa-message-footer"><div class="pa-message-actions"><button type="button" class="pa-message-action" onclick={() => void copyMessage(message)}>{#if copiedId === message.id}<Check size={13} /> {t("chat.copied", "Copied")}{:else}<Copy size={13} /> {t("chat.copy", "Copy")}{/if}</button>{#if message.role === "user"}<button type="button" class="pa-message-action" disabled={Boolean($useChatStore.activeRequestId)} onclick={() => beginEdit(message)}><Pencil size={13} /> {t("assistant.rewind", "Edit and resend")}</button>{/if}</div></div>
+                {#if message.role !== "tool"}<div class="pa-message-footer"><div class="pa-message-actions"><button type="button" class="pa-message-action" onclick={() => void copyMessage(message)}>{#if copiedId === message.id}<Check size={13} /> {t("chat.copied", "Copied")}{:else}<Copy size={13} /> {t("chat.copy", "Copy")}{/if}</button>{#if message.role === "user"}<button type="button" class="pa-message-action" disabled={Boolean($useChatStore.activeRequestId)} onclick={() => beginEdit(message)}><Pencil size={13} /> {t("assistant.rewind", "Edit and resend")}</button>{/if}</div></div>{/if}
                </article>
              {/each}
               {#each renderMessages.pendingTools as tool (tool.id)}<div class="pa-orphan-tools"><ToolCard message={tool} onundo={undoToolMutation} /></div>{/each}
@@ -696,7 +706,7 @@
         <form class:pa-composer-drop-active={dropActive} class="pa-composer" onsubmit={(event) => { event.preventDefault(); void submit(); }} ondragover={(event) => { event.preventDefault(); dropActive = true; }} ondragleave={() => dropActive = false} ondrop={(event) => { event.preventDefault(); dropActive = false; void addFiles(Array.from(event.dataTransfer?.files ?? [])); }}>
           {#if editingMessageId}<div class="pa-editing-banner" role="status"><span><Pencil size={13} /> {t("chat.editing", "Editing message")}</span><button type="button" onclick={cancelEdit}>{t("chat.cancel_edit", "Cancel")}</button></div>{/if}
           {#if attachments.length}<div class="pa-filmstrip" aria-label={t("assistant.attached_images", "Attached reference images")}>{#each attachments as attachment, index (attachment.id)}<div class="pa-filmstrip-item"><button type="button" class="pa-filmstrip-preview" onclick={() => lightbox = { attachments, index }} oncontextmenu={(event) => { event.preventDefault(); attachmentMenuId = attachment.id; }} aria-label={tf("assistant.preview_named", "Preview {name}", { name: attachment.name })}><img src={attachmentPreviewUrl(attachment)} alt={attachment.name} width="58" height="54" /><span class="pa-filmstrip-name">{attachment.name}</span></button><button type="button" class="pa-filmstrip-remove" onclick={() => void removeAttachment(attachment.id)} aria-label={tf("assistant.remove_named", "Remove {name}", { name: attachment.name })}><X size={12} /></button><button type="button" class="pa-filmstrip-more" onclick={() => attachmentMenuId = attachmentMenuId === attachment.id ? null : attachment.id} aria-label={tf("assistant.edit_named", "Edit {name}", { name: attachment.name })}>•••</button>{#if attachmentMenuId === attachment.id}<div class="pa-attachment-menu" role="menu"><button type="button" role="menuitem" onclick={() => { replacementId = attachment.id; replacementInput?.click(); attachmentMenuId = null; }}><Pencil size={13} /> {t("common.replace", "Replace")}</button><button type="button" role="menuitem" onclick={() => { void removeAttachment(attachment.id); attachmentMenuId = null; }}><Trash2 size={13} /> {t("common.remove", "Remove")}</button></div>{/if}</div>{/each}<button type="button" class="pa-filmstrip-add" onclick={() => fileInput?.click()} aria-label={t("assistant.attach_another", "Attach another image")}><Plus size={17} /></button></div>{/if}
-           <textarea name="prompt-agent-message" autocomplete="off" bind:this={composerInput} bind:value={draft} rows="1" placeholder={t("assistant.input.placeholder", "Ask about or change the current prompt…")} aria-label={t("assistant.input.label", "Message Prompt Agent")} onfocus={() => { composerFocused = true; $useUiStore.bringToFront("chat"); }} onblur={() => composerFocused = false} oninput={(event) => resizeComposer(event.currentTarget)} onkeydown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if ($useChatStore.activeRequestId) stop(); else void submit(); } }}></textarea>
+            <textarea name="prompt-agent-message" autocomplete="off" bind:this={composerInput} bind:value={draft} rows="1" placeholder={t("assistant.input.placeholder", "Ask about or change the current prompt…")} aria-label={t("assistant.input.label", "Message Prompt Agent")} onfocus={() => { composerFocused = true; $useUiStore.bringToFront("chat"); }} onblur={() => composerFocused = false} oninput={(event) => resizeComposer(event.currentTarget)} onkeydown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing) { event.preventDefault(); if ($useChatStore.activeRequestId) stop(); else void submit(); } }}></textarea>
           <div class="pa-composer-bottom"><div class="pa-composer-tools"><button type="button" class="pa-composer-icon" onclick={() => fileInput?.click()} aria-label={t("assistant.attach", "Attach reference images")}><ImagePlus size={16} /></button></div>
               <div class="pa-composer-tools"><div class="pa-composer-picker-row" aria-label={t("assistant.model_controls", "Model controls")}><ModelPicker /><ReasoningPicker /></div>{#if $useChatStore.activeRequestId}<button type="button" class="pa-send-button pa-stop-button" onclick={stop} disabled={$useRuntimeStore.workingPhase === "cancelling"} aria-label={t("assistant.stop", "Stop response")}><CircleStop size={17} /></button>{:else}<button type="submit" class="pa-send-button" onpointerdown={keepComposerFocus} disabled={!draft.trim() && !attachments.length} aria-label={t("assistant.send", "Send message")}><Send size={17} /></button>{/if}</div>
            </div>

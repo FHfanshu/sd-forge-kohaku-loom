@@ -8,10 +8,12 @@ import type {
   MessageSubmission,
   Profile,
   SendMessageInput,
+  PromptMutationEvidence,
 } from "../contracts";
 import { providerRegistry } from "../providers/registry";
 import { supportsAgentChat } from "../providers/profile-capabilities";
 import { PromptAgentSessionRepository } from "../sessions/repository";
+import type { SessionSyncResult } from "../sessions/sync";
 import type { PromptAgentMessage, PromptAgentSession, SessionMessageStatus } from "../sessions/schema";
 import { useChatStore } from "../stores/chat";
 import { useProfileStore } from "../stores/profiles";
@@ -21,12 +23,13 @@ import type { AgentRuntimeState } from "./runtime-state";
 import { createForgeToolRegistry } from "../tools/tool-registry";
 import { getHostApi, promptAgentNamespace } from "../bridge";
 import { startLocalRuntime, stopLocalRuntime } from "../profile-api";
+import { diffPromptText } from "../prompts/prompt-diff";
 
 const LAST_SESSION_PREFERENCE = "last-session-id";
-export const FORGE_AGENT_SYSTEM_PROMPT = "You are the SD Forge Neo Prompt Agent. Forge state is live context: select the positive or negative field when reading/editing prompts, read prompts or generation parameters before changing them, use the returned latest hash/context hash, and make only bounded visible-control changes. For non-empty prompts use patches or diff; full prompt overwrite is allowed only when the field is empty. When a tool returns an error, treat it as feedback instead of ending the task: correct the arguments or refresh stale Forge state with the matching read tool, then retry when safe. Never repeat an identical failed write blindly; if the error is not recoverable, explain the blocker. Continue until the user's requested rewrite or change is completed. Character trigger words and templates are stored in Forge styles. When the user asks who or what a named entity is, or asks for background information, first call search_resources with kind=style and the entity query; inspect the best matching style with inspect_resource before answering. Only if no style matches may you fall back to Danbooru tag/wiki tools. Never answer that question from memory or invent an identity, and state whether the answer came from a local Forge style or Danbooru. Prefer search_danbooru_tags for unfamiliar visual tag concepts. Never request paths or provider credentials.";
+export const FORGE_AGENT_SYSTEM_PROMPT = "You are the SD Forge Neo Prompt Agent. The target image model accepts hybrid prompts: natural-language descriptions and Danbooru-style tags are both first-class and may be combined. Keep natural-language blocks, tags, special syntax, and unknown fragments independent; do not force natural language into tags or split coherent prose at every comma. Use natural language for relationships, spatial detail, scene intent, and atmosphere; use tags for precise visual attributes and concise controls. Do not convert between pools unless the user asks. Forge state is live context: select the positive or negative field when reading/editing prompts, read prompts or generation parameters before changing them, use the returned latest hash/context hash, and make only bounded visible-control changes. read_prompt reports whether negative prompting is enabled. Text in a disabled negative field is editable but not effective: never claim exclusions are active, never silently enable CFG, and state clearly when text changed but remains inactive. For prompt deduplication, sorting, normalization, validation, or pool composition, call prompt_toolkit on the exact text returned by read_prompt, then pass its recommended_patch to edit_prompt. Sorting normally affects only the tag pool; preserve NL order and BREAK/AND groups. For non-empty prompts use patches or diff; full prompt overwrite is allowed only when the field is empty. When a tool returns an error, treat it as feedback instead of ending the task: correct the arguments or refresh stale Forge state with the matching read tool, then retry when safe. Never repeat an identical failed write blindly; if the error is not recoverable, explain the blocker. Continue until the user's requested rewrite or change is completed. Character trigger words and templates are stored in Forge styles. When the user asks who or what a named entity is, or asks for background information, first call search_resources with kind=style and the entity query; inspect the best matching style with inspect_resource before answering. Only if no style matches may you fall back to Danbooru tag/wiki tools. Never answer that question from memory or invent an identity, and state whether the answer came from a local Forge style or Danbooru. Prefer search_danbooru_tags for unfamiliar visual tag concepts. Never request paths or provider credentials.";
 type SessionRepository = Pick<PromptAgentSessionRepository,
   "putSession" | "getSession" | "listSessions" | "putMessage" | "getMessages" | "deleteMessages" |
-  "putPreference" | "getPreference" | "markInterrupted">;
+  "putPreference" | "getPreference" | "markInterrupted"> & { syncWithServer?: () => Promise<SessionSyncResult> };
 
 export class PromptAgentController {
   readonly actions: PromptAgentActionHandlers;
@@ -70,6 +73,7 @@ export class PromptAgentController {
     try {
       await this.sessions.markInterrupted();
       await this.loadProfiles();
+      await this.syncSessionsBestEffort();
       const sessions = await this.sessions.listSessions();
       const lastSessionId = await this.sessions.getPreference<string>(LAST_SESSION_PREFERENCE);
       const selected = sessions.find((session) => session.id === lastSessionId) ?? sessions[0];
@@ -141,6 +145,7 @@ export class PromptAgentController {
     };
     await this.sessions.putSession(session);
     await this.openSession(session);
+    await this.syncSessionsBestEffort();
     await this.loadHistory();
   }
 
@@ -148,6 +153,7 @@ export class PromptAgentController {
     this.assertAlive();
     if (!this.currentSession || !this.runtime) throw new Error("Prompt Agent is not ready.");
     if (this.requestId) throw new Error("A response is already being generated.");
+    await this.refreshRuntimeProfile();
     const requestId = crypto.randomUUID();
     this.requestId = requestId;
     useChatStore.getState().setActiveRequest(requestId);
@@ -164,11 +170,13 @@ export class PromptAgentController {
     try {
       if (usesLocalRuntime) await startLocalRuntime(profile.id, requestId, localStartController.signal);
       const editedFirstUser = input.editOf ? await this.rewindForEdit(input.editOf) : false;
+      const requirePromptToolkit = userRequestedPromptToolkit(input.text);
       await this.runtime.submit({
         text: input.text,
         images,
         reasoningLevel,
-        requirePromptMutation: userRequestedPromptMutation(input.text),
+        requirePromptMutation: requirePromptToolkit || userRequestedPromptMutation(input.text),
+        requirePromptToolkit,
         requireBackgroundLookup: userRequestedBackgroundLookup(input.text),
       });
       await this.queueRuntimePersistence(this.runtime.getState(), this.currentSession.id);
@@ -186,7 +194,24 @@ export class PromptAgentController {
       this.requestId = null;
       useChatStore.getState().setActiveRequest(null);
       useRuntimeStore.getState().setWorking("idle");
+      await this.persistenceQueue.catch(() => undefined);
+      await this.syncSessionsBestEffort();
     }
+  }
+
+  private async refreshRuntimeProfile(): Promise<void> {
+    if (!this.currentSession) return;
+    const profile = activeProfile();
+    this.currentSession = {
+      ...this.currentSession,
+      profileId: profile.id,
+      providerId: providerId(profile),
+      modelId: profile.modelId,
+      reasoningLevel: profile.parameters.reasoningEffort,
+      updatedAt: Date.now(),
+    };
+    await this.sessions.putSession(this.currentSession);
+    await this.openSession(this.currentSession);
   }
 
   private stopRequest(): void {
@@ -235,7 +260,10 @@ export class PromptAgentController {
       messages,
       tools: toolRegistry.list(),
       thinkingLevel: normalizedThinking(session.reasoningLevel),
-      streamFn: provider.createStream(profile.id, () => this.requestId ?? ""),
+      streamFn: provider.createStream(profile.id, () => this.requestId ?? "", ({ attempt, maxAttempts, statusCode }) => {
+        const status = statusCode ? ` after HTTP ${statusCode}` : " after a network error";
+        useRuntimeStore.getState().setWorking("retrying", `Provider request ${attempt}/${maxAttempts}${status}`);
+      }),
     });
     const sessionId = session.id;
     this.unsubscribeRuntime = this.runtime.subscribe((state) => {
@@ -310,6 +338,25 @@ export class PromptAgentController {
     useProfileStore.getState().setState(await response.json());
   }
 
+  private async syncSessionsBestEffort(): Promise<void> {
+    if (!this.sessions.syncWithServer) return;
+    try {
+      const result = await this.sessions.syncWithServer();
+      const activeId = this.currentSession?.id;
+      const conflict = result.conflicts.find((item) => item.session_id === activeId);
+      const selectedId = conflict?.conflict_session_id ?? activeId;
+      if (selectedId) {
+        const synchronized = await this.sessions.getSession(selectedId);
+        if (synchronized) {
+          if (conflict) await this.openSession(synchronized);
+          else this.currentSession = synchronized;
+        }
+      }
+    } catch (error) {
+      console.warn("Prompt Agent session sync is temporarily unavailable", error);
+    }
+  }
+
   private assertAlive(): void {
     if (this.destroyed) throw new Error("PromptAgentController has been destroyed");
   }
@@ -340,7 +387,7 @@ const abortableDelay = (milliseconds: number, signal: AbortSignal): Promise<void
   signal.addEventListener("abort", onAbort, { once: true });
 });
 
-const providerId = (profile: Profile): string => profile.modelInfo.providerId || (profile.runtime.startsWith("llama") ? "llama-cpp" : profile.protocol === "gemini-native" ? "gemini" : "openai-compatible");
+const providerId = (profile: Profile): string => profile.providerId || (profile.runtime.startsWith("llama") ? "llama-cpp" : profile.protocol === "gemini-native" ? "gemini" : "openai-compatible");
 
 const normalizedThinking = (value: string): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" => {
   if (value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh") return value;
@@ -388,6 +435,12 @@ function toChatMessage(record: PromptAgentMessage): ChatMessage {
   const attachments = message.role === "user" ? attachmentsFromMessage(message) : [];
   const reasoning = message.role === "assistant" ? message.content.filter((block) => block.type === "thinking").map((block) => block.thinking).join("\n") : undefined;
   const toolName = message.role === "toolResult" ? message.toolName : undefined;
+  const mutation = message.role === "toolResult" && !message.isError && toolName === "edit_prompt" ? promptMutationEvidence(message) : undefined;
+  const toolDetail = mutation
+    ? mutationDetail(mutation)
+    : message.role === "toolResult" && toolName === "prompt_toolkit"
+      ? promptToolkitDetail(message)
+      : undefined;
   return {
     id: record.id,
     role,
@@ -395,10 +448,58 @@ function toChatMessage(record: PromptAgentMessage): ChatMessage {
     status,
     reasoning,
     usage: message.role === "assistant" ? { inputTokens: message.usage.input, outputTokens: message.usage.output, totalTokens: message.usage.totalTokens } : undefined,
-    tool: toolName ? { name: toolName, status: message.role === "toolResult" && message.isError ? "error" : "complete" } : undefined,
+    tool: toolName ? { name: toolName, status: message.role === "toolResult" && message.isError ? "error" : "complete", detail: toolDetail, mutation } : undefined,
     attachments,
     createdAt: message.timestamp,
   };
+}
+
+function toolResultDetails(message: Extract<AgentMessage, { role: "toolResult" }>): Record<string, unknown> | null {
+  const direct = (message as unknown as { details?: unknown }).details;
+  if (direct && typeof direct === "object") return direct as Record<string, unknown>;
+  const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("");
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function promptMutationEvidence(message: Extract<AgentMessage, { role: "toolResult" }>): PromptMutationEvidence | undefined {
+  const result = toolResultDetails(message);
+  if (!result || result.ok !== true || typeof result.before_prompt !== "string" || typeof result.after_prompt !== "string") return undefined;
+  const diff = diffPromptText(result.before_prompt, result.after_prompt);
+  const target = result.target === "txt2img" || result.target === "img2img" ? result.target : "active";
+  const field = result.field === "negative" ? "negative" : "positive";
+  const fieldEnabled = typeof result.field_enabled === "boolean" ? result.field_enabled : null;
+  const effective = typeof result.effective === "boolean" ? result.effective : field === "positive" ? fieldEnabled !== false : fieldEnabled;
+  return {
+    version: 1,
+    target,
+    field,
+    beforeHash: typeof result.before_hash === "string" ? result.before_hash : "",
+    afterHash: typeof result.prompt_hash === "string" ? result.prompt_hash : "",
+    fieldEnabled,
+    effective,
+    ...(typeof result.negative_inactive_reason === "string" && result.negative_inactive_reason ? { inactiveReason: result.negative_inactive_reason } : {}),
+    changes: diff.changes,
+    summary: diff.summary,
+    ...(diff.truncated ? { truncated: true } : {}),
+  };
+}
+
+function mutationDetail(mutation: PromptMutationEvidence): string {
+  const field = mutation.field === "negative" ? "Negative prompt" : "Positive prompt";
+  const effect = mutation.field === "negative" && mutation.effective === false ? " · disabled" : "";
+  return `${field} updated${effect} · +${mutation.summary.added} -${mutation.summary.removed} ↕${mutation.summary.moved}`;
+}
+
+function promptToolkitDetail(message: Extract<AgentMessage, { role: "toolResult" }>): string | undefined {
+  const result = toolResultDetails(message);
+  if (!result || result.ok !== true) return undefined;
+  const summary = result.summary && typeof result.summary === "object" ? result.summary as Record<string, unknown> : {};
+  return `Prompt ${String(result.action || "analyzed")} · +${Number(summary.added || 0)} -${Number(summary.removed || 0)} ↕${Number(summary.moved || 0)}`;
 }
 
 function messageText(message: AgentMessage): string {
@@ -435,6 +536,13 @@ export function userRequestedPromptMutation(text: string): boolean {
   const directEdit = /(帮我|请|直接|把|将|给我|给[\w\u4e00-\u9fff -]{1,40}).{0,30}(改成|修改|改写|重写|优化|精炼|扩写|替换|追加|加上|加入|删除|移除|写入|更新|套用|应用|编辑|修一下)/i;
   const adviceOnly = /(怎么改|如何改|哪里.*改|修改建议|改进建议|优化建议|建议.*(修改|优化|改写|调整)|should.*(change|edit|rewrite)|how.*(change|edit|rewrite))/i;
   return editVerb.test(value) && !adviceOnly.test(value) && (promptReference.test(value) || directEdit.test(value));
+}
+
+export function userRequestedPromptToolkit(text: string): boolean {
+  const value = text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!value) return false;
+  const toolkitIntent = /(去重|去重复|删除重复|移除重复|排序|重新排列|整理标签|规范化|格式化|检查重复|检查语法|拆分.*(?:自然语言|标签|tag)|合并.*(?:提示词|prompt)|deduplicat|de-?duplicate|remove duplicates?|sort(?:ing)?|reorder|normali[sz]e|format prompt|validate prompt|split.*(?:pool|tags?)|compose prompt)/i;
+  return toolkitIntent.test(value) && /(提示词|prompt|正向|负向|negative|positive|tag|标签|当前|现有|这段|它)/i.test(value);
 }
 
 export function userRequestedBackgroundLookup(text: string): boolean {

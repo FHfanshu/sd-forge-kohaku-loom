@@ -78,10 +78,11 @@ def validate_forge_tool_request(tool: str, payload: Any) -> dict[str, Any]:
         _allow_keys(payload, {"target"})
         _validate_target(payload)
     elif tool == "edit_prompt":
-        _allow_keys(payload, {"target", "base_hash", "prompt", "diff", "patches", "return_prompt", "field"})
+        _allow_keys(payload, {"target", "base_hash", "negative_state_hash", "prompt", "diff", "patches", "return_prompt", "field"})
         _validate_target(payload)
         _validate_prompt_field(payload)
         _safe_text(payload.get("base_hash"), "base_hash", 128, required=True)
+        _safe_text(payload.get("negative_state_hash"), "negative_state_hash", 128)
         _safe_text(payload.get("prompt"), "prompt", 50_000)
         _safe_text(payload.get("diff"), "diff", 50_000)
         patches = payload.get("patches")
@@ -204,7 +205,7 @@ def _validate_prompt_patch(value: Any, index: int) -> None:
     if operation not in _PATCH_OPERATIONS:
         raise ForgeToolValidationError(f"patches[{index}].operation is invalid")
     for field in ("find", "replace", "text", "replacement"):
-        _safe_text(value.get(field), f"patches[{index}].{field}", 20_000)
+        _safe_text(value.get(field), f"patches[{index}].{field}", 50_000)
     _safe_text(value.get("separator"), f"patches[{index}].separator", 32)
     if "count" in value:
         _bounded_integer(value["count"], f"patches[{index}].count", 1, 10_000)

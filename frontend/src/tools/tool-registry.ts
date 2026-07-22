@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createForgeAgentTools, type ForgeAgentTool, type ForgeToolFactoryOptions, type ForgeToolName, forgeToolPermission } from "./forge-tools";
+import { createPromptToolkitTool } from "./prompt-toolkit";
 
 export interface ToolExecutionContext {
   sessionId: string;
@@ -34,6 +35,7 @@ export class PromptAgentToolRegistry {
 export function createForgeToolRegistry(options: ForgeToolFactoryOptions = {}): PromptAgentToolRegistry {
   const registry = new PromptAgentToolRegistry();
   for (const tool of createForgeAgentTools(options)) registry.register(tool);
+  registry.register(createPromptToolkitTool());
   return registry;
 }
 

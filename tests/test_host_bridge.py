@@ -6,6 +6,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from quality.acceptance import acceptance
+
 
 @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
 class HostBridgeTests(unittest.TestCase):
@@ -215,6 +217,7 @@ window.__SD_FORGE_NEO_PROMPT_AGENT__.executeAssistantTool({ tool: "read_prompt",
         self.assertEqual("read_prompt", result["calls"][0]["body"]["tool"])
         self.assertEqual("txt2img", result["result"]["target"])
 
+    @acceptance("PROMPT-STATE-001@1", "activation,stale-activation,effective-evidence")
     def test_prompt_field_merge_preserves_guarded_overwrite_rules(self):
         root = Path(__file__).resolve().parents[1]
         source = root / "javascript" / "prompt_agent.js"
@@ -222,7 +225,8 @@ window.__SD_FORGE_NEO_PROMPT_AGENT__.executeAssistantTool({ tool: "read_prompt",
 const fs = require("fs");
 const vm = require("vm");
 class Textarea {
-  constructor(value) { this.value = value; }
+  constructor(value) { this.value = value; this.disabled = false; this.readOnly = false; }
+  getAttribute() { return null; }
   dispatchEvent() {}
 }
 global.HTMLTextAreaElement = Textarea;
@@ -231,9 +235,12 @@ global.HTMLSelectElement = class {};
 global.Event = class { constructor(type) { this.type = type; } };
 const positive = new Textarea("existing prompt");
 const negative = new Textarea("");
+negative.disabled = true;
+const cfg = { value: "1" };
 const roots = {
   "#txt2img_prompt": { querySelector: () => positive },
   "#txt2img_neg_prompt": { querySelector: () => negative },
+  "#txt2img_cfg_scale": { matches: () => false, querySelector: () => cfg },
 };
 global.window = { __SD_FORGE_NEO_PROMPT_AGENT__: {} };
 global.document = {
@@ -244,20 +251,32 @@ global.document = {
 };
 vm.runInThisContext(fs.readFileSync(process.argv.at(-1), "utf8"));
 const tools = window.__SD_FORGE_NEO_PROMPT_AGENT__;
+const initialActivation = tools.promptFieldActivation("txt2img");
 tools.assistantState.promptReads.txt2img = {
   positive: positive.value,
   negative: negative.value,
   positive_hash: tools.promptHash(positive.value),
   negative_hash: tools.promptHash(negative.value),
+  negative_state_hash: initialActivation.negative_state_hash,
   context_hash: "ctx",
 };
 const rejected = tools.editPromptTool({
   target: "txt2img", field: "positive", base_hash: tools.promptHash(positive.value), prompt: "overwrite"
 }, []);
-const accepted = tools.editPromptTool({
-  target: "txt2img", field: "negative", base_hash: tools.promptHash(negative.value), prompt: "low quality"
+negative.disabled = false;
+cfg.value = "7";
+const stale = tools.editPromptTool({
+  target: "txt2img", field: "negative", base_hash: tools.promptHash(negative.value),
+  negative_state_hash: initialActivation.negative_state_hash, prompt: "low quality"
 }, []);
-process.stdout.write(JSON.stringify({ rejected, accepted, positive: positive.value, negative: negative.value }));
+negative.disabled = true;
+cfg.value = "1";
+const disabledActivation = tools.promptFieldActivation("txt2img");
+const accepted = tools.editPromptTool({
+  target: "txt2img", field: "negative", base_hash: tools.promptHash(negative.value),
+  negative_state_hash: disabledActivation.negative_state_hash, prompt: "low quality"
+}, []);
+process.stdout.write(JSON.stringify({ rejected, stale, accepted, positive: positive.value, negative: negative.value }));
 '''
         completed = subprocess.run(
             [shutil.which("node"), "-", str(source)],
@@ -269,7 +288,14 @@ process.stdout.write(JSON.stringify({ rejected, accepted, positive: positive.val
         result = json.loads(completed.stdout)
         self.assertFalse(result["rejected"]["ok"])
         self.assertIn("only when the current field is empty", result["rejected"]["error"])
+        self.assertFalse(result["stale"]["ok"])
+        self.assertIn("activation changed", result["stale"]["error"])
         self.assertTrue(result["accepted"]["ok"])
+        self.assertFalse(result["accepted"]["field_enabled"])
+        self.assertFalse(result["accepted"]["effective"])
+        self.assertEqual("cfg_scale_lte_1", result["accepted"]["negative_inactive_reason"])
+        self.assertEqual("", result["accepted"]["before_prompt"])
+        self.assertEqual("low quality", result["accepted"]["after_prompt"])
         self.assertEqual("existing prompt", result["positive"])
         self.assertEqual("low quality", result["negative"])
 

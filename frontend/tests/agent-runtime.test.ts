@@ -194,6 +194,50 @@ describe("PiPromptAgentRuntime", () => {
     runtime.destroy();
   });
 
+  acceptanceTest("PROMPT-TOOLKIT-001@1", "toolkit-before-write", "blocks deterministic prompt cleanup writes until prompt_toolkit succeeds", async () => {
+    let call = 0;
+    const executed: string[] = [];
+    const editPrompt: AgentTool<any> = {
+      name: "edit_prompt",
+      label: "Edit prompt",
+      description: "Edit prompt",
+      parameters: Type.Object({ base_hash: Type.String() }),
+      execute: async () => {
+        executed.push("edit_prompt");
+        return { content: [{ type: "text", text: "edited" }], details: { ok: true } };
+      },
+    };
+    const promptToolkit: AgentTool<any> = {
+      name: "prompt_toolkit",
+      label: "Prompt toolkit",
+      description: "Normalize prompt deterministically",
+      parameters: Type.Object({ action: Type.String(), prompt: Type.String() }),
+      execute: async () => {
+        executed.push("prompt_toolkit");
+        return { content: [{ type: "text", text: "analyzed" }], details: { ok: true } };
+      },
+    };
+    const streamFn: StreamFn = (activeModel) => {
+      call += 1;
+      if (call === 1) return streamMessage(activeModel as typeof model, [{ type: "toolCall", id: "edit-too-early", name: "edit_prompt", arguments: { base_hash: "fresh" } }], "toolUse");
+      if (call === 2) return streamMessage(activeModel as typeof model, [{ type: "toolCall", id: "toolkit-1", name: "prompt_toolkit", arguments: { action: "sort", prompt: "1girl, blue eyes" } }], "toolUse");
+      if (call === 3) return streamMessage(activeModel as typeof model, [{ type: "toolCall", id: "edit-allowed", name: "edit_prompt", arguments: { base_hash: "fresh" } }], "toolUse");
+      return streamMessage(activeModel as typeof model, [{ type: "text", text: "Prompt sorted." }]);
+    };
+    const runtime = new PiPromptAgentRuntime({ model, streamFn, tools: [editPrompt, promptToolkit] });
+
+    await runtime.submit({ text: "Sort the current prompt tags", requirePromptMutation: true, requirePromptToolkit: true });
+
+    expect(call).toBe(4);
+    expect(executed).toEqual(["prompt_toolkit", "edit_prompt"]);
+    expect(runtime.getMessages()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "toolResult", toolName: "edit_prompt", isError: true }),
+      expect.objectContaining({ role: "toolResult", toolName: "prompt_toolkit", isError: false }),
+    ]));
+    expect(runtime.getState()).toMatchObject({ status: "completed", error: undefined });
+    runtime.destroy();
+  });
+
   it("fails visibly after bounded correction when a requested prompt edit never happens", async () => {
     let call = 0;
     const streamFn: StreamFn = (activeModel) => {

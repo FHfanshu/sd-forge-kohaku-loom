@@ -80,9 +80,15 @@ class ForgeToolValidationTests(unittest.TestCase):
         self.assertEqual(20, result["parameters"]["steps"])
 
     def test_edit_prompt_accepts_full_overwrite_only_as_standalone_prompt(self):
-        accepted = validate_forge_tool_request("edit_prompt", {"field": "negative", "base_hash": "h", "prompt": "solo, standing"})
+        accepted = validate_forge_tool_request("edit_prompt", {
+            "field": "negative",
+            "base_hash": "h",
+            "negative_state_hash": "negative-state-1",
+            "prompt": "solo, standing",
+        })
         self.assertEqual("solo, standing", accepted["prompt"])
         self.assertEqual("negative", accepted["field"])
+        self.assertEqual("negative-state-1", accepted["negative_state_hash"])
         with self.assertRaisesRegex(ForgeToolValidationError, "cannot be combined"):
             validate_forge_tool_request("edit_prompt", {
                 "field": "positive",
