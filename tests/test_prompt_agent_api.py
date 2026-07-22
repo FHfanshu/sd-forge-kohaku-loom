@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import json
 import os
 import unittest
 from pathlib import Path
@@ -32,10 +33,11 @@ class PromptAgentApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["service"], "SD Forge Neo Prompt Agent")
         self.assertEqual(payload["runtime"], "frontend-pi")
-        self.assertEqual(payload["session_storage"], "indexeddb")
+        self.assertEqual(payload["session_storage"], "sqlite-sync+indexeddb-cache")
         self.assertEqual(len([route for route in app.routes if route.path == f"{API_PREFIX}/health"]), 1)
         self.assertEqual(payload["features"]["agent_loop"], True)
         self.assertEqual(payload["features"]["provider_proxy"], True)
+        self.assertEqual(payload["features"]["session_sync"], True)
 
     @acceptance("SECURITY-PRIVACY-001@1", "projection")
     def test_profiles_never_return_secret_or_local_paths(self):
@@ -133,13 +135,48 @@ class PromptAgentApiTests(unittest.TestCase):
 
                 restored = client.post(f"{API_PREFIX}/profiles/restore-defaults")
                 self.assertEqual(restored.status_code, 200)
-                self.assertEqual("local-endpoint", restored.json()["activeProfileId"])
+                self.assertEqual("openai-compatible", restored.json()["activeProfileId"])
                 self.assertFalse(any(profile["hasApiKey"] for profile in restored.json()["profiles"]))
 
     def test_default_profile_storage_never_uses_dot_loom(self):
         path = default_storage_root()
         self.assertEqual("prompt-agent", path.name)
         self.assertNotIn(".loom", path.parts)
+
+    def test_removed_profile_modes_are_migrated_before_publication(self):
+        with TemporaryDirectory() as directory:
+            authority = ProfileAuthority(Path(directory))
+            authority.root.mkdir(parents=True, exist_ok=True)
+            authority.profiles_path.write_text(json.dumps({
+                "version": 1,
+                "active_profile_id": "legacy-endpoint",
+                "profiles": [
+                    {
+                        "profile_id": "legacy-endpoint",
+                        "display_name": "Legacy endpoint",
+                        "model_id": "local-model",
+                        "protocol": "openai-chat-completions",
+                        "runtime": "llama-endpoint",
+                        "endpoint": "http://127.0.0.1:8080/v1",
+                    },
+                    {
+                        "profile_id": "legacy-anthropic",
+                        "display_name": "Legacy Anthropic",
+                        "model_id": "claude",
+                        "protocol": "anthropic-native",
+                        "runtime": "remote-http",
+                        "endpoint": "https://api.anthropic.com/v1",
+                    },
+                ],
+            }), encoding="utf-8")
+
+            state = authority.list_state()
+
+            endpoint, anthropic = state["profiles"]
+            self.assertEqual("remote-http", endpoint["runtime"])
+            self.assertEqual("openai-chat-completions", endpoint["protocol"])
+            self.assertFalse(anthropic["enabled"])
+            self.assertEqual("openai-chat-completions", anthropic["protocol"])
 
     def test_models_api_returns_safe_metadata_only(self):
         with TemporaryDirectory() as directory:
@@ -226,9 +263,8 @@ class PromptAgentApiTests(unittest.TestCase):
             }
             with patch("backend.prompt_agent.profiles.protect_text", return_value="encrypted"):
                 authority.import_legacy_state(payload)
-            scrubbed = {
-                "profiles": [{**payload["profiles"][0], "has_api_key": True}],
-            }
+            scrubbed_profile = {key: value for key, value in payload["profiles"][0].items() if key != "api_key"}
+            scrubbed = {"profiles": [{**scrubbed_profile, "has_api_key": True}]}
             with patch("backend.prompt_agent.profiles.unprotect_text", return_value="secret-value"):
                 result = authority.import_legacy_state(scrubbed)
             self.assertTrue(result["profiles"][0]["hasApiKey"])
@@ -312,6 +348,38 @@ class PromptAgentApiTests(unittest.TestCase):
         self.assertTrue(calls[0][0].endswith("/v1/models"))
         self.assertEqual("Bearer secret-value", calls[0][1]["Authorization"])
         self.assertLessEqual(result["endpoint_index"], 0)
+
+    def test_openai_connection_test_preserves_openai_compatibility_base_path(self):
+        calls: list[str] = []
+
+        class Response:
+            def raise_for_status(self):
+                return None
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def get(self, url, **_kwargs):
+                calls.append(url)
+                return Response()
+
+        profile = {
+            "id": "remote",
+            "modelId": "gemini-3.1-pro-preview",
+            "protocol": "openai-chat-completions",
+            "runtime": "remote-http",
+            "endpoint": "https://hk-api.moyuu.cc/v1beta/openai",
+            "api_key": "secret-value",
+        }
+        with patch("backend.prompt_agent.profile_connection.httpx.AsyncClient", return_value=Client()):
+            result = asyncio.run(test_profile_connection(profile))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(["https://hk-api.moyuu.cc/v1beta/openai/models"], calls)
 
     def test_gemini_connection_test_uses_native_model_metadata_request(self):
         calls: list[tuple[str, dict[str, str]]] = []

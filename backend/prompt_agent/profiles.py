@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .migration import merge_legacy_state
-from .profile_contracts import LLAMA_ENDPOINT, LLAMA_ONCE, normalize_profile, public_profile
+from .profile_contracts import LLAMA_ONCE, migrate_legacy_profile, normalize_profile, public_profile
 from .secrets import protect_text, unprotect_text
 
 
@@ -119,7 +119,7 @@ class ProfileAuthority:
         item = next((profile for profile in state["profiles"] if profile["profile_id"] == profile_id), None)
         if item is None or not item.get("enabled", True):
             raise ValueError("profile must be enabled")
-        if role == "session" and item["runtime"] not in {LLAMA_ENDPOINT, LLAMA_ONCE}:
+        if role == "session" and item["runtime"] != LLAMA_ONCE:
             raise ValueError("session profile must use a local runtime")
         if role == "naming" and item["runtime"] != LLAMA_ONCE:
             raise ValueError("naming profile must use llama-once")
@@ -155,7 +155,7 @@ class ProfileAuthority:
                 valid = value in enabled and next(item for item in profiles if item["profile_id"] == value).get("runtime") == LLAMA_ONCE
                 result[f"{role}_profile_id"] = value if valid else ""
             elif role == "session":
-                local = [item["profile_id"] for item in profiles if item["profile_id"] in enabled and item.get("runtime") in {LLAMA_ENDPOINT, LLAMA_ONCE}]
+                local = [item["profile_id"] for item in profiles if item["profile_id"] in enabled and item.get("runtime") == LLAMA_ONCE]
                 result[f"{role}_profile_id"] = value if value in local else (local[0] if local else "")
             elif role == "active":
                 result[f"{role}_profile_id"] = value if value in agent_profiles else first
@@ -170,7 +170,7 @@ class ProfileAuthority:
         raw_profiles = raw.get("profiles")
         if not isinstance(raw_profiles, list) or not raw_profiles:
             return self._default_state()
-        profiles = [normalize_profile(item) for item in raw_profiles]
+        profiles = [normalize_profile(migrate_legacy_profile(item)) for item in raw_profiles]
         state = self._state_with_routes(raw, profiles)
         if state != raw:
             self._write(self.profiles_path, state)
@@ -179,16 +179,16 @@ class ProfileAuthority:
     def _default_state(self) -> dict[str, Any]:
         return {
             "version": 1,
-            "active_profile_id": "local-endpoint",
-            "session_profile_id": "local-endpoint",
+            "active_profile_id": "openai-compatible",
+            "session_profile_id": "",
             "naming_profile_id": "",
             "profiles": [normalize_profile({
-                "profile_id": "local-endpoint",
-                "display_name": "Local OpenAI-compatible endpoint",
-                "model_id": "local-model",
+                "profile_id": "openai-compatible",
+                "display_name": "OpenAI-compatible",
+                "model_id": "model",
                 "protocol": "openai-chat-completions",
-                "runtime": "llama-endpoint",
-                "endpoint": "http://127.0.0.1:8080/v1",
+                "runtime": "remote-http",
+                "endpoint": "",
             })],
         }
 

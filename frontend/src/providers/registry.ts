@@ -1,10 +1,8 @@
 import type { ProviderAdapter, ProviderProfileMetadata } from "./adapter";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import { anthropicAdapter } from "./anthropic";
 import { geminiAdapter } from "./gemini";
 import { llamaCppAdapter } from "./llama-cpp";
 import { openAICompatibleAdapter } from "./openai-compatible";
-import { openRouterAdapter } from "./openrouter";
 
 export class ProviderRegistry {
   private readonly adapters = new Map<string, ProviderAdapter>();
@@ -27,11 +25,6 @@ export class ProviderRegistry {
       if (this.adapters.has(normalized)) return this.adapters.get(normalized)!;
       throw new Error(`Unknown provider adapter: ${explicit}`);
     }
-    const catalogProvider = String(profile.modelInfo?.providerId ?? "").trim();
-    if (catalogProvider) {
-      const normalized = normalizeProviderId(catalogProvider);
-      if (this.adapters.has(normalized)) return this.adapters.get(normalized)!;
-    }
     const adapter = this.list().find((candidate) => candidate.matches(profile));
     if (!adapter) throw new Error("No provider adapter matches the selected profile.");
     return adapter;
@@ -46,16 +39,14 @@ export const normalizeProviderId = (id: string): string => ({
   openai: "openai-compatible",
   "openai-chat-completions": "openai-compatible",
   "openai_compatible": "openai-compatible",
+  openrouter: "openai-compatible",
   google: "gemini",
-  claude: "anthropic",
   llama: "llama-cpp",
   "llama.cpp": "llama-cpp",
 }[id.trim().toLowerCase()] ?? id.trim().toLowerCase());
 
 export const providerRegistry = new ProviderRegistry();
 providerRegistry.register(openAICompatibleAdapter);
-providerRegistry.register(openRouterAdapter);
-providerRegistry.register(anthropicAdapter);
 providerRegistry.register(geminiAdapter);
 providerRegistry.register(llamaCppAdapter);
 

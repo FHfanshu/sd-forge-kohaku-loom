@@ -6,17 +6,34 @@ from typing import Any
 
 
 GEMINI_NATIVE = "gemini-native"
-ANTHROPIC_NATIVE = "anthropic-native"
 OPENAI_CHAT_COMPLETIONS = "openai-chat-completions"
 REMOTE_HTTP = "remote-http"
-LLAMA_ENDPOINT = "llama-endpoint"
 LLAMA_ONCE = "llama-once"
 
-SUPPORTED_PROTOCOLS = frozenset({GEMINI_NATIVE, ANTHROPIC_NATIVE, OPENAI_CHAT_COMPLETIONS})
-SUPPORTED_RUNTIMES = frozenset({REMOTE_HTTP, LLAMA_ENDPOINT, LLAMA_ONCE})
+SUPPORTED_PROTOCOLS = frozenset({GEMINI_NATIVE, OPENAI_CHAT_COMPLETIONS})
+SUPPORTED_RUNTIMES = frozenset({REMOTE_HTTP, LLAMA_ONCE})
 _PROFILE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
 _MAX_ENDPOINT_LENGTH = 2048
 _MAX_FALLBACK_ENDPOINTS = 8
+
+
+def migrate_legacy_profile(value: Any) -> Any:
+    """Collapse removed transport modes before validating a stored/imported profile."""
+    if not isinstance(value, dict):
+        return value
+    migrated = dict(value)
+    if migrated.get("runtime") == "llama-endpoint":
+        migrated["runtime"] = REMOTE_HTTP
+        provider_id = str(migrated.get("provider_id", migrated.get("providerId", "")) or "").lower()
+        if provider_id in {"", "llama", "llama-cpp", "llama.cpp"}:
+            migrated["provider_id"] = "openai-compatible"
+            migrated.pop("providerId", None)
+    if migrated.get("protocol") == "anthropic-native":
+        migrated["protocol"] = OPENAI_CHAT_COMPLETIONS
+        migrated["enabled"] = False
+        migrated["provider_id"] = "openai-compatible"
+        migrated.pop("providerId", None)
+    return migrated
 
 
 def normalize_profile(payload: dict[str, Any]) -> dict[str, Any]:
@@ -31,7 +48,7 @@ def normalize_profile(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"unsupported profile protocol: {protocol}")
     if runtime not in SUPPORTED_RUNTIMES:
         raise ValueError(f"unsupported profile runtime: {runtime}")
-    if runtime in {LLAMA_ENDPOINT, LLAMA_ONCE} and protocol != OPENAI_CHAT_COMPLETIONS:
+    if runtime == LLAMA_ONCE and protocol != OPENAI_CHAT_COMPLETIONS:
         raise ValueError(f"protocol must be {OPENAI_CHAT_COMPLETIONS!r} for local profiles")
 
     endpoint = _string(profile, "endpoint")

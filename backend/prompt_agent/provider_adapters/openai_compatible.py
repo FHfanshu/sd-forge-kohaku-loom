@@ -37,15 +37,11 @@ async def stream_openai_compatible(
     profile: dict[str, Any],
     *,
     provider_id: str = "openai-compatible",
-    extra_headers: dict[str, str] | None = None,
-    reasoning_format: str = "openai",
 ) -> AsyncIterator[str]:
     endpoint = openai_chat_url(str(profile["endpoint"]))
     headers = {"Content-Type": "application/json"}
     if profile.get("api_key"):
         headers["Authorization"] = f"Bearer {profile['api_key']}"
-    if extra_headers:
-        headers.update(extra_headers)
     body: dict[str, Any] = {
         "model": profile["model_id"],
         "messages": _messages(request.system_prompt, request.messages),
@@ -62,10 +58,7 @@ async def stream_openai_compatible(
             if request.tool_choice else "auto"
         )
     if request.reasoning not in {"off", "none"} and _reasoning_enabled(profile):
-        if reasoning_format == "openrouter":
-            body["reasoning"] = {"effort": request.reasoning}
-        else:
-            body["reasoning_effort"] = request.reasoning
+        body["reasoning_effort"] = request.reasoning
 
     timeout = timeout_seconds(profile)
     usage_value = usage()
@@ -74,6 +67,7 @@ async def stream_openai_compatible(
     tool_calls: dict[int, dict[str, str]] = {}
     finish_reason = "stop"
     upstream_done = False
+    saw_finish_reason = False
     status_code: int | None = None
     error_code = "none"
     started_at = time.monotonic()
@@ -102,7 +96,9 @@ async def stream_openai_compatible(
                     if not choices or not isinstance(choices[0], dict):
                         continue
                     choice = choices[0]
-                    finish_reason = _finish_reason(choice.get("finish_reason"), finish_reason)
+                    raw_finish_reason = choice.get("finish_reason")
+                    finish_reason = _finish_reason(raw_finish_reason, finish_reason)
+                    saw_finish_reason = saw_finish_reason or isinstance(raw_finish_reason, str) and bool(raw_finish_reason.strip())
                     delta = choice.get("delta")
                     if not isinstance(delta, dict):
                         continue
@@ -120,7 +116,7 @@ async def stream_openai_compatible(
                             yield event("text_start", contentIndex=index)
                         yield event("text_delta", contentIndex=index, delta=text)
                     _append_tool_calls(tool_calls, delta)
-        if not upstream_done:
+        if not upstream_done and not saw_finish_reason:
             raise ProviderProxyError("provider_unexpected_eof", status_code=status_code)
         if thinking_started:
             yield event("thinking_end", contentIndex=0)

@@ -131,8 +131,6 @@ async def stream_profile(request: StreamRequest, profile: dict[str, Any]) -> Asy
 def _provider_name(provider_id: str) -> str:
     return {
         "openai-compatible": "OpenAI Compatible",
-        "openrouter": "OpenRouter",
-        "anthropic": "Anthropic",
         "gemini": "Gemini",
         "llama-cpp": "llama.cpp",
     }.get(provider_id, provider_id.replace("-", " ").title())

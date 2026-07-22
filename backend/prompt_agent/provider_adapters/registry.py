@@ -6,12 +6,10 @@ from typing import Any, Callable
 
 from ..contracts import StreamRequest
 from ..profile_contracts import GEMINI_NATIVE
-from .anthropic import ANTHROPIC_CAPABILITIES, stream_anthropic
 from .common import AdapterCapabilities, capability_report as build_capability_report
 from .gemini import GEMINI_CAPABILITIES, stream_gemini
 from .llama_cpp import LLAMA_CPP_CAPABILITIES, stream_llama_cpp
 from .openai_compatible import OPENAI_CAPABILITIES, stream_openai_compatible
-from .openrouter import OPENROUTER_CAPABILITIES, stream_openrouter
 
 
 StreamAdapter = Callable[[StreamRequest, dict[str, Any]], AsyncIterator[str]]
@@ -30,8 +28,6 @@ class ProviderAdapter:
 
 ADAPTERS = {
     "openai-compatible": ProviderAdapter("openai-compatible", OPENAI_CAPABILITIES, stream_openai_compatible),
-    "openrouter": ProviderAdapter("openrouter", OPENROUTER_CAPABILITIES, stream_openrouter),
-    "anthropic": ProviderAdapter("anthropic", ANTHROPIC_CAPABILITIES, stream_anthropic),
     "gemini": ProviderAdapter("gemini", GEMINI_CAPABILITIES, stream_gemini),
     "llama-cpp": ProviderAdapter("llama-cpp", LLAMA_CPP_CAPABILITIES, stream_llama_cpp),
 }
@@ -40,9 +36,7 @@ ALIASES = {
     "openai": "openai-compatible",
     "openai-compatible": "openai-compatible",
     "openai_chat_completions": "openai-compatible",
-    "openrouter": "openrouter",
-    "anthropic": "anthropic",
-    "claude": "anthropic",
+    "openrouter": "openai-compatible",
     "gemini": "gemini",
     "google": "gemini",
     "llama": "llama-cpp",
@@ -65,15 +59,9 @@ def provider_id_for(profile: dict[str, Any]) -> str:
     if runtime.startswith("llama"):
         return "llama-cpp"
     protocol = str(profile.get("protocol") or "")
-    if protocol == "anthropic-native":
-        return "anthropic"
     if protocol == GEMINI_NATIVE:
         return "gemini"
     endpoint = str(profile.get("endpoint") or "").lower()
-    if "openrouter.ai" in endpoint:
-        return "openrouter"
-    if "anthropic.com" in endpoint:
-        return "anthropic"
     if protocol == "openai-chat-completions":
         return "openai-compatible"
     return "openai-compatible"

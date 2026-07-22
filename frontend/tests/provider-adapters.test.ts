@@ -1,15 +1,14 @@
 import { createProviderStream, providerRegistry } from "../src/providers/registry";
 import type { ProviderProfileMetadata } from "../src/providers/adapter";
 import { toPromptAgentModel } from "../src/providers/proxy-model";
+import { acceptanceTest } from "./acceptance";
 
 const encoder = new TextEncoder();
 const capabilities = { streaming: true, tools: true, vision: true, reasoning: true, attachments: true, systemPrompt: true, usage: true, abort: true };
 const profiles: Array<ProviderProfileMetadata & { id: string; expected: string }> = [
   { id: "openai-profile", expected: "openai-compatible", protocol: "openai-chat-completions", runtime: "remote-http", endpoint: "https://provider.invalid/v1" },
-  { id: "router-profile", expected: "openrouter", providerId: "openrouter", protocol: "openai-chat-completions", runtime: "remote-http", endpoint: "https://openrouter.ai/api/v1" },
-  { id: "anthropic-profile", expected: "anthropic", protocol: "anthropic-native", runtime: "remote-http", endpoint: "https://api.anthropic.com/v1" },
   { id: "gemini-profile", expected: "gemini", protocol: "gemini-native", runtime: "remote-http", endpoint: "https://generativelanguage.googleapis.com" },
-  { id: "llama-profile", expected: "llama-cpp", protocol: "openai-chat-completions", runtime: "llama-endpoint", endpoint: "http://127.0.0.1:8080/v1" },
+  { id: "llama-profile", expected: "llama-cpp", protocol: "openai-chat-completions", runtime: "llama-once", endpoint: "http://127.0.0.1:8080/v1" },
 ];
 
 function response(...events: unknown[]): Response {
@@ -22,16 +21,24 @@ function response(...events: unknown[]): Response {
 }
 
 describe("provider adapter registry", () => {
-  it("resolves all Phase 5 providers to proxy-only adapters", () => {
+  it("resolves the three supported connection modes to proxy-only adapters", () => {
     expect(providerRegistry.list().map((adapter) => adapter.id)).toEqual([
       "openai-compatible",
-      "openrouter",
-      "anthropic",
       "gemini",
       "llama-cpp",
     ]);
     for (const profile of profiles) expect(providerRegistry.resolve(profile).id).toBe(profile.expected);
     expect(() => providerRegistry.resolve({ providerId: "unsupported-provider", protocol: "openai-chat-completions" })).toThrow("Unknown provider adapter");
+  });
+
+  acceptanceTest("MODEL-PROFILE-001@3", "adapter-selection", "keeps catalog provenance separate from the configured transport adapter", () => {
+    expect(providerRegistry.resolve({
+      id: "gemini-catalog-profile",
+      protocol: "gemini-native",
+      runtime: "remote-http",
+      endpoint: "https://gateway.invalid",
+      modelInfo: { providerId: "pioneer" },
+    }).id).toBe("gemini");
   });
 
   it("makes profile-declared unsupported capabilities explicit", () => {
@@ -55,11 +62,11 @@ describe("provider adapter registry", () => {
       );
     };
     vi.stubGlobal("fetch", fetchImpl);
-    const stream = createProviderStream({ id: "anthropic-profile", protocol: "anthropic-native", runtime: "remote-http", endpoint: "https://api.anthropic.com/v1" });
-    const model = toPromptAgentModel({ id: "claude", providerId: "anthropic", displayName: "Claude", capabilities, contextWindow: 8192, maxTokens: 1024 });
+    const stream = createProviderStream({ id: "openai-profile", protocol: "openai-chat-completions", runtime: "remote-http", endpoint: "https://provider.invalid/v1" });
+    const model = toPromptAgentModel({ id: "model", providerId: "openai-compatible", displayName: "Model", capabilities, contextWindow: 8192, maxTokens: 1024 });
     const result = await (await stream(model, { messages: [{ role: "user", content: "Hi", timestamp: 1 }] }, {})).result();
     expect(result.content).toEqual([{ type: "text", text: "Hello" }]);
-    expect(body.profile_id).toBe("anthropic-profile");
+    expect(body.profile_id).toBe("openai-profile");
     expect(JSON.stringify(body)).not.toMatch(/apiKey|api_key|endpoint|modelPath|headers/);
     vi.unstubAllGlobals();
   });

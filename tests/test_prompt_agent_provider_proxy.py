@@ -10,6 +10,8 @@ import httpx
 
 from backend.prompt_agent import API_PREFIX, register_prompt_agent_api
 from backend.prompt_agent.contracts import parse_stream_request
+from backend.prompt_agent.errors import sanitize_provider_error
+from backend.prompt_agent.provider_adapters.common import openai_chat_url
 from backend.prompt_agent.providers import stream_profile
 
 
@@ -132,6 +134,24 @@ class ProviderProxyTests(unittest.TestCase):
 
         return asyncio.run(run())
 
+    def test_transport_end_of_stream_is_classified_for_safe_pre_output_retry(self):
+        class EndOfStream(Exception):
+            pass
+
+        wrapped = httpx.ReadError("provider disconnected")
+        wrapped.__cause__ = EndOfStream()
+
+        error = sanitize_provider_error(wrapped)
+
+        self.assertEqual("provider_unexpected_eof", error.code)
+        self.assertEqual("The provider stream ended before completion.", error.message)
+
+    def test_openai_compatibility_base_path_is_preserved_for_streaming(self):
+        self.assertEqual(
+            "https://hk-api.moyuu.cc/v1beta/openai/chat/completions",
+            openai_chat_url("https://hk-api.moyuu.cc/v1beta/openai"),
+        )
+
     def test_openai_text_reasoning_usage_and_request_id_contract(self):
         harness = UpstreamHarness(200, sse(
             {"choices": [{"delta": {"reasoning_content": "Think first."}}]},
@@ -212,6 +232,19 @@ class ProviderProxyTests(unittest.TestCase):
         self.assertEqual("lookup", sent_body["tools"][0]["function"]["name"])
         self.assertEqual("auto", sent_body["tool_choice"])
         self.assertTrue(harness.streams[0].closed)
+
+    def test_explicit_finish_reason_completes_without_optional_done_sentinel(self):
+        harness = UpstreamHarness(200, sse(
+            {"choices": [{"delta": {"content": "Complete"}}]},
+            {"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 3, "completion_tokens": 1}},
+        ))
+
+        events = self.collect(harness, request(), profile())
+
+        self.assertEqual(["start", "text_start", "text_delta", "text_end", "done"], [event["type"] for event in events])
+        self.assertEqual("Complete", events[2]["delta"])
+        self.assertEqual("stop", events[-1]["reason"])
+        self.assertEqual(3, events[-1]["usage"]["input"])
 
     def test_http_error_is_sse_error_without_upstream_body_or_secret(self):
         upstream_body = '{"error":{"message":"provider-secret body-secret Authorization: Bearer provider-secret"}}'

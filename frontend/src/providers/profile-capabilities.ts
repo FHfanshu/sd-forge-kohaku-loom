@@ -4,7 +4,7 @@ import { providerRegistry } from "./registry";
 
 const profileMetadata = (profile: Profile) => ({
   id: profile.id,
-  providerId: profile.providerId || profile.modelInfo.providerId,
+  providerId: profile.providerId,
   protocol: profile.protocol,
   runtime: profile.runtime,
   endpoint: profile.endpoint,

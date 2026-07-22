@@ -34,6 +34,8 @@ def sanitize_provider_error(error: BaseException) -> SanitizedProviderError:
     status_code = provider_http_status(error)
     if isinstance(error, ProviderProxyError):
         code = error.code
+    elif _is_unexpected_eof(error):
+        code = "provider_unexpected_eof"
     elif status_code in {401, 403}:
         code = "provider_auth_error"
     elif status_code == 429:
@@ -56,6 +58,19 @@ def sanitize_provider_error(error: BaseException) -> SanitizedProviderError:
     else:
         message = safe_provider_error(error)
     return SanitizedProviderError(code, message, status_code)
+
+
+def _is_unexpected_eof(error: BaseException) -> bool:
+    """Recognize transport wrappers around a provider closing its stream early."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        name = type(current).__name__.lower()
+        if name in {"endofstream", "remoteprotocolerror"}:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 @dataclass(frozen=True)

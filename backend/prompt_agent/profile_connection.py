@@ -106,7 +106,7 @@ def _openai_models_url(endpoint: str) -> str:
         value = value[: -len("/chat/completions")].rstrip("/")
     parsed = urllib.parse.urlparse(value)
     path = parsed.path.rstrip("/")
-    if path.endswith("/v1"):
+    if path.lower().endswith(("/v1", "/v1beta", "/openai")):
         path += "/models"
     else:
         path += "/v1/models"

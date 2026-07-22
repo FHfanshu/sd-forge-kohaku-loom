@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { normalizeProfile, normalizeProfileState, toHostProfilePatch } from "../src/profile-adapter";
 
 describe("profile migration adapters", () => {
+  it("collapses removed provider modes without turning resident endpoints into one-shot models", () => {
+    expect(normalizeProfile({
+      id: "legacy-endpoint",
+      modelId: "local-model",
+      protocol: "openai-chat-completions",
+      runtime: "llama-endpoint",
+    })).toMatchObject({ protocol: "openai-chat-completions", runtime: "remote-http" });
+    expect(normalizeProfile({
+      id: "legacy-anthropic",
+      modelId: "claude",
+      protocol: "anthropic-native",
+      runtime: "remote-http",
+    })).toMatchObject({ protocol: "openai-chat-completions", runtime: "remote-http" });
+  });
+
   it("maps legacy snake_case profile fields into the Svelte contract", () => {
     const profile = normalizeProfile({
       id: "legacy-local",

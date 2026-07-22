@@ -88,11 +88,13 @@ function profileId(value: unknown, fallback: string): string {
 }
 
 function normalizeProtocol(value: unknown, fallback: ProfileProtocol): ProfileProtocol {
-  return value === "gemini-native" || value === "anthropic-native" || value === "openai-chat-completions" ? value : fallback;
+  if (value === "anthropic-native") return "openai-chat-completions";
+  return value === "gemini-native" || value === "openai-chat-completions" ? value : fallback;
 }
 
 function normalizeRuntime(value: unknown, fallback: ProfileRuntime): ProfileRuntime {
-  return value === "remote-http" || value === "llama-endpoint" || value === "llama-once" ? value : fallback;
+  if (value === "llama-endpoint") return "remote-http";
+  return value === "remote-http" || value === "llama-once" ? value : fallback;
 }
 
 function normalizeCapabilities(raw: unknown, fallback = DEFAULT_CAPABILITIES): ProfileCapabilities {
@@ -178,7 +180,7 @@ export function normalizeProfile(raw: unknown, fallback?: Partial<Profile>): Pro
     idleUnloadMinutes: Math.round(numberValue(source, ["idleUnloadMinutes", "idle_unload_minutes"], numberValue(base, ["idleUnloadMinutes", "idle_unload_minutes"], 30), 0, 1440)),
   };
   if (providerId) normalized.providerId = providerId;
-  if (normalized.runtime !== "remote-http" && ["gemini-native", "anthropic-native"].includes(normalized.protocol)) normalized.protocol = "openai-chat-completions";
+  if (normalized.runtime === "llama-once") normalized.protocol = "openai-chat-completions";
   if (normalized.runtime === "llama-once") normalized.endpoint = normalized.endpoint || DEFAULT_ENDPOINT;
   return profileSchema.parse(normalized);
 }
@@ -186,8 +188,6 @@ export function normalizeProfile(raw: unknown, fallback?: Partial<Profile>): Pro
 const DEFAULT_PROFILE_SEEDS: Array<Partial<Profile>> = [
   { id: "gemini", displayName: "Gemini", modelId: "gemini-model", enabled: true, protocol: "gemini-native", runtime: "remote-http", endpoint: "https://generativelanguage.googleapis.com", fallbackEndpoints: [], capabilities: { ...DEFAULT_CAPABILITIES }, parameters: { ...DEFAULT_PARAMETERS, temperature: 0.35, timeout: 120 } },
   { id: "openai-compatible", displayName: "OpenAI-compatible", modelId: "model", enabled: false, protocol: "openai-chat-completions", runtime: "remote-http", endpoint: "", fallbackEndpoints: [], capabilities: { ...DEFAULT_CAPABILITIES, vision: false }, parameters: { ...DEFAULT_PARAMETERS, temperature: 0.35, timeout: 120 } },
-  { id: "deepseek", displayName: "DeepSeek", modelId: "deepseek-model", enabled: false, protocol: "openai-chat-completions", runtime: "remote-http", endpoint: "https://api.deepseek.com", fallbackEndpoints: [], capabilities: { ...DEFAULT_CAPABILITIES, vision: false }, parameters: { ...DEFAULT_PARAMETERS, temperature: 0.35, timeout: 120 } },
-  { id: "local-llama-endpoint", displayName: "Local llama endpoint", modelId: DEFAULT_MODEL_ID, runtime: "llama-endpoint", endpoint: DEFAULT_ENDPOINT, parameters: { ...DEFAULT_PARAMETERS } },
   { id: "local-llama-once", displayName: "Local llama one-shot", modelId: DEFAULT_MODEL_ID, enabled: false, runtime: "llama-once", endpoint: DEFAULT_ENDPOINT, parameters: { ...DEFAULT_PARAMETERS } },
 ];
 
@@ -195,7 +195,7 @@ export function createDefaultProfileState(): ProfileState {
   return {
     version: 2,
     activeProfileId: "gemini",
-    sessionProfileId: "local-llama-endpoint",
+    sessionProfileId: "",
     namingProfileId: "",
     profiles: DEFAULT_PROFILE_SEEDS.map((profile) => normalizeProfile(profile)),
   };
@@ -223,12 +223,12 @@ export function normalizeProfileState(raw: unknown): ProfileState {
   const requestedActive = stringValue(source, ["activeProfileId", "active_profile_id"]);
   const requestedSession = stringValue(source, ["sessionProfileId", "session_profile_id"]);
   const requestedNaming = stringValue(source, ["namingProfileId", "naming_profile_id"]);
-  const localIds = enabled.filter((profile) => profile.runtime === "llama-endpoint" || profile.runtime === "llama-once").map((profile) => profile.id);
+  const localIds = enabled.filter((profile) => profile.runtime === "llama-once").map((profile) => profile.id);
   const namingIds = enabled.filter((profile) => profile.runtime === "llama-once").map((profile) => profile.id);
   return profileStateSchema.parse({
     version: 2,
     activeProfileId: agentIds.has(requestedActive) ? requestedActive : firstEnabled,
-    sessionProfileId: localIds.includes(requestedSession) ? requestedSession : (localIds.includes("local-llama-endpoint") ? "local-llama-endpoint" : localIds[0] ?? ""),
+    sessionProfileId: localIds.includes(requestedSession) ? requestedSession : localIds[0] ?? "",
     namingProfileId: namingIds.includes(requestedNaming) ? requestedNaming : (namingIds.includes("local-llama-once") ? "local-llama-once" : namingIds[0] ?? ""),
     profiles,
   });

@@ -43,6 +43,40 @@ const chatAttachmentSchema = z.object({
 
 const createdAtSchema = z.number().finite().nonnegative().transform((value) => Math.trunc(value)).default(() => Date.now());
 
+export const promptChangeSchema = z.object({
+  kind: z.enum(["added", "removed", "moved", "normalized"]),
+  pool: z.enum(["natural_language", "tags", "special", "unknown"]),
+  before: z.string().optional(),
+  after: z.string().optional(),
+  reason: z.string(),
+  fromIndex: z.number().int().nonnegative().optional(),
+  toIndex: z.number().int().nonnegative().optional(),
+});
+
+export const promptChangeSummarySchema = z.object({
+  added: z.number().int().nonnegative(),
+  removed: z.number().int().nonnegative(),
+  moved: z.number().int().nonnegative(),
+  normalized: z.number().int().nonnegative(),
+  preservedUnknown: z.number().int().nonnegative(),
+});
+
+export const promptMutationEvidenceSchema = z.object({
+  version: z.literal(1),
+  target: z.enum(["active", "txt2img", "img2img"]),
+  field: z.enum(["positive", "negative"]),
+  beforeHash: z.string(),
+  afterHash: z.string(),
+  fieldEnabled: z.boolean().nullable(),
+  effective: z.boolean().nullable(),
+  inactiveReason: z.string().optional(),
+  changes: z.array(promptChangeSchema).max(200),
+  summary: promptChangeSummarySchema,
+  truncated: z.boolean().optional(),
+  undone: z.boolean().optional(),
+});
+export type PromptMutationEvidence = z.infer<typeof promptMutationEvidenceSchema>;
+
 export const chatMessageSchema = z.object({
   id: z.string().min(1),
   role: z.enum(["user", "assistant", "system", "error", "tool"]),
@@ -61,6 +95,7 @@ export const chatMessageSchema = z.object({
     detail: z.string().optional(),
     undoable: z.boolean().optional(),
     undone: z.boolean().optional(),
+    mutation: promptMutationEvidenceSchema.optional(),
   }).optional(),
   attachments: z.array(chatAttachmentSchema).default([]),
   createdAt: createdAtSchema,
@@ -92,10 +127,10 @@ export type WindowLayout = z.infer<typeof windowLayoutSchema>;
 
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-export const profileProtocolSchema = z.enum(["gemini-native", "anthropic-native", "openai-chat-completions"]);
+export const profileProtocolSchema = z.enum(["gemini-native", "openai-chat-completions"]);
 export type ProfileProtocol = z.infer<typeof profileProtocolSchema>;
 
-export const profileRuntimeSchema = z.enum(["remote-http", "llama-endpoint", "llama-once"]);
+export const profileRuntimeSchema = z.enum(["remote-http", "llama-once"]);
 export type ProfileRuntime = z.infer<typeof profileRuntimeSchema>;
 
 export const profileCapabilitiesSchema = z.object({
@@ -214,7 +249,7 @@ export interface ProfileStoreActionContracts {
   addProfile(seed?: Partial<Profile>): Profile;
   duplicateProfile(profileId: string): Profile | null;
   updateProfile(profileId: string, patch: ProfilePatch): Profile | null;
-  deleteProfile(profileId: string): boolean;
+  deleteProfile(profileId: string): Promise<boolean>;
   activateProfile(profileId: string): void;
   setSessionProfile(profileId: string): void;
   setNamingProfile(profileId: string): void;
@@ -228,7 +263,7 @@ export interface ProfileActionHandlers {
   addProfile?(seed?: Partial<Profile>): Profile | null;
   duplicateProfile?(profileId: string): Profile | null;
   updateProfile?(profileId: string, patch: ProfilePatch): Profile | null;
-  deleteProfile?(profileId: string): boolean;
+  deleteProfile?(profileId: string): Promise<boolean>;
   activateProfile?(profileId: string): void;
   setSessionProfile?(profileId: string): void;
   setNamingProfile?(profileId: string): void;

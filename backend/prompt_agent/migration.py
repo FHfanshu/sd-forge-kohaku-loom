@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from .profile_contracts import LLAMA_ENDPOINT, LLAMA_ONCE, normalize_profile
+from .profile_contracts import LLAMA_ONCE, migrate_legacy_profile, normalize_profile
 
 
 def merge_legacy_state(
@@ -36,7 +36,7 @@ def merge_legacy_state(
     for raw in raw_profiles:
         if not isinstance(raw, dict):
             raise ValueError("profiles must contain objects")
-        item = normalize_profile(raw)
+        item = normalize_profile(migrate_legacy_profile(raw))
         profile_id = item["profile_id"]
         if profile_id in imported_ids:
             raise ValueError(f"duplicate profile id: {profile_id}")
@@ -91,7 +91,7 @@ def _with_routes(
             local = [
                 item["profile_id"]
                 for item in profiles
-                if item.get("enabled", True) and item.get("runtime") in {LLAMA_ENDPOINT, LLAMA_ONCE}
+                if item.get("enabled", True) and item.get("runtime") == LLAMA_ONCE
             ]
             result[f"{role}_profile_id"] = requested if requested in local else (local[0] if local else "")
         else:

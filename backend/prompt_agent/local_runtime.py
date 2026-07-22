@@ -100,7 +100,7 @@ class LocalLlamaRuntime:
             timeout = _timeout(profile)
             self._turns[turn_id] = time.monotonic()
             self._schedule_reaper_locked(turn_id, timeout + 120)
-            return {**profile, "runtime": "llama-endpoint", "endpoint": self._endpoint}
+            return {**profile, "endpoint": self._endpoint, "provider_id": "llama-cpp"}
 
     async def stop_turn(self, turn_id: str, *, force: bool = False) -> dict[str, Any]:
         async with self._lock:

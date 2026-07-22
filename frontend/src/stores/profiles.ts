@@ -90,11 +90,12 @@ export const useProfileStore = createStore<ProfileStore>((set, get) => {
       if (updated) persist(api.updateProfile(profileId, patch).then((remote) => updateLocal(profileId, normalizeProfile(remote, updated))));
       return updated;
     },
-    deleteProfile(profileId) {
+    async deleteProfile(profileId) {
       const current = get();
       if (!current.profiles.some((profile) => profile.id === profileId) || current.profiles.length <= 1) return false;
-      apply({ ...current, profiles: current.profiles.filter((profile) => profile.id !== profileId) });
-      persist(api.deleteProfile(profileId));
+      await api.deleteProfile(profileId);
+      const latest = get();
+      apply({ ...latest, profiles: latest.profiles.filter((profile) => profile.id !== profileId) });
       return true;
     },
     activateProfile(profileId) {
@@ -103,7 +104,7 @@ export const useProfileStore = createStore<ProfileStore>((set, get) => {
       persist(api.setProfileRoute("active", profileId).then((state) => apply(state)));
     },
     setSessionProfile(profileId) {
-      if (!get().profiles.some((profile) => ["llama-endpoint", "llama-once"].includes(profile.runtime) && profile.id === profileId && profile.enabled)) return;
+      if (!get().profiles.some((profile) => profile.runtime === "llama-once" && profile.id === profileId && profile.enabled)) return;
       set({ sessionProfileId: profileId });
       persist(api.setProfileRoute("session", profileId).then((state) => apply(state)));
     },

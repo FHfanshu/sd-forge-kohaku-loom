@@ -1,7 +1,7 @@
 import type { Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { ModelCapabilities, ProviderCapability } from "./capabilities";
-import { createPromptAgentStream } from "./proxy-stream";
+import { createPromptAgentStream, type StreamRetryNotice } from "./proxy-stream";
 import { toPromptAgentModel } from "./proxy-model";
 
 export interface ProviderProfileMetadata {
@@ -29,7 +29,7 @@ export interface ProviderAdapter {
   readonly capabilities: ModelCapabilities;
   matches(profile: ProviderProfileMetadata): boolean;
   toPiModel(model: ProviderModel): Model<any>;
-  createStream(profileId: string, turnId?: () => string): StreamFn;
+  createStream(profileId: string, turnId?: () => string, onRetry?: (notice: StreamRetryNotice) => void): StreamFn;
   stream(model: Model<any>, context: Context, options?: SimpleStreamOptions): ReturnType<StreamFn>;
   effectiveCapabilities(profile: ProviderProfileMetadata): ModelCapabilities;
   unsupportedCapabilities(profile: ProviderProfileMetadata): ProviderCapability[];
@@ -41,7 +41,11 @@ export function createProviderAdapter(
   matches: (profile: ProviderProfileMetadata) => boolean,
   capabilitiesForProfile: (profile: ProviderProfileMetadata) => ModelCapabilities = () => capabilities,
 ): ProviderAdapter {
-  const createStream = (profileId: string, turnId: () => string = () => ""): StreamFn => createPromptAgentStream(() => profileId, undefined, fetch, turnId);
+  const createStream = (
+    profileId: string,
+    turnId: () => string = () => "",
+    onRetry?: (notice: StreamRetryNotice) => void,
+  ): StreamFn => createPromptAgentStream(() => profileId, undefined, fetch, turnId, onRetry);
   const modelProfileIds = new WeakMap<object, string>();
   const effectiveCapabilities = (profile: ProviderProfileMetadata): ModelCapabilities => {
     const declared = profile.capabilities ?? {};

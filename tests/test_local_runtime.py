@@ -95,7 +95,8 @@ class LocalRuntimeTests(unittest.TestCase):
                     return process, spawn.call_count, routed, first
 
         unloaded, unload_starts, routed, result = asyncio.run(run(True))
-        self.assertEqual("llama-endpoint", routed["runtime"])
+        self.assertEqual("llama-once", routed["runtime"])
+        self.assertEqual("llama-cpp", routed["provider_id"])
         self.assertTrue(result["stopped"])
         self.assertTrue(unloaded.terminated)
         self.assertEqual(1, unload_starts)
@@ -168,7 +169,7 @@ class LocalRuntimeTests(unittest.TestCase):
         self.assertIsNone(runtime._process)
 
     @acceptance("LOCAL-RUNTIME-001@1", "loading,privacy")
-    @acceptance("UI-FEEDBACK-001@1", "recovery")
+    @acceptance("UI-FEEDBACK-001@3", "recovery")
     def test_status_reports_loading_ready_and_idle_without_local_paths(self):
         async def run():
             with TemporaryDirectory() as directory:

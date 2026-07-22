@@ -15,5 +15,5 @@ export const LLAMA_CPP_CAPABILITIES: ModelCapabilities = {
 export const llamaCppAdapter: ProviderAdapter = createProviderAdapter(
   "llama-cpp",
   LLAMA_CPP_CAPABILITIES,
-  (profile: ProviderProfileMetadata) => profile.runtime === "llama-endpoint" || profile.runtime === "llama-once" || ["llama", "llama-cpp", "llama.cpp"].includes(String(profile.providerId ?? profile.modelInfo?.providerId ?? "").toLowerCase()),
+  (profile: ProviderProfileMetadata) => profile.runtime === "llama-once" || ["llama", "llama-cpp", "llama.cpp"].includes(String(profile.providerId ?? "").toLowerCase()),
 );

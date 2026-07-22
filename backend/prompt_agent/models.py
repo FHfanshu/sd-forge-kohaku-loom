@@ -1,4 +1,4 @@
-"""Safe model metadata projections for the browser profile cache."""
+"""Safe model metadata projections for browser profile views."""
 
 from __future__ import annotations
 

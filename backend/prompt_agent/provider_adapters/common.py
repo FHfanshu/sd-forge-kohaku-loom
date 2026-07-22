@@ -233,7 +233,8 @@ def openai_chat_url(endpoint: str) -> str:
     if value.endswith("/chat/completions"):
         return value
     parsed = urllib.parse.urlparse(value)
-    if parsed.netloc.lower() == "api.deepseek.com" or value.endswith("/v1"):
+    path = parsed.path.rstrip("/").lower()
+    if parsed.netloc.lower() == "api.deepseek.com" or path.endswith(("/v1", "/v1beta", "/openai")):
         return value + "/chat/completions"
     return value + "/v1/chat/completions"
 

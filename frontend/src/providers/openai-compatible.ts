@@ -18,12 +18,9 @@ export const openAICompatibleAdapter: ProviderAdapter = createProviderAdapter(
   (profile: ProviderProfileMetadata) => {
     const providerId = String(profile.providerId ?? profile.modelInfo?.providerId ?? "").toLowerCase();
     const endpoint = String(profile.endpoint ?? "").toLowerCase();
-    return profile.runtime !== "llama-endpoint" && profile.runtime !== "llama-once"
-      && profile.protocol !== "anthropic-native"
+    return profile.runtime !== "llama-once"
       && profile.protocol !== "gemini-native"
-      && providerId !== "openrouter"
-      && !endpoint.includes("openrouter.ai")
-      && providerId !== "anthropic"
-      && !endpoint.includes("anthropic.com");
+      && providerId !== "gemini"
+      && !endpoint.includes("generativelanguage.googleapis.com");
   },
 );
