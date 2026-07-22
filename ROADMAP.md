@@ -3,7 +3,8 @@
 ## Purpose
 
 This roadmap governs the migration from the archived sidecar runtime to a
-frontend Pi agent, a thin Python security boundary, and IndexedDB sessions.
+frontend Pi agent, a thin Python security boundary, synchronized SQLite history,
+and IndexedDB session caches.
 
 Decision priority is:
 
@@ -25,7 +26,7 @@ The frontend owns:
 
 - the Pi agent loop and generation state;
 - streaming, reasoning, tool-call, and abort UI;
-- IndexedDB session history and preferences;
+- IndexedDB session cache and preferences;
 - provider/model/profile selection.
 
 Python owns:
@@ -34,11 +35,12 @@ Python owns:
 - provider secret storage and request authorization;
 - streaming provider proxying;
 - profile authority;
+- durable synchronized session snapshots;
 - llama.cpp process lifecycle and local model paths.
 
 The migration must not introduce another Kotlin, Node, or Bun sidecar, a second
-agent loop, tool leases, browser bridge claims, a session ownership server,
-turn-event replay, or refresh-time continuation of old execution.
+agent loop, tool leases, browser bridge claims, server ownership of agent
+execution, turn-event replay, or refresh-time continuation of old execution.
 
 ## Architecture Invariants
 
@@ -50,7 +52,8 @@ turn-event replay, or refresh-time continuation of old execution.
 - Python revalidates every tool argument and never trusts browser paths or model
   identifiers.
 - API keys are decrypted only for the request that needs them.
-- IndexedDB is authoritative for new session history, not Python.
+- SQLite is authoritative for synchronized history; IndexedDB is the local cache
+  and remains usable when synchronization is unavailable.
 - Refresh persists partial content, marks unfinished messages interrupted, and
   never re-executes an old tool call.
 - Local process state is independent of agent session state.
@@ -164,10 +167,8 @@ Add frontend adapters for:
 
 ```text
 OpenAI Compatible
-OpenRouter
-Anthropic
 Gemini
-llama.cpp
+llama.cpp one-shot
 ```
 
 Normalize capabilities, messages, tools, attachments, reasoning, usage, stream
@@ -179,8 +180,9 @@ Exit criteria:
 - each adapter has contract tests for text, tools, errors, and abort;
 - unsupported capabilities are explicit in the UI.
 
-The llama.cpp adapter supports both a resident OpenAI-compatible endpoint and
-an on-demand `llama-once` process owned by Python. A single on-demand process
+OpenRouter and other Chat Completions gateways use the OpenAI-compatible path;
+there is no provider-branded frontend transport layer. The llama.cpp adapter
+supports an on-demand `llama-once` process owned by Python. A single process
 is reused across every model/tool round in one frontend Pi agent turn. By
 default it remains resident between turns and is unloaded after the configured
 idle period; `0` disables idle unloading. Profile settings can instead unload
@@ -247,7 +249,7 @@ legacy file discovery or `.loom` access.
 Status: complete.
 
 Create database `sd-forge-neo-prompt-agent` with versioned stores for sessions,
-messages, attachments, runtime preferences, and profile cache.
+messages, attachments, and runtime preferences.
 
 Exit criteria:
 
@@ -258,9 +260,10 @@ Exit criteria:
 - no old stream or tool call resumes after refresh;
 - multi-tab behavior is informational only.
 
-Database version 2 covers sessions, messages, attachments, preferences, and a
-secret/path-free profile cache. Refresh interruption and stable streaming
-upserts are covered by repository tests. Browser E2E also verifies durable
+Database version 3 covers sessions, messages, attachments, and preferences;
+the unused profile cache was removed because Python profile storage is
+authoritative. Refresh interruption and stable streaming upserts are covered
+by repository tests. Browser E2E also verifies durable
 partial content, interruption after reload, no provider/tool replay, and a
 usable composer for the next submission.
 
@@ -312,6 +315,50 @@ Old names remain only in Git history, migration documentation, negative
 architecture assertions, and isolated one-time storage compatibility constants.
 The root license is MIT. Branch `kt` and tag `kt-final` keep the archived
 runtime as a frozen historical lesson and are not part of the active product.
+
+## Phase 11: Cross-Browser Session Synchronization
+
+Status: complete.
+
+Persist revisioned session/message snapshots in server-side SQLite while keeping
+IndexedDB as the immediate local cache. Synchronize at mount, session creation,
+and terminal turn boundaries. The server stores history only and never owns,
+continues, or replays agent execution. Divergent stale revisions create visible
+conflict-copy sessions instead of overwriting either transcript.
+
+Exit criteria:
+
+- a second browser connected to the same Forge host restores session history;
+- synchronization failure does not prevent local cached chat use;
+- stale concurrent writes preserve both transcripts;
+- refresh and synchronization never replay provider or Forge tool work;
+- identifiers, ownership links, statuses, counts, and payload sizes are validated.
+
+## Phase 12: Hybrid Prompt Toolkit And Confirmed Diffs
+
+Status: in progress.
+
+Add a deterministic, read-only `prompt_toolkit` for hybrid natural-language and
+Danbooru-tag prompts. Prompt cleanup requests must run the toolkit before the
+hash-guarded `edit_prompt` write. Successful writes return confirmed before and
+after evidence, and the chat renders a compact labeled red/green semantic diff
+before the final answer. Live negative-prompt activation and CFG state are part
+of read/write freshness and effectiveness reporting.
+
+Implemented:
+
+- lossless hybrid parsing with NL, tag, special-syntax, and unknown pools;
+- bounded analyze, split, deduplicate, sort, normalize, validate, and compose;
+- enforced toolkit-before-write Agent Loop ordering;
+- live negative activation hash and changed-but-inactive reporting;
+- persisted tool-result-derived semantic evidence and compact diff UI.
+
+Remaining:
+
+- explicit per-profile prompting dialect and preferred-layout controls;
+- confirmed inverse-diff undo with truthful history;
+- real-Forge visual verification for narrow mobile and model-specific negative
+  activation variants.
 
 ## Quality Gates
 

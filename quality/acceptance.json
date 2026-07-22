@@ -10,7 +10,10 @@
         "Loading the generated module alone does not mount the Prompt Agent UI.",
         "The UI connects when the Forge host becomes available after the bundle loads."
       ],
-      "required_scenarios": ["boot-gate", "late-host"],
+      "required_scenarios": [
+        "boot-gate",
+        "late-host"
+      ],
       "paths": [
         "frontend/src/bootstrap.ts",
         "frontend/src/runtime-connection.ts",
@@ -21,16 +24,23 @@
     },
     {
       "id": "UI-WINDOW-001",
-      "revision": 1,
+      "revision": 3,
       "area": "ui",
       "title": "Responsive floating windows and focus",
       "acceptance": [
-        "Chat and settings remain fully inside the current viewport.",
+        "Chat and settings remain fully inside the current viewport except while a focused text field has reduced the visual viewport for a virtual keyboard.",
+        "While a virtual keyboard is open, the focused floating window keeps its stable size and position and may extend outside the reduced visual viewport without jitter.",
         "Phone settings use the persisted floating layout rather than a forced full-screen layout.",
         "Tablet and desktop may show chat and settings together.",
-        "Focusing the chat composer brings chat forward and permits continuous input."
+        "Focusing the chat composer brings chat forward and permits continuous input.",
+        "The draggable Prompt Agent launcher remains available while chat and model-profile windows are open."
       ],
-      "required_scenarios": ["phone", "tablet", "focus"],
+      "required_scenarios": [
+        "phone",
+        "tablet",
+        "focus",
+        "launcher"
+      ],
       "paths": [
         "frontend/src/components/Surface.svelte",
         "frontend/src/components/ProfileSettings.svelte",
@@ -42,18 +52,58 @@
       "assertion_policy": "Assert containment, floating behavior, visibility, focus, and input continuity. Exact coordinates or dimensions require an explicit acceptance statement."
     },
     {
+      "id": "MODEL-PROFILE-001",
+      "revision": 3,
+      "area": "provider",
+      "title": "Stable model profile identity and recovery",
+      "acceptance": [
+        "Profile settings expose exactly OpenAI-compatible, Gemini Native, and local GGUF one-shot connection modes.",
+        "Model-catalog provenance never overrides the configured runtime transport adapter.",
+        "Editing a profile keeps that exact profile selected and preserves its remote or local form.",
+        "Saving profile changes is an ordering barrier, and the next idle send uses the latest active profile without restarting Forge.",
+        "Touch users can directly request deletion, confirmation targets the originally requested profile, and the profile is removed only after server success.",
+        "A failed deletion keeps the profile and exposes the sanitized server error."
+      ],
+      "required_scenarios": [
+        "connection-modes",
+        "adapter-selection",
+        "edit-stability",
+        "hot-reload",
+        "touch-delete",
+        "failure-recovery"
+      ],
+      "paths": [
+        "frontend/src/profile-adapter.ts",
+        "frontend/src/providers/**",
+        "frontend/src/stores/profiles.ts",
+        "frontend/src/agent/controller.ts",
+        "frontend/src/components/ProfileSettings.svelte",
+        "frontend/tests/provider-adapters.test.ts",
+        "frontend/tests/profile-settings.test.ts",
+        "frontend/tests/prompt-agent-controller.test.ts"
+      ],
+      "assertion_policy": "Assert stable profile identity, visible form semantics, exact deletion target, and failure recovery; do not depend on dropdown internals."
+    },
+    {
       "id": "UI-FEEDBACK-001",
-      "revision": 1,
+      "revision": 3,
       "area": "ui",
-      "title": "Local model loading feedback",
+      "title": "Compact lifecycle and process feedback",
       "acceptance": [
         "On-demand local model startup shows a distinct loading phase and elapsed time.",
-        "Completion, failure, and cancellation clear the loading state without leaving the composer disabled."
+        "Completion, failure, and cancellation clear the loading state without leaving the composer disabled.",
+        "Each user turn presents one final assistant response while reasoning, intermediate responses, tools, aggregate usage, and tool failures remain available in one default-collapsed process drawer; only a terminal turn failure marks the whole drawer as failed, while a recovered tool failure remains scoped to that tool."
       ],
-      "required_scenarios": ["loading", "recovery"],
+      "required_scenarios": [
+        "loading",
+        "recovery",
+        "process"
+      ],
       "paths": [
         "backend/prompt_agent/local_runtime.py",
         "frontend/src/agent/controller.ts",
+        "frontend/src/components/ProcessDrawer.svelte",
+        "frontend/src/components/Surface.svelte",
         "frontend/src/components/WorkingIndicator.svelte",
         "frontend/src/stores/runtime.ts",
         "frontend/tests/surface.test.ts",
@@ -63,18 +113,27 @@
     },
     {
       "id": "SESSION-LIFECYCLE-001",
-      "revision": 1,
+      "revision": 2,
       "area": "session",
       "title": "Terminal request recovery",
       "acceptance": [
+        "Transient network failures and HTTP 408, 425, 429, 500, 502, 503, or 504 retry before any streamed output, with at most three total attempts by default.",
+        "A request is never automatically replayed after assistant content, reasoning, or a tool call has started.",
         "Provider failure and user abort both reach a terminal runtime state.",
         "The active request is cleared and the composer can submit again."
       ],
-      "required_scenarios": ["failure", "abort", "recovery"],
+      "required_scenarios": [
+        "retry",
+        "failure",
+        "abort",
+        "recovery"
+      ],
       "paths": [
         "frontend/src/agent/agent-runtime.ts",
         "frontend/src/agent/controller.ts",
+        "frontend/src/providers/proxy-stream.ts",
         "frontend/src/stores/chat.ts",
+        "frontend/tests/proxy-stream.test.ts",
         "frontend/tests/prompt-agent-controller.test.ts",
         "frontend/tests/e2e/mock-host.spec.ts"
       ],
@@ -90,7 +149,11 @@
         "Unfinished work becomes interrupted and no old provider request or tool call resumes.",
         "A later submission succeeds."
       ],
-      "required_scenarios": ["interruption", "no-replay", "recovery"],
+      "required_scenarios": [
+        "interruption",
+        "no-replay",
+        "recovery"
+      ],
       "paths": [
         "frontend/src/sessions/**",
         "frontend/src/agent/controller.ts",
@@ -98,6 +161,33 @@
         "frontend/tests/session-repository.test.ts"
       ],
       "assertion_policy": "Assert durable transcript and request/tool counts across reload."
+    },
+    {
+      "id": "SESSION-SYNC-001",
+      "revision": 1,
+      "area": "session",
+      "title": "Cross-browser durable session synchronization",
+      "acceptance": [
+        "A browser connected to the same Forge host can pull sessions and messages written by another browser or device.",
+        "IndexedDB remains a usable local cache when synchronization is temporarily unavailable.",
+        "A stale concurrent edit creates a separately visible conflict copy instead of overwriting either transcript.",
+        "Session synchronization validates identifiers, record ownership, status values, and payload bounds before persistence."
+      ],
+      "required_scenarios": [
+        "cross-device",
+        "offline-cache",
+        "conflict",
+        "validation"
+      ],
+      "paths": [
+        "backend/prompt_agent/session_sync.py",
+        "backend/prompt_agent/app.py",
+        "frontend/src/sessions/**",
+        "frontend/src/agent/controller.ts",
+        "tests/test_session_sync.py",
+        "frontend/tests/session-sync.test.ts"
+      ],
+      "assertion_policy": "Assert restored transcript semantics, local availability, conflict preservation, and validation; do not depend on SQLite row ordering or browser-private storage internals."
     },
     {
       "id": "AGENT-LOOKUP-001",
@@ -109,7 +199,11 @@
         "Danbooru lookup is used only when no local style matches.",
         "Unverified text is hidden and cannot become the persisted answer."
       ],
-      "required_scenarios": ["style-first", "fallback", "unverified-hidden"],
+      "required_scenarios": [
+        "style-first",
+        "fallback",
+        "unverified-hidden"
+      ],
       "paths": [
         "frontend/src/agent/agent-runtime.ts",
         "frontend/src/agent/controller.ts",
@@ -128,7 +222,11 @@
         "Browser tool arguments are revalidated by Python.",
         "Prompt and generation mutations require fresh hashes."
       ],
-      "required_scenarios": ["surface", "revalidation", "freshness"],
+      "required_scenarios": [
+        "surface",
+        "revalidation",
+        "freshness"
+      ],
       "paths": [
         "backend/prompt_agent/forge_tools.py",
         "frontend/src/tools/**",
@@ -140,15 +238,19 @@
     },
     {
       "id": "PROVIDER-TOOLS-001",
-      "revision": 1,
+      "revision": 2,
       "area": "provider",
       "title": "Provider-native tool execution contract",
       "acceptance": [
-        "OpenAI-compatible, Anthropic, Gemini, and llama.cpp requests use their native forced-tool format.",
+        "OpenAI-compatible, Gemini Native, and one-shot llama.cpp requests use their native forced-tool format.",
         "Tool-call streams normalize to one frontend event contract.",
         "Cancellation closes upstream work."
       ],
-      "required_scenarios": ["forced-choice", "normalization", "abort"],
+      "required_scenarios": [
+        "forced-choice",
+        "normalization",
+        "abort"
+      ],
       "paths": [
         "backend/prompt_agent/provider_adapters/**",
         "backend/prompt_agent/contracts.py",
@@ -167,7 +269,11 @@
         "Force stop during loading reclaims the process.",
         "Status and stop responses do not expose local paths or endpoints."
       ],
-      "required_scenarios": ["loading", "abort", "privacy"],
+      "required_scenarios": [
+        "loading",
+        "abort",
+        "privacy"
+      ],
       "paths": [
         "backend/prompt_agent/local_runtime.py",
         "backend/prompt_agent/app.py",
@@ -186,7 +292,11 @@
         "Browser stream requests cannot inject server-owned credentials, endpoints, models, headers, or paths.",
         "UNC and untrusted executable/model paths are rejected before filesystem access."
       ],
-      "required_scenarios": ["projection", "request-rejection", "path-rejection"],
+      "required_scenarios": [
+        "projection",
+        "request-rejection",
+        "path-rejection"
+      ],
       "paths": [
         "backend/prompt_agent/contracts.py",
         "backend/prompt_agent/profile_contracts.py",
@@ -198,6 +308,78 @@
       "assertion_policy": "Assert absence of sensitive values and rejection before privileged access."
     },
     {
+      "id": "PROMPT-TOOLKIT-001",
+      "revision": 1,
+      "area": "agent",
+      "title": "Hybrid prompt toolkit and enforced write order",
+      "acceptance": [
+        "Mixed natural-language, Danbooru-tag, special-syntax, and unknown prompt content round trips without silent conversion or loss.",
+        "Deduplication, sorting, normalization, validation, and composition are deterministic, bounded, and conservative about selected pools and prompt groups.",
+        "A requested cleanup must successfully run prompt_toolkit before edit_prompt, and only edit_prompt may mutate Forge state."
+      ],
+      "required_scenarios": [
+        "hybrid-preservation",
+        "deterministic-operations",
+        "toolkit-before-write"
+      ],
+      "paths": [
+        "frontend/src/prompts/**",
+        "frontend/src/tools/prompt-toolkit.ts",
+        "frontend/src/agent/agent-runtime.ts",
+        "frontend/src/agent/controller.ts",
+        "frontend/tests/prompt-toolkit.test.ts",
+        "frontend/tests/agent-runtime.test.ts"
+      ],
+      "assertion_policy": "Assert lossless parsing, pool-local transformations, special-token preservation, and observable tool order; do not lock parser implementation details."
+    },
+    {
+      "id": "PROMPT-DIFF-001",
+      "revision": 1,
+      "area": "ui",
+      "title": "Confirmed prompt mutation diff",
+      "acceptance": [
+        "A successful edit_prompt result with confirmed before and after text renders a compact semantic diff before the final assistant answer.",
+        "Added and removed content use green and red styling plus explicit icons and labels, while moved and normalized content remain distinguishable.",
+        "A changed but disabled negative prompt is labeled inactive and never presented as effective generation state."
+      ],
+      "required_scenarios": [
+        "confirmed-diff",
+        "negative-disabled"
+      ],
+      "paths": [
+        "frontend/src/components/PromptChangeCard.svelte",
+        "frontend/src/components/ProcessDrawer.svelte",
+        "frontend/src/agent/controller.ts",
+        "frontend/src/styles.css",
+        "frontend/tests/surface.test.ts"
+      ],
+      "assertion_policy": "Assert visible labels, semantic additions and removals, inactive-negative messaging, and placement before the final answer; do not lock exact colors or DOM nesting."
+    },
+    {
+      "id": "PROMPT-STATE-001",
+      "revision": 1,
+      "area": "data",
+      "title": "Negative prompt activation freshness",
+      "acceptance": [
+        "read_prompt exposes the live enabled state and inactivity reason of the negative prompt.",
+        "A supplied negative activation hash is checked against live Forge state immediately before editing.",
+        "A successful negative edit reports confirmed before and after text and whether the result is effective."
+      ],
+      "required_scenarios": [
+        "activation",
+        "stale-activation",
+        "effective-evidence"
+      ],
+      "paths": [
+        "javascript/prompt_agent.js",
+        "frontend/src/tools/forge-tools.ts",
+        "backend/prompt_agent/forge_tools.py",
+        "tests/test_host_bridge.py",
+        "tests/test_forge_tools.py"
+      ],
+      "assertion_policy": "Assert live activation semantics, stale-state rejection, and confirmed effectiveness; do not depend on a specific Forge widget hierarchy."
+    },
+    {
       "id": "DATA-INTEGRITY-001",
       "revision": 1,
       "area": "data",
@@ -207,7 +389,11 @@
         "Stale tool feedback can be refreshed and retried without repeating the same blind write.",
         "Refresh never replays an old tool call."
       ],
-      "required_scenarios": ["freshness", "stale-recovery", "no-replay"],
+      "required_scenarios": [
+        "freshness",
+        "stale-recovery",
+        "no-replay"
+      ],
       "paths": [
         "backend/prompt_agent/forge_tools.py",
         "frontend/src/agent/agent-runtime.ts",

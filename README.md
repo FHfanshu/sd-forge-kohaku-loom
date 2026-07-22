@@ -1,8 +1,9 @@
 # SD Forge Neo Prompt Agent
 
 Single-agent prompt assistant for Forge Neo. The browser owns the Pi agent loop
-and IndexedDB chat history; Python owns profiles, secrets, provider streaming,
-local-model lifecycle, and privileged Forge tools.
+and keeps an IndexedDB session cache; Python owns durable synchronized chat
+history, profiles, secrets, provider streaming, local-model lifecycle, and
+privileged Forge tools.
 
 Image reverse prompting is a separate sibling extension:
 `sd_forge_reverse_prompt`.
@@ -13,7 +14,8 @@ Image reverse prompting is a separate sibling extension:
 - Frontend Pi runtime: stream, reason, tool calls, abort, terminal recovery
 - Python-authoritative Model Profiles (HTTP + local llama.cpp)
 - Server-owned secrets; browser never receives plaintext keys or local paths
-- IndexedDB sessions with interrupted-message recovery after refresh
+- Cross-browser sessions with a server-side SQLite authority and IndexedDB cache
+- Interrupted-message recovery after refresh without request or tool replay
 - Hash-guarded positive/negative prompt reads and edits
 - Forge resource discovery: styles, wildcards, LoRAs, checkpoints, embeddings
 - Local reference-image analysis via a configured llama.cpp VLM
@@ -24,12 +26,16 @@ API prefix: `/prompt-agent/api`.
 
 | Layer | Owns |
 | --- | --- |
-| Browser | `PromptAgentRuntime`, UI, IndexedDB sessions, profile selection |
-| Python | Extension registration, profiles, secrets, provider proxy, llama.cpp, Forge tools |
+| Browser | `PromptAgentRuntime`, UI, IndexedDB session cache, profile selection |
+| Python | Durable session snapshots, profiles, secrets, provider proxy, llama.cpp, Forge tools |
 
-No managed sidecar, server-owned chat session, execution lease, or refresh-time
-tool replay. Refresh keeps partial content, marks unfinished messages
-`interrupted`, and never re-runs an old request.
+The server stores history but never owns or resumes agent execution. There is no
+managed sidecar, execution lease, or refresh-time tool replay. Refresh keeps
+partial content, marks unfinished messages `interrupted`, and never re-runs an
+old request. Concurrent stale edits are retained as conflict-copy sessions.
+
+Anyone who can use the Forge web UI can access synchronized Prompt Agent
+history. Do not expose Forge to an untrusted network without authentication.
 
 ### Layout
 

@@ -5,6 +5,62 @@ Historical migration implementation remains available on branch `kt` and tag
 `docs/archive/audit-archive-2026-07-19.md`; detailed working notes are
 local-only under `docs/archive/`.
 
+## 2026-07-21 Short Message Hover Action Layout
+
+- Root cause: desktop user-message footers were absolutely positioned with both
+  horizontal edges pinned to the message bubble. At specific viewport sizes and
+  zoom levels, a short bubble therefore constrained Copy and Edit and resend to
+  less width than their labels required, pushing or wrapping the controls out of
+  the usable hover area.
+- Changed `frontend/src/styles.css` so fine-pointer user-message footers size to
+  their content and expand left from the bubble's right edge. Message actions and
+  labels remain on one line. Existing hover visibility and narrow/coarse-pointer
+  static layouts are unchanged. Added the CSS regression contract in
+  `frontend/tests/window-interactions.test.ts` and rebuilt
+  `javascript/prompt_agent_90_ui.js`.
+- Verification: the focused window-interactions suite passed all 14 tests;
+  Svelte check reported 0 errors and 0 warnings; the production build completed
+  at 792.63 kB raw and 230.66 kB gzip. `python tools/test_gate.py affected`
+  passed its acceptance preflight with 0 warnings/errors, all 111 selected
+  frontend tests, and all 7 browser acceptance scenarios.
+
+## 2026-07-20 Linux CI Portability And Cache Cleanup
+
+- Root cause: the standalone Linux checkout did not contain Forge Neo's sibling
+  `backend.args`, but a namespace test assumed the extension always lived inside
+  the full Forge tree. A legacy-import test claimed to supply only an API-key
+  marker while accidentally retaining the plaintext `api_key`, which invoked
+  Windows-only DPAPI on Linux. Frontend checks and all browser scenarios passed,
+  but `actions/setup-node` failed during post-job cache saving because pnpm's
+  project-local store path was resolved from the repository root and did not
+  exist there.
+- Changed both backend tests to be self-contained and accurately exercise their
+  intended boundaries. Removed setup-node's pnpm cache integration; the pinned
+  install remains deterministic and took about four seconds in the failed run.
+- Verification: both focused regressions passed, the CI-equivalent backend suite
+  passed 93 tests with 0 skipped, and the full quality gate passed, including
+  frontend checks/tests/build, bundle budget, all 7 mock-host browser scenarios,
+  and all browser-script syntax checks.
+
+## 2026-07-20 Message Hover Action Reachability
+
+- Root cause: desktop message heading and footer controls were absolutely
+  positioned outside the message card with an uncovered gap. Crossing that gap
+  removed the card's hover state, and the message scroller intercepted clicks
+  while the controls were still visually fading out. The heading also remained
+  `pointer-events: none` after becoming visible.
+- Changed `frontend/src/styles.css` so the heading/footer hit boxes include the
+  visual spacing and both visible action bars accept pointer input. Added a CSS
+  contract test and a real-browser regression that pauses in the former gap
+  longer than the fade transition before clicking Edit and resend.
+- Rebuilt `javascript/prompt_agent_90_ui.js`. The generated bundle is 756,494
+  raw bytes and 218,421 gzip bytes, within budget.
+- Verification: the focused Playwright regression passed; Svelte check reported
+  0 errors and 0 warnings; all 146 frontend unit tests passed; affected and full
+  quality gates passed; all 7 mock-host browser scenarios passed; all 6 browser
+  scripts passed Node 22 syntax checks. `git diff --check` reported only the
+  existing Windows line-ending warnings.
+
 ## 2026-07-20 Local Runtime Feedback And Agent Tool Enforcement
 
 - Root cause: on-demand llama.cpp startup blocked on its readiness probe while
@@ -471,3 +527,314 @@ local-only under `docs/archive/`.
   frontend tests across 22 files, production build, bundle budget at 756,574
   raw / 218,425 gzip bytes, all 7 browser scenarios, and syntax checks for all
   6 Prompt Agent browser scripts.
+
+## 2026-07-20 Bugfix: Stable Floating Windows During Virtual Keyboard Use
+
+- Visible symptom: on Android in landscape, focusing a text field made the chat
+  and profile windows jump between positions while the virtual keyboard opened.
+- Root cause: each `visualViewport` resize/scroll event clamped the windows into
+  the keyboard-reduced viewport. Moving the focused field caused the browser to
+  pan again, producing a feedback loop between native focus panning and the
+  extension's window correction.
+- Fix: while a focused text entry has reduced an otherwise same-width visual
+  viewport, retain the last stable window geometry and allow the floating window
+  to exceed the temporary keyboard viewport. Normal viewport containment resumes
+  after the keyboard closes; rotation and genuine window resizes still update the
+  stable viewport. Applied consistently to chat and profile settings without
+  persisting the temporary overflow geometry.
+- Changed files: `frontend/src/window-interactions.ts`,
+  `frontend/src/components/Surface.svelte`,
+  `frontend/src/components/ProfileSettings.svelte`, `frontend/src/styles.css`,
+  focused window/surface/profile tests, `quality/acceptance.json`, generated
+  acceptance documentation, and rebuilt `javascript/prompt_agent_90_ui.js`.
+- Verification: pinned Node 22.17.0 / pnpm 10.12.4 focused regression passed 47
+  tests; final keyboard-only regression passed 5 tests across 3 files; Svelte
+  check reported 0 errors and 0 warnings; `python tools/test_gate.py affected`
+  passed 47 Python tests, 46 frontend tests, and 6 browser scenarios with a clean
+  preflight; Vite build, bundle-size (757,308 raw / 218,670 gzip bytes), and
+  generated bundle syntax check passed.
+- Residual gate state: `python tools/test_gate.py full` stopped at preflight on
+  seven unrelated stale mappings for concurrent `UI-FEEDBACK-001@2` and
+  `SESSION-LIFECYCLE-001@2` behavior changes. Manual full suites confirmed 144 of
+  147 frontend tests and 91 of 93 Python tests pass; all reported failures were
+  stale-acceptance guards except one unrelated intermittent reasoning-fixture
+  assertion. No mapping outside `UI-WINDOW-001` was changed by this fix.
+
+## 2026-07-20 Compact Assistant Turns And Transient Provider Retry
+
+- Visible symptom: one user request could render every Pi model/tool round as a
+  separate full assistant block, repeating the role, usage, collapse, and copy
+  controls until tool history displaced the final user-facing reply. A transient
+  provider HTTP error also emitted a terminal Pi error immediately and ended the
+  agent loop.
+- Root cause: `Surface.svelte` attached pending tools to the next assistant
+  message but did not group consecutive assistant/tool messages into one user
+  turn. The custom `/prompt-agent/api/stream` `StreamFn` bypassed provider SDK
+  retry behavior and converted every non-OK response or SSE error directly into
+  a terminal event.
+- Fix: group consecutive assistant/tool rounds into one final response with a
+  default-collapsed process drawer containing intermediate text, reasoning,
+  tools, aggregate usage, failures, and mutation undo controls. Keep one copy
+  action and one live working indicator, suppress duplicate top-level terminal
+  errors, and retain a single compact usage display for direct text-only replies.
+  Retry network errors and HTTP 408/425/429/500/502/503/504 up to two times with
+  bounded exponential backoff, but only before any text, reasoning, or tool-call
+  output is emitted; abort and non-transient errors remain immediately terminal.
+- Changed files: `frontend/src/components/ProcessDrawer.svelte`,
+  `frontend/src/components/Surface.svelte`, `frontend/src/components/WorkingIndicator.svelte`,
+  `frontend/src/providers/proxy-stream.ts`, `frontend/src/providers/adapter.ts`,
+  `frontend/src/agent/controller.ts`, `frontend/src/styles.css`,
+  `prompt_agent/i18n.py`, focused frontend/browser/Python acceptance tests,
+  acceptance registry/docs, and rebuilt `javascript/prompt_agent_90_ui.js`.
+- Verification: focused Svelte check passed with 0 errors and 0 warnings; 57
+  focused frontend tests passed. `python tools/test_gate.py affected` passed 55
+  Python tests, 63 mapped frontend tests, and all 7 browser scenarios with a
+  clean 11-requirement / 28-mapping preflight. `python tools/test_gate.py full`
+  passed Python compilation, 93 Python tests, 11 browser host contracts, Svelte
+  check with 0 errors and 0 warnings, 153 frontend tests across 22 files,
+  production build, bundle budget at 761,297 raw / 220,210 gzip bytes, all 7
+  browser scenarios, and syntax checks for all Prompt Agent browser scripts.
+- Residual risk: retries deliberately stop after streaming begins because
+  replaying a partial response or tool call could duplicate provider output or
+  Forge mutations. A mid-stream transient failure therefore remains visible and
+  terminal, with the composer restored for an explicit user retry.
+
+## 2026-07-20 Model Profile Identity, Touch Deletion, And Persistent Launcher
+
+- Visible symptoms: editing the configured Gemini 3.1 Pro profile made Agent
+  models report unavailable and switched the settings form to local Gemma
+  fields; Base URL appeared uneditable; the per-row deletion menu was unreliable
+  on touch screens; opening chat and settings together removed the Prompt Agent
+  launcher.
+- Root cause: models.dev catalog provenance such as `pioneer` was treated as an
+  explicit frontend transport adapter even though the configured transport was
+  `gemini-native`. Normalization then excluded that profile from agent-capable
+  profiles and selected the local fallback. Deletion depended on a hover/portal
+  menu and the confirmation action read the mutable selected profile instead of
+  retaining the requested ID. Launcher rendering was conditional on both
+  windows being closed.
+- Fix: resolve transport only from an explicit profile adapter or the configured
+  protocol/runtime, while retaining catalog provider metadata for display.
+  Keep the exact remote profile selected through edits. Add a direct touch-safe
+  delete action that captures the target ID, waits for server success, and keeps
+  the profile with a sanitized error on failure. Keep the draggable launcher
+  rendered above both floating windows, compacting it to an icon on mobile while
+  a window is open. Existing session records and profile data are not migrated
+  or deleted by this fix.
+- Changed files: frontend provider registry/capability/controller selection,
+  profile store contracts and settings UI, `Surface.svelte`, shared styles and
+  translations, focused unit/browser tests, acceptance registry/docs, and the
+  rebuilt `javascript/prompt_agent_90_ui.js`.
+- Verification: focused Svelte check reported 0 errors and 0 warnings; 62
+  focused provider/profile/surface tests passed; all 7 mock-host browser tests
+  passed. `python tools/test_gate.py full` passed with a clean 12-requirement / 33-mapping
+  preflight, Python compilation, 93 Python tests, 11 browser host contracts, 157
+  frontend tests across 22 files, production build, bundle budget at 762,706 raw
+  / 220,675 gzip bytes, all 7 browser scenarios, and syntax checks for all six
+  Prompt Agent browser scripts.
+
+## 2026-07-21 Truthful Recovered-Tool Status
+
+- Visible symptom: a turn was colored red whenever any intermediate tool failed,
+  even when the agent recovered and produced a successful final answer.
+- Root cause: `ProcessDrawer.svelte` derived the whole turn's error styling from
+  the count of failed tools instead of the final assistant message status.
+- Fix: reserve the outer red state for a terminal turn failure and label that
+  state explicitly as `Execution failed` / `执行失败`. Keep recovered failures
+  visible in the neutral process summary and mark only the individual failed
+  tool card as `failed` / `执行失败`.
+- Changed files: `frontend/src/components/ProcessDrawer.svelte`,
+  `frontend/src/components/ToolCard.svelte`, `frontend/tests/surface.test.ts`,
+  `prompt_agent/i18n.py`, `quality/acceptance.json`, and rebuilt
+  `javascript/prompt_agent_90_ui.js`.
+- Verification: focused surface tests passed 37/37; Svelte check reported 0
+  errors and 0 warnings. The affected gate passed 55 Python tests, 93 mapped
+  frontend tests, and 7 browser scenarios. The full gate passed 93 Python tests,
+  11 browser host contracts, 159 frontend tests across 22 files, all 7 browser
+  scenarios, production build, bundle budget at 762,832 raw / 220,767 gzip
+  bytes, and all browser-script syntax checks.
+- Residual risk: a recovered tool failure remains intentionally visible inside
+  the process drawer; only its severity is scoped so it cannot misrepresent the
+  final turn outcome.
+
+## 2026-07-21 Cross-Browser Session Synchronization
+
+- Root cause: session and message history was authoritative only in each
+  browser's IndexedDB database, so a different browser or device connected to
+  the same Forge host had an independent empty history.
+- Fix: added a bounded, validated `/prompt-agent/api/sessions/sync` endpoint and
+  durable SQLite snapshots under `data/prompt-agent/`. IndexedDB remains the
+  immediate local cache and chat stays usable when sync is unavailable. Each
+  snapshot carries a revision and content hash; an unchanged stale cache pulls
+  the current server version, while divergent stale edits become separately
+  visible conflict-copy sessions instead of overwriting either transcript.
+  Synchronization runs at mount, new-session creation, and terminal turn
+  boundaries and never owns, continues, or replays agent execution.
+- Changed files: `backend/prompt_agent/session_sync.py`, API health/registration,
+  frontend session schema/repository/sync and controller integration, session
+  system/roadmap/README documentation, `SESSION-SYNC-001` acceptance metadata,
+  focused Python/frontend tests, mock-host sync coverage, and rebuilt
+  `javascript/prompt_agent_90_ui.js`.
+- Verification: focused session/controller tests passed 25 frontend and 28
+  Python/API/architecture tests; Svelte check reported 0 errors and 0 warnings.
+  The affected gate passed 60 Python tests, 97 mapped frontend tests, and all 7
+  browser scenarios. The final full gate passed 98 Python tests with 0 skips,
+  11 browser host contracts, 163 frontend tests across 23 files, production
+  build, bundle budget at 765,477 raw / 221,425 gzip bytes, all 7 mock-host
+  browser scenarios, and all browser-script syntax checks.
+- Residual scope: synchronization targets browsers connected to the same Forge
+  host. The standalone attachment object store and session deletion tombstones
+  are not synchronized because the current product has no attachment-history or
+  session-deletion UI boundary; message-embedded reference images are included
+  in synchronized snapshots. Forge access remains the authentication boundary,
+  so an untrusted network requires Forge authentication.
+
+## 2026-07-21 Provider Route And Premature Stream Recovery
+
+- Root cause: the active Gemini profile treated an OpenAI-compatible gateway as
+  Gemini Native, so generation targeted a nonexistent native route. Raw
+  transport `EndOfStream` failures were also reduced to a generic provider
+  error, preventing the frontend's bounded pre-output retry policy from
+  recognizing them.
+- Fix: changed the active profile to the gateway's verified `/v1` OpenAI
+  compatibility endpoint while preserving its protected key, recognized nested
+  transport EOF failures as `provider_unexpected_eof`, and made OpenAI URL
+  composition preserve explicit compatibility base paths. Added a package
+  marker so test-gate imports remain stable after the extension directory move.
+- Changed files: `backend/prompt_agent/errors.py`,
+  `backend/prompt_agent/provider_adapters/common.py`,
+  `backend/prompt_agent/profile_connection.py`, focused provider/API tests, and
+  `tests/__init__.py`. The active profile data was updated through the local API.
+- Verification: 7 provider-proxy and 20 profile/API tests passed. The affected
+  gate passed 68 Python tests, 110 frontend tests, and all 7 browser scenarios.
+  The final full gate passed 101 Python tests, 11 browser host contracts, 176
+  frontend tests across 24 files, production build, bundle budget at 794,529
+  raw / 230,445 gzip bytes, all 7 browser scenarios, and Svelte check with 0
+  errors and 0 warnings. A live connection probe passed, and a real streamed
+  request returned `OK` followed by `done`.
+- Residual risk: upstream transport interruptions can still exhaust all three
+  safe pre-output retries; once any model output or tool call is observed, the
+  request remains intentionally non-replayable.
+
+## 2026-07-21 Connection Mode And Browser Cache Cleanup
+
+- Root cause: model profiles exposed protocol and runtime as independent
+  controls even though only OpenAI-compatible HTTP, Gemini Native HTTP, and
+  local llama.cpp one-shot execution were supported product modes. Legacy
+  Anthropic, OpenRouter, and llama-endpoint branches remained selectable or
+  routable, while an unused IndexedDB profile cache duplicated the server-owned
+  profile store.
+- Fix: replaced the two low-level selectors with one atomic connection-type
+  selector for the three supported modes, removed the unused Anthropic and
+  OpenRouter adapters, collapsed llama-endpoint into the remote compatibility
+  migration path, and added safe normalization for existing profile JSON.
+  IndexedDB schema v3 deletes only the obsolete profile-cache store; sessions
+  remain an immediate browser cache synchronized to server SQLite, and profile
+  configuration remains server JSON with DPAPI-protected credentials.
+- Changed files: frontend profile settings/contracts/adapters/profile store and
+  IndexedDB schema/repository, backend profile contracts/storage/migration and
+  provider registry/adapters, i18n, architecture/roadmap documentation,
+  acceptance metadata, focused Python/frontend/browser tests, and rebuilt
+  `javascript/prompt_agent_90_ui.js`. Deleted the frontend and backend
+  Anthropic/OpenRouter adapter modules.
+- Verification: `python tools/test_gate.py affected` passed 68 Python tests,
+  111 mapped frontend tests, all 7 browser scenarios, and Svelte check with 0
+  errors and 0 warnings. `python tools/test_gate.py full` passed 101 Python
+  tests with 0 skips, all browser host contracts, the complete frontend suite,
+  production build and bundle budget, all 7 browser scenarios, and all
+  browser-script syntax checks.
+- Residual scope: legacy profile values are normalized on server load instead
+  of preserving removed modes. Cross-device sessions still use the existing
+  SQLite synchronization contract; no session history is deleted by this
+  cleanup.
+
+## 2026-07-21 Compact Prompt Diff And Stream Completion
+
+- Root cause: confirmed prompt diffs rendered every tag change as a separate
+  labeled row, producing a tiring vertical list and interleaving prompt pools.
+  The OpenAI-compatible adapter also required a `[DONE]` sentinel even when the
+  provider had already returned an explicit non-empty `finish_reason`, causing
+  some compatibility gateways to be reported as premature EOF after a complete
+  response.
+- Fix: grouped changes by prompt pool and change kind, placed the tag pool
+  first, rendered same-kind tags as one comma-separated sequence, and kept
+  natural-language, special-syntax, and unknown changes below it. The provider
+  adapter now accepts either `[DONE]` or an explicit `finish_reason` as terminal;
+  streams with neither marker still fail as `provider_unexpected_eof`.
+- Changed files: `frontend/src/components/PromptChangeCard.svelte`,
+  `frontend/src/styles.css`, `frontend/tests/surface.test.ts`,
+  `backend/prompt_agent/provider_adapters/openai_compatible.py`,
+  `tests/test_prompt_agent_provider_proxy.py`, and rebuilt
+  `javascript/prompt_agent_90_ui.js`.
+- Verification: focused provider EOF/completion tests passed; the focused
+  Svelte surface suite passed all 38 tests. `python tools/test_gate.py affected`
+  passed. `python tools/test_gate.py full` passed acceptance preflight, 102
+  Python tests, browser host contracts, Svelte check with 0 errors and 0
+  warnings, all 178 frontend tests, production build, the bundle budget at
+  792,257 raw / 230,174 gzip bytes, all 7 browser scenarios, and browser-script
+  syntax checks.
+- Residual scope: moved tags retain their existing secondary semantic row; the
+  compact comma-separated treatment intentionally prioritizes added and removed
+  tag readability. A provider close without `[DONE]` remains successful only
+  when the provider explicitly supplied a non-empty completion reason.
+
+## 2026-07-21 Assistant Response Visual Unification
+
+- Root cause: assistant responses used a full-height square-ended focus rail
+  beside rounded process, diff, and composer surfaces. Prompt tags also retained
+  chip-like framing while natural-language changes used plain highlighted text,
+  making one response read as two unrelated visual systems.
+- Fix: replaced the full-height assistant rail with a short rounded response
+  marker and removed tag chip borders, padding, and backgrounds. Tag changes
+  remain comma-separated and monospaced, while both tags and natural language
+  now share the same addition/removal text treatment.
+- Changed files: `frontend/src/styles.css`, `frontend/tests/surface.test.ts`, and
+  rebuilt `javascript/prompt_agent_90_ui.js`.
+- Verification: the focused Svelte surface suite passed all 38 tests,
+  `pnpm run check` reported 0 errors and 0 warnings, the production build passed,
+  and `python tools/test_gate.py affected` passed all selected Python, frontend,
+  browser, build, bundle-budget, and syntax checks.
+- Residual scope: the short response marker intentionally remains as a subtle
+  assistant-identity cue. Process and prompt-change surfaces retain the existing
+  product radius tokens.
+
+## 2026-07-21 Enter To Send Shortcut
+
+- Root cause: the Prompt Agent composer intercepted `Ctrl/Cmd+Enter`, which also
+  triggered Forge WebUI generation. Sending therefore required a conflicting
+  shortcut.
+- Changed `frontend/src/components/Surface.svelte` so an unmodified `Enter`
+  submits or stops the active request. `Shift+Enter` remains a newline, while
+  `Ctrl/Cmd+Enter`, other modifiers, and IME composition are left to their
+  native behavior. Added the focused regression in
+  `frontend/tests/surface.test.ts` and rebuilt `javascript/prompt_agent_90_ui.js`.
+- Verification: the focused surface suite passed 39 tests; Svelte check reported
+  0 errors and 0 warnings; the production bundle completed at 792.67 kB raw and
+  230.67 kB gzip; `python tools/test_gate.py full` passed 102 Python tests, 180
+  frontend tests, all 7 browser scenarios, bundle checks, and browser-script
+  syntax checks.
+- Residual scope: during an active Prompt Agent request, unmodified `Enter`
+  retains the existing stop behavior.
+
+## 2026-07-23 Profile Hot Reload
+
+- Root cause: a conversation created its Pi runtime from a profile snapshot
+  only when the session opened. Later profile edits and active-model changes
+  reached the profile store and server, but the next request could retain the
+  session's old profile ID and frontend model metadata. Manual Save also did
+  not order itself after earlier fire-and-forget autosave requests.
+- Changed `frontend/src/agent/controller.ts` to rebind the idle conversation
+  and rebuild its lightweight runtime from the latest active profile before a
+  send. Changed `frontend/src/components/ProfileSettings.svelte` so explicit
+  Save finishes with the complete visible profile as a server-confirmed write
+  barrier. Added focused controller coverage, advanced
+  `MODEL-PROFILE-001` to revision 3, reviewed its mapped tests, and rebuilt
+  `javascript/prompt_agent_90_ui.js`.
+- Verification: 43 focused frontend tests passed; Svelte check reported 0
+  errors and 0 warnings; the production bundle completed at 793.04 kB raw and
+  230.71 kB gzip. The affected gate passed 68 Python tests, 113 selected
+  frontend tests, and all 7 browser scenarios. The full gate passed 102 Python
+  tests, all 181 frontend tests, the production build and bundle budget, all 7
+  browser scenarios, and browser-script syntax checks.
+- Residual scope: profile changes intentionally take effect at the next idle
+  send boundary. An in-flight provider request is never switched mid-stream.
